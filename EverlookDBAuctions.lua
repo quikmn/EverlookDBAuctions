@@ -308,7 +308,37 @@ local function finishScan(h, vars, total, noLink)
   step()
 end
 
--- Reads the whole list a slice per frame.
+-- Adds one auction to its item version.
+local function addAuction(vars, id, count, buyout, minBid, bid, link, left)
+  local key, suffix, name = variantOf(id, link)
+  if not key then key, suffix = id .. ":0", 0 end
+  local v = vars[key]
+  if not v then
+    v = { id = id, suffix = suffix, units = {}, counts = {}, qty = 0, n = 0, bidOnly = 0, withBids = 0, tl = { 0, 0, 0, 0 } }
+    vars[key] = v
+  end
+  if suffix ~= 0 and name and not v.name then v.name = name end
+  v.qty = v.qty + count
+  v.n = v.n + 1
+  if buyout and buyout > 0 then
+    v.units[#v.units + 1] = math.floor(buyout / count)
+    v.counts[#v.counts + 1] = count
+  else
+    v.bidOnly = v.bidOnly + 1
+  end
+  if bid and bid > 0 then v.withBids = v.withBids + 1 end
+  if minBid and minBid > 0 then
+    local mb = math.floor(minBid / count)
+    if not v.minBid or mb < v.minBid then v.minBid = mb end
+  end
+  local band = left and v.tl[left + 1]
+  if band then v.tl[left + 1] = band + 1 end
+end
+
+local RETRY_WAITS = { 2, 3, 5 }   -- seconds before each re-read of auctions whose item wasn't loaded yet
+
+-- Reads the whole list a slice per frame. Auctions whose item isn't loaded yet have no link (so no random suffix):
+-- the game is asked to load those items, and they are read again up to three times before counting as suffix 0.
 local function processList(total, first, read)
   if total <= 0 then
     -- an empty answer (refused or not loaded): never let it wipe the saved prices
@@ -319,54 +349,73 @@ local function processList(total, first, read)
     return
   end
   local h = getHouse(house)
-  local vars, i, last, noLink = {}, first, first + total - 1, 0
-  local function step()
-    if not scan then return end
+  local vars, pending, requested = {}, {}, {}
+  local load = C_Item and C_Item.RequestLoadItemDataByID
+
+  local function stopped()
+    if not scan then return true end
     if scan.aborted then
       -- the auction house closed while reading: keep the old prices rather than half a scan
       scan = nil
       say("the full scan stopped because the auction house closed; prices were left as they were.")
-      return
-    end
-    local stop = math.min(i + BATCH - 1, last)
-    for k = i, stop do
-      local count, buyout, id, minBid, bid, link, left = read(k)
-      if id and count and count > 0 then
-        local key, suffix, name = variantOf(id, link)
-        if not key then key, suffix = id .. ":0", 0; noLink = noLink + 1 end
-        local v = vars[key]
-        if not v then
-          v = { id = id, suffix = suffix, units = {}, counts = {}, qty = 0, n = 0, bidOnly = 0, withBids = 0, tl = { 0, 0, 0, 0 } }
-          vars[key] = v
-        end
-        if suffix ~= 0 and name and not v.name then v.name = name end
-        v.qty = v.qty + count
-        v.n = v.n + 1
-        if buyout and buyout > 0 then
-          v.units[#v.units + 1] = math.floor(buyout / count)
-          v.counts[#v.counts + 1] = count
-        else
-          v.bidOnly = v.bidOnly + 1
-        end
-        if bid and bid > 0 then v.withBids = v.withBids + 1 end
-        if minBid and minBid > 0 then
-          local mb = math.floor(minBid / count)
-          if not v.minBid or mb < v.minBid then v.minBid = mb end
-        end
-        local band = left and v.tl[left + 1]
-        if band then v.tl[left + 1] = band + 1 end
-      end
-    end
-    i = stop + 1
-    setStatus(("Reading %s / %s..."):format(num(math.min(i - first, total)), num(total)))
-    if i > last then
-      setStatus("Saving...")
-      finishScan(h, vars, total, noLink)
-    else
-      C_Timer.After(0, step)
+      return true
     end
   end
-  step()
+
+  -- reads indices from `list` (or first..last), a slice per frame; `final` counts unlinked auctions as suffix 0
+  local function pass(list, final, done)
+    local n = list and #list or total
+    local i, missing = 1, {}
+    local function step()
+      if stopped() then return end
+      local stop = math.min(i + BATCH - 1, n)
+      for j = i, stop do
+        local k = list and list[j] or (first + j - 1)
+        local count, buyout, id, minBid, bid, link, left = read(k)
+        if id and count and count > 0 then
+          if link or final then
+            addAuction(vars, id, count, buyout, minBid, bid, link, left)
+            if final and not link then missing[#missing + 1] = k end
+          else
+            missing[#missing + 1] = k
+            if load and not requested[id] then requested[id] = true; pcall(load, id) end
+          end
+        end
+      end
+      i = stop + 1
+      if list then
+        setStatus(("Loading item details: %s left..."):format(num(n - math.min(i - 1, n))))
+      else
+        setStatus(("Reading %s / %s..."):format(num(math.min(i - 1, n)), num(n)))
+      end
+      if i > n then done(missing) else C_Timer.After(0, step) end
+    end
+    step()
+  end
+
+  local round = 0
+  local function after(missing)
+    if #missing == 0 or round >= #RETRY_WAITS then
+      if #missing == 0 then
+        setStatus("Saving...")
+        finishScan(h, vars, total, 0)
+      else
+        -- last try: whatever still has no link counts under suffix 0
+        pass(missing, true, function(still)
+          setStatus("Saving...")
+          finishScan(h, vars, total, #still)
+        end)
+      end
+      return
+    end
+    round = round + 1
+    setStatus(("Loading item details for %s auctions..."):format(num(#missing)))
+    C_Timer.After(RETRY_WAITS[round], function()
+      if stopped() then return end
+      pass(missing, false, after)
+    end)
+  end
+  pass(nil, false, after)
 end
 
 function startScan(auto)
