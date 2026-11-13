@@ -23,3 +23,7 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 ## Coming next
 
 Searches using the same query language as EverlookDB.com (stats, level, slot, price), saved searches, and alerts when one of them has a match under your price.
+
+## License
+
+GPL-3.0-or-later (see LICENSE). Not affiliated with Blizzard Entertainment.
