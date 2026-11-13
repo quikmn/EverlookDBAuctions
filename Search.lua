@@ -290,8 +290,18 @@ local function statsOf(row)
   return s
 end
 
+local LIVE_TTL = 300   -- a live check counts for 5 minutes
+
+local function liveFresh(r) return r.live ~= nil and time() - r.live.at < LIVE_TTL end
+ns.liveFresh = liveFresh
+
 local function get(row, col)
   if STATS[col] then return statsOf(row)[col] or 0 end
+  -- price and quantity: the live check when there is a fresh one (sold out = nothing up)
+  if (col == "price" or col == "qty" or col == "auctions") and liveFresh(row) then
+    if row.gone then return col ~= "price" and 0 or nil end
+    return row.live[col == "auctions" and "n" or col]
+  end
   if col == "stats" then return statsOf(row).stats end
   return row[col]
 end
@@ -464,10 +474,21 @@ end
 local ROW_TOP = 74          -- first result row, from the top of the panel
 
 -- Result columns: header, column to sort by, right edge (from the panel's right), width, and how to show the value.
+-- Live-checked values are white; values only from the scan are grey; sold-out rows say so.
+local GREY = "|cff8c97ae"
 local COLS = {
-  { "Up", "qty", -10, 40, function(r) return ns.num(r.qty or 0) end },
-  { "Typical", "median", -56, 86, function(r) return r.median and ns.money(r.median) or "" end },
-  { "Lowest", "price", -148, 86, function(r) return r.price and ns.money(r.price) or "|cff808080bids|r" end },
+  { "Up", "qty", -10, 40, function(r)
+    if liveFresh(r) then return r.gone and "|cffff6060-|r" or ns.num(r.live.qty or 0) end
+    return GREY .. ns.num(r.qty or 0) .. "|r"
+  end },
+  { "Typical", "median", -56, 86, function(r) return r.median and (GREY .. ns.money(r.median) .. "|r") or "" end },
+  { "Lowest", "price", -148, 86, function(r)
+    if liveFresh(r) then
+      if r.gone then return "|cffff6060sold out|r" end
+      return r.live.price and ns.money(r.live.price) or "|cff808080bids only|r"
+    end
+    return r.price and (GREY .. ns.money(r.price) .. "|r") or "|cff808080bids only|r"
+  end },
   { "Req", "reqlevel", -240, 30, function(r) return (r.reqlevel or 0) > 0 and r.reqlevel or "" end },
   { "iLvl", "ilvl", -276, 30, function(r) return r.ilvl or "" end },
 }
@@ -488,7 +509,7 @@ local function render()
     if r then
       b.icon:SetTexture(r.icon)
       local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[(ENUMS.quality[r.quality] or 2) - 1]
-      b.name:SetText((color and color.hex or "|cffffffff") .. r.name .. "|r")
+      b.name:SetText((r.gone and liveFresh(r) and GREY or color and color.hex or "|cffffffff") .. r.name .. "|r")
       for c, col in ipairs(COLS) do b.cells[c]:SetText(col[5](r)) end
       b:Show()
     else
@@ -519,7 +540,9 @@ local function blizzardList(shown)
 end
 
 local function setStatus(text, isError)
-  if Q.frame then Q.frame.head:SetText(isError and ("|cffff6060" .. text .. "|r") or text) end
+  if not Q.frame then return end
+  Q.headBase = not isError and text or nil
+  Q.frame.head:SetText(isError and ("|cffff6060" .. text .. "|r") or text)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -538,7 +561,7 @@ local EXAMPLES = {
 
 local GUIDE = table.concat({
   "|cffffd100How it works|r",
-  "Searches everything in the last full scan of this auction house (it rescans every 15 minutes while the auction house is open). Click a result to see its live auctions and buy it.",
+  "Searches everything in the last full scan of this auction house (it rescans every 15 minutes while it is open), then checks each result live. White prices are live; grey ones are from the scan and still being checked; sold out means none are up now. Click a result to see its auctions and buy it.",
   "",
   "|cffffd100Conditions|r   join them with |cff8fc7ffand|r, |cff8fc7ffor|r, |cff8fc7ffnot|r and ( )",
   "|cff8fc7ffis|r, |cff8fc7ffis not|r   |cff8fc7ffgt|r, |cff8fc7ffge|r (at least), |cff8fc7fflt|r, |cff8fc7ffle|r (at most)   |cff8fc7ffhas|r (contains)",
@@ -760,6 +783,7 @@ local function makeResults()
   f:SetScript("OnMouseWheel", function(_, delta)
     Q.offset = math.max(0, Q.offset - delta * 3)
     render()
+    liveStep()
   end)
 
   f.guide = makeGuide(f)
@@ -800,6 +824,126 @@ local function warm()
   step()
 end
 
+-- Live check: ask the server for each result item's current auctions (a few per second, the rows on screen first),
+-- then show live lowest price and quantity, or "sold out".
+local LIVE_MAX = 150
+local SORTS = { { sortOrder = 0, reverseSort = false } }   -- Enum.AuctionHouseSortOrder.Price
+local live = { tried = {}, busy = nil }
+local liveStep
+
+local function liveHead()
+  if not Q.frame or not Q.headBase then return end
+  local total = math.min(#Q.results, LIVE_MAX)
+  local done = 0
+  for k = 1, total do if liveFresh(Q.results[k]) then done = done + 1 end end
+  local tail
+  if total == 0 then tail = ""
+  elseif done >= total then tail = "  |cff9fe07elive prices checked|r"
+  else tail = ("  |cff8fc7ffchecking live prices %d/%d...|r"):format(done, total) end
+  Q.frame.head:SetText(Q.headBase .. tail)
+end
+
+local function applyLive(id, groups, complete)
+  local now = time()
+  for _, r in ipairs(Q.results) do
+    if r.id == id then
+      local g = groups[r.key]
+      if g then
+        r.live, r.gone = { price = g.price, qty = g.qty, n = g.n, at = now }, nil
+      elseif complete then
+        r.live, r.gone = { at = now }, true
+      end
+    end
+  end
+end
+
+local function liveDone()
+  live.busy = nil
+  render()
+  liveHead()
+  C_Timer.After(0.1, liveStep)
+end
+
+local function liveSend()
+  local b = live.busy
+  b.key = C_AuctionHouse.MakeItemKey(b.id, b.levels[b.at], 0, 0)
+  local mine, attempt = b, b.at
+  local okSend = pcall(C_AuctionHouse.SendSearchQuery, b.key, SORTS, true)
+  if not okSend then liveDone(); return end
+  -- no answer in time: leave the row as it was and move on
+  C_Timer.After(4, function() if live.busy == mine and mine.at == attempt then liveDone() end end)
+end
+
+function liveStep()
+  if live.busy or not Q.frame or not Q.frame:IsShown() or not C_AuctionHouse.SendSearchQuery then return end
+  local function pick(from, to)
+    for k = from, to do
+      local r = Q.results[k]
+      if r and not liveFresh(r) and not live.tried[r.id] then return r end
+    end
+  end
+  local r = pick(Q.offset + 1, Q.offset + #Q.rows) or pick(1, math.min(#Q.results, LIVE_MAX))
+  if not r then liveHead(); return end
+  if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
+    C_Timer.After(0.3, liveStep)
+    return
+  end
+  live.tried[r.id] = true
+  -- gear is listed under its item level; everything else under 0
+  local levels = (r.slot ~= "none" and (r.ilvl or 0) > 0) and { r.ilvl, 0 } or { 0 }
+  live.busy = { id = r.id, levels = levels, at = 1 }
+  liveSend()
+end
+
+local function liveItemResults(itemKey)
+  local b = live.busy
+  if not b or type(itemKey) ~= "table" or itemKey.itemID ~= b.id then return end
+  local groups, unknown = {}, false
+  local n = C_AuctionHouse.GetNumItemSearchResults(itemKey) or 0
+  for i = 1, n do
+    local info = C_AuctionHouse.GetItemSearchResultInfo(itemKey, i)
+    if info then
+      local vkey = info.itemLink and ns.variantOf(b.id, info.itemLink)
+      if not vkey then unknown, vkey = true, b.id .. ":0" end
+      local g = groups[vkey]
+      if not g then g = { qty = 0, n = 0 }; groups[vkey] = g end
+      local q = info.quantity or 1
+      g.qty, g.n = g.qty + q, g.n + 1
+      if info.buyoutAmount and info.buyoutAmount > 0 then
+        local unit = math.floor(info.buyoutAmount / q)
+        if not g.price or unit < g.price then g.price = unit end
+      end
+    end
+  end
+  local full = C_AuctionHouse.HasFullItemSearchResults(itemKey)
+  if n == 0 and b.at < #b.levels then
+    b.at = b.at + 1
+    liveSend()
+    return
+  end
+  -- only call something sold out when the whole list came back and every auction could be told apart
+  applyLive(b.id, groups, full and not unknown)
+  liveDone()
+end
+
+local function liveCommodityResults(itemID)
+  local b = live.busy
+  if not b or itemID ~= b.id then return end
+  local n = C_AuctionHouse.GetNumCommoditySearchResults(itemID) or 0
+  local g = { qty = 0, n = 0 }
+  for i = 1, n do
+    local info = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, i)
+    if info then
+      g.qty, g.n = g.qty + (info.quantity or 0), g.n + 1
+      if info.unitPrice and (not g.price or info.unitPrice < g.price) then g.price = info.unitPrice end
+    end
+  end
+  local total = C_AuctionHouse.GetCommoditySearchResultsQuantity and C_AuctionHouse.GetCommoditySearchResultsQuantity(itemID)
+  if total and total > g.qty then g.qty = total end
+  applyLive(itemID, n > 0 and { [itemID .. ":0"] = g } or {}, C_AuctionHouse.HasFullCommoditySearchResults(itemID))
+  liveDone()
+end
+
 local rerunToken = 0
 local function show(text)
   local results, head, missing = run(text)
@@ -819,6 +963,8 @@ local function show(text)
     end
   end
   render()
+  liveHead()
+  liveStep()
   -- while items are still loading, run the query again a few times as they arrive
   if results and (missing or 0) > 0 then
     rerunToken = rerunToken + 1
@@ -841,6 +987,7 @@ function ns.query(text)
   -- the game's edit boxes give a typed | back as || (| starts its escape codes)
   local plain = text:gsub("||", "|"):gsub("^%s*where%s+", "")
   if plain ~= Q.last then Q.sortCol = nil end
+  live.tried = {}
   Q.last, Q.tries, Q.offset = plain, 0, 0
   show(plain)
 end
@@ -877,6 +1024,7 @@ function ns.openSearch()
   end
   f:Show()
   render()
+  liveStep()
   f.box:SetFocus()
 end
 
@@ -895,7 +1043,11 @@ end
 
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("AUCTION_HOUSE_SHOW")
-ev:SetScript("OnEvent", function()
+ev:RegisterEvent("ITEM_SEARCH_RESULTS_UPDATED")
+ev:RegisterEvent("COMMODITY_SEARCH_RESULTS_UPDATED")
+ev:SetScript("OnEvent", function(_, e, arg)
+  if e == "ITEM_SEARCH_RESULTS_UPDATED" then liveItemResults(arg); return end
+  if e == "COMMODITY_SEARCH_RESULTS_UPDATED" then liveCommodityResults(arg); return end
   C_Timer.After(0.2, function()
     hook()
     makeButton()
