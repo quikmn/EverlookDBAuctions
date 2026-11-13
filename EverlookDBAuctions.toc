@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: EverlookDB Auctions
+## Notes: Auction house prices: full scans, prices in item tooltips. Saves no player names. /eah
+## Author: quikmn
+## Version: @project-version@
+## SavedVariables: EverlookAuctionsDB
+## IconTexture: Interface\Icons\INV_Misc_Coin_02
+
+EverlookDBAuctions.lua
