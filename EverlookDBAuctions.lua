@@ -250,7 +250,7 @@ local function addonVersion()
 end
 
 -- Turns the variants into saved rows (a slice per frame), then stores the scan and the tooltip prices.
-local function finishScan(h, vars, total, noLink)
+local function finishScan(h, vars, total, noLink, linkRounds)
   local list = {}
   for key in pairs(vars) do list[#list + 1] = key end
   local rows, items = {}, {}
@@ -297,6 +297,7 @@ local function finishScan(h, vars, total, noLink)
       addon = addonVersion(),
       auctions = total,
       noLink = noLink,                    -- auctions whose item link wasn't loaded (counted under suffix 0)
+      linkRounds = linkRounds,            -- auctions still without a link after the first read and each retry
       rows = rows,
     })
     while #db.scans > MAX_SCANS do table.remove(db.scans, 1) end
@@ -393,17 +394,18 @@ local function processList(total, first, read)
     step()
   end
 
-  local round = 0
+  local round, rounds = 0, {}
   local function after(missing)
+    rounds[#rounds + 1] = #missing
     if #missing == 0 or round >= #RETRY_WAITS then
       if #missing == 0 then
         setStatus("Saving...")
-        finishScan(h, vars, total, 0)
+        finishScan(h, vars, total, 0, rounds)
       else
         -- last try: whatever still has no link counts under suffix 0
         pass(missing, true, function(still)
           setStatus("Saving...")
-          finishScan(h, vars, total, #still)
+          finishScan(h, vars, total, #still, rounds)
         end)
       end
       return
