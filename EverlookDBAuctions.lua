@@ -369,7 +369,7 @@ local function processList(total, first, read)
   step()
 end
 
-function startScan()
+function startScan(auto)
   if scan then return end
   if not house or not ahFrame() or not ahFrame():IsShown() then say("open the auction house first."); return end
   local h = getHouse(house)
@@ -389,7 +389,7 @@ function startScan()
     return
   end
   h.tried = time()
-  setStatus("Asked the server for every auction...")
+  setStatus(auto and "Gathering auction prices (about 30 seconds)..." or "Asked the server for every auction...")
   refreshPanel()
   local mine = scan
   C_Timer.After(SCAN_TIMEOUT, function()
@@ -485,6 +485,17 @@ local function onShow(retried)
   if parent and not panel then panel = makePanel(parent) end
   setStatus("")
   refreshPanel()
+  -- Automatic full scan when the last one is 15+ minutes old (db.auto, on by default; /eah auto off).
+  -- A short wait first, so the auction house window finishes opening before the list comes in.
+  if db.auto ~= false and not scan then
+    local h = getHouse(house)
+    if not h.tried or time() - h.tried >= SCAN_COOLDOWN then
+      setStatus("Gathering auction prices (about 30 seconds)...")
+      C_Timer.After(1.5, function()
+        if house and not scan and ahFrame() and ahFrame():IsShown() then startScan(true) end
+      end)
+    end
+  end
 end
 
 local events = {}
@@ -533,6 +544,12 @@ SLASH_EVERLOOKAUCTIONS1 = "/eah"
 SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
   if msg == "scan" then startScan(); return end
+  if msg == "auto off" or msg == "auto on" then
+    db.auto = msg == "auto on"
+    say(db.auto and "automatic full scans are on (when you open the auction house, at most every 15 minutes)."
+      or "automatic full scans are off. Press Full scan or type /eah scan when you want one.")
+    return
+  end
   say("status")
   local kind = apiKind()
   print(("  auction API: %s; frame: %s"):format(kind or "none found",
@@ -546,4 +563,5 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   end
   if not any then print("  no prices yet: open the auction house and press Full scan, or just search.") end
   print("  /eah scan  start a full scan (auction house open)")
+  print(("  /eah auto on|off  automatic full scan when you open the auction house (now %s)"):format(db.auto == false and "off" or "on"))
 end
