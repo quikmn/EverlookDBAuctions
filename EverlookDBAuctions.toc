@@ -8,3 +8,4 @@
 
 EverlookDBAuctions.lua
 Sell.lua
+Search.lua

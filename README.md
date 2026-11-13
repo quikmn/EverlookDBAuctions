@@ -6,6 +6,7 @@ Auction house prices for WoW Forever, from the makers of [EverlookDB.com](https:
 - **Searches count too:** prices from normal auction house searches are saved, no scan needed.
 - **Prices in tooltips:** lowest buyout per item, how many are up, how old the price is, and the lowest price in the last 30 days.
 - **Selling:** when you put an item in the sell frame, the price is set just under the cheapest auction someone else has up (1 silver by default; your own auctions are matched, never undercut). If nobody is selling it, the typical price from your last full scan is used. A list beside the auction house shows everything in your bags you can sell, with prices; click one, check the price, press Post.
+- **Advanced search:** the Advanced search button on the panel opens a query box over the auction list. It searches everything in your last full scan with the same query language as EverlookDB.com, including things the normal search can't: stats, random-stat versions, slot, item and required level, price. For example `slot is trinket and price lt 5g | sort by price` or `items | where sta ge 10 and reqlevel le 40 | top 20 by sta`. Click a result to find it on the auction house and buy it as usual.
 - Prices are kept per realm and per auction house (Alliance, Horde, and the neutral houses in Booty Bay, Gadgetzan and Everlook).
 
 Sellers, bidders and other players are never saved.
