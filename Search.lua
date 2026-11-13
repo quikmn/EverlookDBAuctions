@@ -271,37 +271,71 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- Rows and evaluation
 
-local statsCache = {}
+-- Item details are saved once in the addon's own file (db.itemInfo, db.itemStats): the game keeps only so many items
+-- in memory, so asking it again on every search would give a different set each time.
+local function store()
+  local db = ns.db()
+  if not db then return nil end
+  db.itemInfo = db.itemInfo or {}
+  db.itemStats = db.itemStats or {}
+  return db
+end
 
+-- { name, quality, ilvl, reqlevel, category, type, equipLoc, icon, sell, stack } or nil while the game loads it.
+local function itemInfo(id)
+  local db = store()
+  local c = db and db.itemInfo[id]
+  if c then return c end
+  local name, _, quality, ilvl, req, category, kind, stack, equip, icon, sell = C_Item.GetItemInfo(id)
+  if not name then return nil end
+  c = { name, quality or 1, ilvl or 0, req or 0, category or "", kind or "", equip or "", icon or 0, sell or 0, stack or 1 }
+  if db then db.itemInfo[id] = c end
+  return c
+end
+ns.itemInfo = itemInfo
+
+local EMPTY_STATS = { stats = "" }
+
+-- Stats of an item version, saved once the game has the item loaded.
 local function statsOf(row)
-  local key = row.key
-  local s = statsCache[key]
+  local db = store()
+  local s = db and db.itemStats[row.key]
   if s then return s end
+  if not C_Item.GetItemInfo(row.id) then return EMPTY_STATS end   -- not loaded right now: nothing to read yet
   local link = "item:" .. row.id .. (row.suffix ~= 0 and ("::::::::::::1:" .. row.suffix) or "")
   local okStats, t = pcall(C_Item.GetItemStats or GetItemStats, link)
   s = {}
   local names = {}
   if okStats and type(t) == "table" then
-    for short, mod in pairs(STATS) do s[short] = t[mod] or 0 end
+    for short, mod in pairs(STATS) do
+      if t[mod] and t[mod] ~= 0 then s[short] = t[mod] end
+    end
     for mod, n in pairs(t) do names[#names + 1] = (_G[mod] or mod) .. " " .. n end
   end
   table.sort(names)
   s.stats = table.concat(names, ", ")
-  statsCache[key] = s
+  if db then db.itemStats[row.key] = s end
   return s
 end
 
 local LIVE_TTL = 300   -- a live check counts for 5 minutes
 
-local function liveFresh(r) return r.live ~= nil and time() - r.live.at < LIVE_TTL end
+Q.live = {}   -- "id:suffix" -> { price, qty, n, at, gone } from the live check; survives re-running the query
+
+local function liveOf(r)
+  local l = Q.live[r.key]
+  if l and time() - l.at < LIVE_TTL then return l end
+end
+local function liveFresh(r) return liveOf(r) ~= nil end
 ns.liveFresh = liveFresh
 
 local function get(row, col)
   if STATS[col] then return statsOf(row)[col] or 0 end
   -- price and quantity: the live check when there is a fresh one (sold out = nothing up)
-  if (col == "price" or col == "qty" or col == "auctions") and liveFresh(row) then
-    if row.gone then return col ~= "price" and 0 or nil end
-    return row.live[col == "auctions" and "n" or col]
+  local l = (col == "price" or col == "qty" or col == "auctions") and liveOf(row)
+  if l then
+    if l.gone then return col ~= "price" and 0 or nil end
+    return l[col == "auctions" and "n" or col]
   end
   if col == "stats" then return statsOf(row).stats end
   return row[col]
@@ -395,16 +429,15 @@ local function dataset()
     local id, suffix = key:match("^(%d+):(%-?%d+)$")
     id, suffix = tonumber(id), tonumber(suffix)
     local f = { strsplit(",", line) }
-    local name, _, quality, ilvl, req, category, kind, stack, equip, icon, sell = C_Item.GetItemInfo(id)
-    if not name then
+    local c = itemInfo(id)
+    if not c then
       missing = missing + 1
-      if C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, id) end
     else
       rows[#rows + 1] = {
-        key = key, id = id, suffix = suffix, icon = icon,
-        name = (suffix ~= 0 and f[13] and f[13] ~= "") and f[13] or name,
-        quality = QUALITY[(quality or 1) + 1], ilvl = ilvl, reqlevel = req, category = category, type = kind,
-        slot = EQUIP[equip or ""] or "none", stack = stack, sell = sell,
+        key = key, id = id, suffix = suffix, icon = c[8],
+        name = (suffix ~= 0 and f[13] and f[13] ~= "") and f[13] or c[1],
+        quality = QUALITY[(c[2] or 1) + 1], ilvl = c[3], reqlevel = c[4], category = c[5], type = c[6],
+        slot = EQUIP[c[7] or ""] or "none", stack = c[10], sell = c[9],
         price = tonumber(f[1]), median = tonumber(f[3]), qty = tonumber(f[4]), auctions = tonumber(f[5]),
       }
     end
@@ -479,14 +512,16 @@ local ROW_TOP = 74          -- first result row, from the top of the panel
 local GREY = "|cff8c97ae"
 local COLS = {
   { "Up", "qty", -10, 40, function(r)
-    if liveFresh(r) then return r.gone and "|cffff6060-|r" or ns.num(r.live.qty or 0) end
+    local l = liveOf(r)
+    if l then return l.gone and "|cffff6060-|r" or ns.num(l.qty or 0) end
     return GREY .. ns.num(r.qty or 0) .. "|r"
   end },
   { "Typical", "median", -56, 86, function(r) return r.median and (GREY .. ns.money(r.median) .. "|r") or "" end },
   { "Lowest", "price", -148, 86, function(r)
-    if liveFresh(r) then
-      if r.gone then return "|cffff6060sold out|r" end
-      return r.live.price and ns.money(r.live.price) or "|cff808080bids only|r"
+    local l = liveOf(r)
+    if l then
+      if l.gone then return "|cffff6060sold out|r" end
+      return l.price and ns.money(l.price) or "|cff808080bids only|r"
     end
     return r.price and (GREY .. ns.money(r.price) .. "|r") or "|cff808080bids only|r"
   end },
@@ -510,7 +545,8 @@ local function render()
     if r then
       b.icon:SetTexture(r.icon)
       local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[(ENUMS.quality[r.quality] or 2) - 1]
-      b.name:SetText((r.gone and liveFresh(r) and GREY or color and color.hex or "|cffffffff") .. r.name .. "|r")
+      local l = liveOf(r)
+      b.name:SetText((l and l.gone and GREY or color and color.hex or "|cffffffff") .. r.name .. "|r")
       for c, col in ipairs(COLS) do b.cells[c]:SetText(col[5](r)) end
       b:Show()
     else
@@ -729,6 +765,7 @@ local function makeResults()
   f:EnableMouse(true)
   f:SetScript("OnShow", function() blizzardList(false) end)
   f:SetScript("OnHide", function() blizzardList(true) end)
+  f:Hide()   -- frames start shown; hiding first makes the first Show run OnShow too
 
   -- top bar: query box, Search, ?, Close
   local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
@@ -798,32 +835,60 @@ end
 -- Running queries, item loading, rescans
 
 -- Item details the game hasn't loaded yet: ask for them a slice per frame, so searches see every item.
-local function warm()
-  local rows = nil
+local warming = { ids = nil, i = 1, left = 0 }
+
+-- Items in the open auction house's last scan whose details aren't saved yet.
+local function unsaved()
   local db, house = ns.db(), ns.house()
-  if not db or not house then return end
+  if not db or not house then return {} end
+  store()
   local side, realm = house:match("%-(%a+)$"), GetRealmName()
+  local rows
   for k = #db.scans, 1, -1 do
     local sc = db.scans[k]
     if sc.realm == realm and sc.side == side then rows = sc.rows; break end
   end
-  if not rows or not C_Item.RequestLoadItemDataByID then return end
   local ids, seen = {}, {}
-  for key in pairs(rows) do
+  for key in pairs(rows or {}) do
     local id = tonumber(key:match("^(%d+)"))
     if id and not seen[id] then
       seen[id] = true
-      if not C_Item.GetItemInfo(id) then ids[#ids + 1] = id end
+      if not db.itemInfo[id] and not itemInfo(id) then ids[#ids + 1] = id end
     end
   end
-  local i = 1
-  local function step()
-    for k = i, math.min(i + 249, #ids) do pcall(C_Item.RequestLoadItemDataByID, ids[k]) end
-    i = i + 250
-    if i <= #ids then C_Timer.After(0, step) end
-  end
-  step()
+  return ids
 end
+
+-- Asks the game for 100 items at a time and saves each as it arrives (GET_ITEM_INFO_RECEIVED), so nothing is lost
+-- when the game drops items from memory. Only needed once per item.
+local function warm()
+  if warming.ids or not C_Item.RequestLoadItemDataByID then return end
+  local ids = unsaved()
+  if #ids == 0 then return end
+  warming.ids, warming.i, warming.left = ids, 1, #ids
+  local function batch()
+    if not warming.ids then return end
+    local stop = math.min(warming.i + 99, #ids)
+    for k = warming.i, stop do pcall(C_Item.RequestLoadItemDataByID, ids[k]) end
+    warming.i = stop + 1
+    C_Timer.After(0.5, function()
+      -- whatever arrived in the meantime is saved by the event; count what is still missing
+      local left = 0
+      local db = store()
+      for k = 1, #ids do if not db.itemInfo[ids[k]] then left = left + 1 end end
+      warming.left = left
+      if warming.i <= #ids then
+        batch()
+      else
+        warming.ids = nil
+        -- anything that never arrived gets one more round later
+        if left > 0 then C_Timer.After(5, warm) end
+      end
+    end)
+  end
+  batch()
+end
+ns.warming = warming
 
 -- Live check: ask the server for each result item's current auctions (a few per second, the rows on screen first),
 -- then show live lowest price and quantity, or "sold out".
@@ -849,9 +914,9 @@ local function applyLive(id, groups, complete)
     if r.id == id then
       local g = groups[r.key]
       if g then
-        r.live, r.gone = { price = g.price, qty = g.qty, n = g.n, at = now }, nil
+        Q.live[r.key] = { price = g.price, qty = g.qty, n = g.n, at = now }
       elseif complete then
-        r.live, r.gone = { at = now }, true
+        Q.live[r.key] = { at = now, gone = true }
       end
     end
   end
@@ -957,7 +1022,7 @@ local function show(text)
       sortRows(Q.results, { { col = Q.sortCol, desc = Q.sortDesc } })
     end
     if (missing or 0) > 0 then
-      setStatus(head .. ("  |cff8c97aeloading %s more items...|r"):format(ns.num(missing)))
+      setStatus(head .. ("  |cff8c97aelearning %s more items (only the first time)...|r"):format(ns.num(missing)))
     else
       setStatus(head)
     end
@@ -970,8 +1035,8 @@ local function show(text)
     rerunToken = rerunToken + 1
     local mine, tries = rerunToken, (Q.tries or 0) + 1
     Q.tries = tries
-    if tries <= 20 then
-      C_Timer.After(1.5, function()
+    if tries <= 200 then
+      C_Timer.After(3, function()
         if mine == rerunToken and Q.frame and Q.frame:IsShown() and Q.last == text then show(text) end
       end)
     end
@@ -1045,7 +1110,12 @@ local ev = CreateFrame("Frame")
 ev:RegisterEvent("AUCTION_HOUSE_SHOW")
 ev:RegisterEvent("ITEM_SEARCH_RESULTS_UPDATED")
 ev:RegisterEvent("COMMODITY_SEARCH_RESULTS_UPDATED")
+ev:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 ev:SetScript("OnEvent", function(_, e, arg)
+  if e == "GET_ITEM_INFO_RECEIVED" then
+    if warming.ids and arg then itemInfo(arg) end
+    return
+  end
   if e == "ITEM_SEARCH_RESULTS_UPDATED" then liveItemResults(arg); return end
   if e == "COMMODITY_SEARCH_RESULTS_UPDATED" then liveCommodityResults(arg); return end
   C_Timer.After(0.2, function()
