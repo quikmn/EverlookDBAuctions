@@ -187,7 +187,8 @@ local function makePanel(parent)
     if acc < 1 then return end
     acc = 0
     refreshPanel()
-    if db.auto ~= false and not scan and house and ahFrame() and ahFrame():IsShown() then
+    -- this only runs while the panel (and so the auction house) is shown
+    if db.auto ~= false and not scan and house then
       local h = getHouse(house)
       if h.tried and time() - h.tried >= SCAN_COOLDOWN then startScan(true) end
     end

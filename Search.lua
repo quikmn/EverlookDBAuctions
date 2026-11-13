@@ -13,6 +13,7 @@ local ROWS = 16
 local ROW_H = 20
 
 local Q = { results = {}, offset = 0 }
+local liveStep   -- the live check (defined further down; the panel's scroll uses it)
 
 ---------------------------------------------------------------------------------------------------------------------
 -- Columns
@@ -829,7 +830,6 @@ end
 local LIVE_MAX = 150
 local SORTS = { { sortOrder = 0, reverseSort = false } }   -- Enum.AuctionHouseSortOrder.Price
 local live = { tried = {}, busy = nil }
-local liveStep
 
 local function liveHead()
   if not Q.frame or not Q.headBase then return end
