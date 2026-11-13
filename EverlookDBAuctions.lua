@@ -9,7 +9,7 @@
 -- players are never kept.
 -- /eah for status, /eah scan to start a full scan while the auction house is open.
 
-local ADDON = ...
+local ADDON, ns = ...
 local VERSION = 2
 local SCAN_COOLDOWN = 15 * 60   -- the server allows one full scan about every 15 minutes
 local SCAN_TIMEOUT = 90         -- no answer by then: the server refused (throttled) or the AH closed
@@ -641,6 +641,7 @@ frame:SetScript("OnEvent", function(_, e, ...) events[e](...) end)
 SLASH_EVERLOOKAUCTIONS1 = "/eah"
 SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
+  if ns.slash and ns.slash(msg) then return end
   if msg == "scan" then startScan(); return end
   if msg == "test" then
     db.reloadAfterScan = not db.reloadAfterScan
@@ -667,6 +668,28 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   end
   if not any then print("  no prices yet: open the auction house and press Full scan, or just search.") end
   print("  /eah scan  start a full scan (auction house open)")
+  if ns.help then ns.help() end
   print(("  /eah test  reload after every full scan so it is saved at once (now %s)"):format(db.reloadAfterScan and "on" or "off"))
   print(("  /eah auto on|off  automatic full scan when you open the auction house (now %s)"):format(db.auto == false and "off" or "on"))
+end
+
+-- Shared with Sell.lua
+ns.db = function() return db end
+ns.house = function() return house end
+ns.money, ns.num, ns.ago, ns.say, ns.variantOf, ns.ahFrame = money, num, ago, say, variantOf, ahFrame
+
+-- The newest full scan's row for "id:suffix" on the open auction house: { low, p10, med, qty, n, at }.
+function ns.latestRow(key)
+  if not db or not house then return nil end
+  local side = house:match("%-(%a+)$")
+  local realm = GetRealmName()
+  for k = #db.scans, 1, -1 do
+    local sc = db.scans[k]
+    if sc.realm == realm and sc.side == side then
+      local row = sc.rows and sc.rows[key]
+      if not row then return nil end
+      local f = { strsplit(",", row) }
+      return { low = tonumber(f[1]), p10 = tonumber(f[2]), med = tonumber(f[3]), qty = tonumber(f[4]), n = tonumber(f[5]), at = sc.at }
+    end
+  end
 end
