@@ -37,6 +37,8 @@ local function money(copper)
   return (g > 0 and g .. "g " or "") .. ((g > 0 or s > 0) and s .. "s " or "") .. c .. "c"
 end
 
+local function num(n) return BreakUpLargeNumbers and BreakUpLargeNumbers(n or 0) or tostring(n or 0) end
+
 local function ago(t)
   local d = time() - (t or 0)
   if d < 90 then return "just now" end
@@ -122,7 +124,7 @@ local function refreshPanel()
   local n = 0
   for _ in pairs(h.items) do n = n + 1 end
   local side = house:match("%-(%a+)$") or "?"
-  panel.info:SetText(("%s auction house\n%d items priced%s"):format(side, n,
+  panel.info:SetText(("%s auction house\n%s items priced%s"):format(side, num(n),
     h.scanned and ("\nlast full scan " .. ago(h.scanned)) or "\nno full scan yet"))
   local wait = h.tried and (h.tried + SCAN_COOLDOWN - time()) or 0
   if scan then
@@ -141,7 +143,7 @@ local startScan
 
 local function makePanel(parent)
   local f = CreateFrame("Frame", "EverlookAuctionsPanel", parent, "BackdropTemplate")
-  f:SetSize(190, 128)
+  f:SetSize(220, 158)
   f:SetPoint("TOPLEFT", parent, "TOPRIGHT", 4, -24)
   f:SetFrameStrata(parent:GetFrameStrata())
   f:SetBackdrop({
@@ -154,22 +156,23 @@ local function makePanel(parent)
   f:SetBackdropBorderColor(0.6, 0.5, 0.2, 1)
 
   local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  title:SetPoint("TOPLEFT", 10, -10)
+  title:SetPoint("TOPLEFT", 12, -12)
   title:SetText("EverlookDB Auctions")
 
   f.info = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   f.info:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
-  f.info:SetWidth(170)
+  f.info:SetWidth(196)
+  f.info:SetSpacing(2)
   f.info:SetJustifyH("LEFT")
 
   f.button = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  f.button:SetSize(170, 22)
-  f.button:SetPoint("BOTTOMLEFT", 10, 26)
+  f.button:SetSize(196, 24)
+  f.button:SetPoint("BOTTOMLEFT", 12, 40)
   f.button:SetScript("OnClick", function() startScan() end)
 
   f.status = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  f.status:SetPoint("BOTTOMLEFT", 10, 10)
-  f.status:SetWidth(170)
+  f.status:SetPoint("TOPLEFT", f.button, "BOTTOMLEFT", 0, -6)
+  f.status:SetWidth(196)
   f.status:SetJustifyH("LEFT")
 
   -- the cooldown countdown on the button
@@ -213,8 +216,8 @@ local function finishScan(h, agg, total, priced)
   scan = nil
   local n = 0
   for _ in pairs(agg) do n = n + 1 end
-  setStatus(("Done: %d auctions, %d items."):format(total, n))
-  say(("full scan done: %d auctions of %d different items (%d with a buyout)."):format(total, n, priced))
+  setStatus(("Done: %s auctions, %s items."):format(num(total), num(n)))
+  say(("full scan done: %s auctions of %s different items (%s with a buyout)."):format(num(total), num(n), num(priced)))
   refreshPanel()
 end
 
@@ -254,7 +257,7 @@ local function processList(total, first, read)
       end
     end
     i = stop + 1
-    setStatus(("Reading %d / %d..."):format(math.min(i - first, total), total))
+    setStatus(("Reading %s / %s..."):format(num(math.min(i - first, total)), num(total)))
     if i > last then finishScan(h, agg, total, priced) else C_Timer.After(0, step) end
   end
   step()
@@ -431,7 +434,7 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   for key, h in pairs(db.houses) do
     local n = 0
     for _ in pairs(h.items) do n = n + 1 end
-    print(("  %s: %d items priced, %s"):format(key, n, h.scanned and ("last full scan " .. ago(h.scanned)) or "no full scan yet"))
+    print(("  %s: %s items priced, %s"):format(key, num(n), h.scanned and ("last full scan " .. ago(h.scanned)) or "no full scan yet"))
     any = true
   end
   if not any then print("  no prices yet: open the auction house and press Full scan, or just search.") end
