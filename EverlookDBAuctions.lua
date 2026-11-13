@@ -337,6 +337,11 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
     })
     while #db.scans > MAX_SCANS do table.remove(db.scans, 1) end
     linkSamples = nil
+    if db.reloadAfterScan then
+      -- test mode (/eah test): reload so the game writes the scan to disk right away
+      say("test mode: reloading in 3 seconds so the scan is saved.")
+      C_Timer.After(3, function() if not scan then ReloadUI() end end)
+    end
     scan = nil
     setStatus(("Done: %s auctions, %s items."):format(num(total), num(#list)))
     say(("full scan done: %s auctions, %s item versions."):format(num(total), num(#list)))
@@ -637,6 +642,12 @@ SLASH_EVERLOOKAUCTIONS1 = "/eah"
 SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
   if msg == "scan" then startScan(); return end
+  if msg == "test" then
+    db.reloadAfterScan = not db.reloadAfterScan
+    say(db.reloadAfterScan and "test mode on: the UI reloads after every full scan, so the scan is saved at once."
+      or "test mode off.")
+    return
+  end
   if msg == "auto off" or msg == "auto on" then
     db.auto = msg == "auto on"
     say(db.auto and "automatic full scans are on (when you open the auction house, at most every 15 minutes)."
@@ -656,5 +667,6 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   end
   if not any then print("  no prices yet: open the auction house and press Full scan, or just search.") end
   print("  /eah scan  start a full scan (auction house open)")
+  print(("  /eah test  reload after every full scan so it is saved at once (now %s)"):format(db.reloadAfterScan and "on" or "off"))
   print(("  /eah auto on|off  automatic full scan when you open the auction house (now %s)"):format(db.auto == false and "off" or "on"))
 end
