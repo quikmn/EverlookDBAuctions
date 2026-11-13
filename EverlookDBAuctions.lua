@@ -180,11 +180,17 @@ local function makePanel(parent)
   f.status:SetWidth(196)
   f.status:SetJustifyH("LEFT")
 
-  -- the cooldown countdown on the button
+  -- the cooldown countdown on the button, and a fresh full scan every 15 minutes while the auction house is open
   local acc = 0
   f:SetScript("OnUpdate", function(_, dt)
     acc = acc + dt
-    if acc >= 1 then acc = 0; refreshPanel() end
+    if acc < 1 then return end
+    acc = 0
+    refreshPanel()
+    if db.auto ~= false and not scan and house and ahFrame() and ahFrame():IsShown() then
+      local h = getHouse(house)
+      if h.tried and time() - h.tried >= SCAN_COOLDOWN then startScan(true) end
+    end
   end)
   return f
 end
@@ -337,8 +343,10 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
     })
     while #db.scans > MAX_SCANS do table.remove(db.scans, 1) end
     linkSamples = nil
+    if ns.onScan then ns.onScan() end
     if db.reloadAfterScan then
-      -- test mode (/eah test): reload so the game writes the scan to disk right away
+      -- test mode (/eah test, one scan): reload so the game writes the scan to disk right away
+      db.reloadAfterScan = nil
       say("test mode: reloading in 3 seconds so the scan is saved.")
       C_Timer.After(3, function() if not scan then ReloadUI() end end)
     end
@@ -645,13 +653,13 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   if msg == "scan" then startScan(); return end
   if msg == "test" then
     db.reloadAfterScan = not db.reloadAfterScan
-    say(db.reloadAfterScan and "test mode on: the UI reloads after every full scan, so the scan is saved at once."
+    say(db.reloadAfterScan and "test mode on: the UI reloads after the next full scan, so it is saved at once."
       or "test mode off.")
     return
   end
   if msg == "auto off" or msg == "auto on" then
     db.auto = msg == "auto on"
-    say(db.auto and "automatic full scans are on (when you open the auction house, at most every 15 minutes)."
+    say(db.auto and "automatic full scans are on (when you open the auction house, then every 15 minutes while it is open)."
       or "automatic full scans are off. Press Full scan or type /eah scan when you want one.")
     return
   end
