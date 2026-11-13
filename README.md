@@ -19,6 +19,7 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 
 - `/eah` shows what's saved and which auction house API the game has
 - `/eah scan` starts a full scan while the auction house is open
+- `/eah auto off` (or `on`) stops or restarts the automatic full scan when you open the auction house (at most every 15 minutes)
 
 ## Coming next
 
