@@ -3,21 +3,26 @@
 --   Searches    prices from the normal Blizzard search results are kept too, no scan needed
 --   Tooltips    lowest buyout per item, how many are up, how old the price is, and the 30-day low
 -- Prices are kept per realm and auction house (Alliance, Horde, or the neutral houses in Booty Bay, Gadgetzan and
--- Everlook). Sellers, bidders and other players are never read into the saved data.
+-- Everlook). Each full scan is also kept as a summary for EverlookDB.com: region, realm, which auction house, the
+-- server time, and per item version (item + random suffix) the lowest, 10th-percentile and median price per unit,
+-- quantity, auctions, bid-only auctions, auctions with bids, time left and lowest bid. Sellers, bidders and other
+-- players are never kept.
 -- /eah for status, /eah scan to start a full scan while the auction house is open.
 
 local ADDON = ...
-local VERSION = 1
+local VERSION = 2
 local SCAN_COOLDOWN = 15 * 60   -- the server allows one full scan about every 15 minutes
 local SCAN_TIMEOUT = 90         -- no answer by then: the server refused (throttled) or the AH closed
 local BATCH = 1000              -- auctions read per frame, so a big scan doesn't freeze the game
 local HISTORY_DAYS = 30
+local MAX_SCANS = 4             -- full scans kept for upload to EverlookDB.com (newest; about 300 KB each)
 local STALE = 24 * 3600         -- older prices are shown grey
 -- Zones whose auction house is the neutral one (Classic UiMapIDs): Stranglethorn Vale, Tanaris, Winterspring
 local NEUTRAL_ZONES = { [1434] = true, [1446] = true, [1452] = true }
 
 local db
 local house          -- the house key while an auction house is open, e.g. "Everlook-Alliance"
+local houseSide      -- "Alliance", "Horde" or "Neutral" while an auction house is open
 local panel          -- the small frame beside the auction house
 local scan = nil     -- { started = time, mode = "replicate"|"getall" } while a full scan runs
 
@@ -80,7 +85,7 @@ end
 local function currentHouseKey()
   local side = UnitFactionGroup("player") or "?"
   if NEUTRAL_ZONES[zoneMapID() or 0] then side = "Neutral" end
-  return (GetRealmName() or "?") .. "-" .. side
+  return (GetRealmName() or "?") .. "-" .. side, side
 end
 
 local function getHouse(key)
@@ -191,34 +196,116 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- Full scan
 
--- Reads auction i the same way for both APIs. Returns count, buyout, itemID; seller and bidder are skipped, never kept.
+-- Reads auction i the same way for both APIs: count, buyout, itemID, minimum bid, current bid, item link, time-left
+-- band (0 short .. 3 very long). Seller and bidder come back from the same call; they are skipped, never kept.
 local function readModern(i)
-  local okCall, _, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemID = pcall(C_AuctionHouse.GetReplicateItemInfo, i)
+  local okCall, _, _, count, _, _, _, _, minBid, _, buyout, bid, _, _, _, _, _, itemID = pcall(C_AuctionHouse.GetReplicateItemInfo, i)
   if not okCall then return nil end
-  return ok(count), ok(buyout), ok(itemID)
+  local okLink, link = pcall(C_AuctionHouse.GetReplicateItemLink, i)
+  local okLeft, left = pcall(C_AuctionHouse.GetReplicateItemTimeLeft, i)
+  return ok(count), ok(buyout), ok(itemID), ok(minBid), ok(bid), okLink and ok(link) or nil, okLeft and ok(left) or nil
 end
 
 local function readClassic(i)
-  local okCall, _, _, count, _, _, _, _, _, _, buyout, _, _, _, _, _, _, itemID = pcall(GetAuctionItemInfo, "list", i)
+  local okCall, _, _, count, _, _, _, _, minBid, _, buyout, bid, _, _, _, _, _, itemID = pcall(GetAuctionItemInfo, "list", i)
   if not okCall then return nil end
-  return ok(count), ok(buyout), ok(itemID)
+  local okLink, link = pcall(GetAuctionItemLink, "list", i)
+  local okLeft, left = pcall(GetAuctionItemTimeLeft, "list", i)
+  left = okLeft and ok(left)
+  return ok(count), ok(buyout), ok(itemID), ok(minBid), ok(bid), okLink and ok(link) or nil, left and (left - 1) or nil
 end
 
-local function finishScan(h, agg, total, priced)
-  local now, day = time(), today()
-  h.items = {}
-  for id, a in pairs(agg) do
-    h.items[id] = { a.unit, a.qty, a.n, now }
-    if a.unit then noteDay(h, id, a.unit, day) end
+-- "item:ID:enchant:gem1:gem2:gem3:gem4:suffix:..." -> variant key "ID:suffix", the suffix, and the shown name
+local function variantOf(id, link)
+  if type(link) ~= "string" then return nil end
+  local rest, name = link:match("|Hitem:%-?%d+:([^|]*)|h%[(.-)%]|h")
+  if not rest then return nil end
+  local suffix = tonumber((select(6, strsplit(":", rest)))) or 0
+  return id .. ":" .. suffix, suffix, name
+end
+
+-- Lowest, 10th-percentile and median price per unit, counting every item in a stack (not every auction).
+local function summarize(v)
+  local n = #v.units
+  if n == 0 then return nil end
+  local idx = {}
+  for k = 1, n do idx[k] = k end
+  local units, counts = v.units, v.counts
+  table.sort(idx, function(a, b) return units[a] < units[b] end)
+  local total = 0
+  for k = 1, n do total = total + counts[k] end
+  local acc, p10, med = 0, nil, nil
+  for _, k in ipairs(idx) do
+    acc = acc + counts[k]
+    if not p10 and acc >= total * 0.1 then p10 = units[k] end
+    if acc >= total * 0.5 then med = units[k]; break end
   end
-  h.scanned = now
-  pruneDays(h)
-  scan = nil
-  local n = 0
-  for _ in pairs(agg) do n = n + 1 end
-  setStatus(("Done: %s auctions, %s items."):format(num(total), num(n)))
-  say(("full scan done: %s auctions of %s different items (%s with a buyout)."):format(num(total), num(n), num(priced)))
-  refreshPanel()
+  return units[idx[1]], p10, med
+end
+
+local function addonVersion()
+  local get = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+  local v = get and get(ADDON, "Version")
+  return (v and not v:find("@")) and v or "dev"
+end
+
+-- Turns the variants into saved rows (a slice per frame), then stores the scan and the tooltip prices.
+local function finishScan(h, vars, total, noLink)
+  local list = {}
+  for key in pairs(vars) do list[#list + 1] = key end
+  local rows, items = {}, {}
+  local i = 1
+  local function step()
+    local stop = math.min(i + 499, #list)
+    for k = i, stop do
+      local key = list[k]
+      local v = vars[key]
+      local low, p10, med = summarize(v)
+      -- low,p10,median,quantity,auctions,bid-only,with bids,short,medium,long,very long,lowest bid[,suffix name]
+      local row = table.concat({ low or "", p10 or "", med or "", v.qty, v.n, v.bidOnly, v.withBids,
+        v.tl[1], v.tl[2], v.tl[3], v.tl[4], v.minBid or "" }, ",")
+      if v.suffix ~= 0 and v.name then row = row .. "," .. v.name end
+      rows[key] = row
+      local it = items[v.id]
+      if not it then it = { nil, 0, 0 }; items[v.id] = it end
+      if low and (not it[1] or low < it[1]) then it[1] = low end
+      it[2] = it[2] + v.qty
+      it[3] = it[3] + v.n
+    end
+    i = stop + 1
+    if i <= #list then C_Timer.After(0, step); return end
+
+    local now, day = time(), today()
+    h.items = {}
+    for id, it in pairs(items) do
+      h.items[id] = { it[1], it[2], it[3], now }
+      if it[1] then noteDay(h, id, it[1], day) end
+    end
+    h.scanned = now
+    pruneDays(h)
+    local build = select(2, GetBuildInfo())
+    table.insert(db.scans, {
+      region = ok(GetCurrentRegionName and GetCurrentRegionName()),
+      regionID = ok(GetCurrentRegion and GetCurrentRegion()),
+      realm = ok(GetRealmName()),
+      realmID = ok(GetRealmID and GetRealmID()),
+      realmNormalized = ok(GetNormalizedRealmName and GetNormalizedRealmName()),
+      side = scan.side,
+      at = scan.at,                       -- server time the scan was requested (same clock for every player)
+      took = GetServerTime() - scan.at,   -- seconds until the list was read
+      build = build,
+      addon = addonVersion(),
+      auctions = total,
+      noLink = noLink,                    -- auctions whose item link wasn't loaded (counted under suffix 0)
+      rows = rows,
+    })
+    while #db.scans > MAX_SCANS do table.remove(db.scans, 1) end
+    scan = nil
+    setStatus(("Done: %s auctions, %s items."):format(num(total), num(#list)))
+    say(("full scan done: %s auctions, %s item versions."):format(num(total), num(#list)))
+    refreshPanel()
+  end
+  step()
 end
 
 -- Reads the whole list a slice per frame.
@@ -232,7 +319,7 @@ local function processList(total, first, read)
     return
   end
   local h = getHouse(house)
-  local agg, i, last, priced = {}, first, first + total - 1, 0
+  local vars, i, last, noLink = {}, first, first + total - 1, 0
   local function step()
     if not scan then return end
     if scan.aborted then
@@ -243,22 +330,41 @@ local function processList(total, first, read)
     end
     local stop = math.min(i + BATCH - 1, last)
     for k = i, stop do
-      local count, buyout, id = read(k)
+      local count, buyout, id, minBid, bid, link, left = read(k)
       if id and count and count > 0 then
-        local a = agg[id]
-        if not a then a = { qty = 0, n = 0 }; agg[id] = a end
-        a.qty = a.qty + count
-        a.n = a.n + 1
-        if buyout and buyout > 0 then
-          local unit = math.floor(buyout / count)
-          if not a.unit or unit < a.unit then a.unit = unit end
-          priced = priced + 1
+        local key, suffix, name = variantOf(id, link)
+        if not key then key, suffix = id .. ":0", 0; noLink = noLink + 1 end
+        local v = vars[key]
+        if not v then
+          v = { id = id, suffix = suffix, units = {}, counts = {}, qty = 0, n = 0, bidOnly = 0, withBids = 0, tl = { 0, 0, 0, 0 } }
+          vars[key] = v
         end
+        if suffix ~= 0 and name and not v.name then v.name = name end
+        v.qty = v.qty + count
+        v.n = v.n + 1
+        if buyout and buyout > 0 then
+          v.units[#v.units + 1] = math.floor(buyout / count)
+          v.counts[#v.counts + 1] = count
+        else
+          v.bidOnly = v.bidOnly + 1
+        end
+        if bid and bid > 0 then v.withBids = v.withBids + 1 end
+        if minBid and minBid > 0 then
+          local mb = math.floor(minBid / count)
+          if not v.minBid or mb < v.minBid then v.minBid = mb end
+        end
+        local band = left and v.tl[left + 1]
+        if band then v.tl[left + 1] = band + 1 end
       end
     end
     i = stop + 1
     setStatus(("Reading %s / %s..."):format(num(math.min(i - first, total)), num(total)))
-    if i > last then finishScan(h, agg, total, priced) else C_Timer.After(0, step) end
+    if i > last then
+      setStatus("Saving...")
+      finishScan(h, vars, total, noLink)
+    else
+      C_Timer.After(0, step)
+    end
   end
   step()
 end
@@ -271,12 +377,12 @@ function startScan()
   if wait > 0 then say(("the server allows one full scan about every 15 minutes; try again in %d:%02d."):format(math.floor(wait / 60), wait % 60)); return end
   local kind = apiKind()
   if kind == "modern" then
-    scan = { started = time(), mode = "replicate" }
+    scan = { started = time(), mode = "replicate", side = houseSide, at = GetServerTime() }
     C_AuctionHouse.ReplicateItems()
   elseif kind == "classic" then
     local canQuery, canAll = CanSendAuctionQuery()
     if not canAll then say("the server doesn't allow a full scan right now; try again later."); return end
-    scan = { started = time(), mode = "getall" }
+    scan = { started = time(), mode = "getall", side = houseSide, at = GetServerTime() }
     QueryAuctionItems("", nil, nil, 0, nil, nil, true, false, nil)
   else
     say("this client has no auction house API I know. Type /eah status and send that to EverlookDB.")
@@ -372,7 +478,7 @@ end
 -- Events and commands
 
 local function onShow(retried)
-  house = currentHouseKey()
+  house, houseSide = currentHouseKey()
   local parent = ahFrame()
   -- Blizzard loads the auction house UI on this same event; if it isn't there yet, look again next frame
   if not parent and not retried then C_Timer.After(0, function() if house then onShow(true) end end); return end
@@ -389,6 +495,7 @@ function events.ADDON_LOADED(name)
   db = EverlookAuctionsDB
   db.version = VERSION
   db.houses = db.houses or {}
+  db.scans = db.scans or {}
   hookTooltips()
 end
 
