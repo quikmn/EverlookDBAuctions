@@ -215,12 +215,36 @@ local function readClassic(i)
   return ok(count), ok(buyout), ok(itemID), ok(minBid), ok(bid), okLink and ok(link) or nil, left and (left - 1) or nil
 end
 
--- "item:ID:enchant:gem1:gem2:gem3:gem4:suffix:..." -> variant key "ID:suffix", the suffix, and the shown name
+-- The item's own name ("Bandit Cloak"), when the game has it loaded.
+local function baseName(id)
+  local get = (C_Item and C_Item.GetItemNameByID) or GetItemInfo
+  local okName, n = pcall(get, id)
+  return okName and n or nil
+end
+
+local linkSamples   -- set while a scan is read: a few links of random-stat items, so the format can be checked
+
+-- "item:ID:enchant:gem1:gem2:gem3:gem4:suffix:unique:level:spec:mods:context:numBonus:bonus1:..."
+-- -> variant key "ID:suffix", the suffix, and the shown name. Random stats ("of the Bear") are the old suffix field,
+-- or, when that is empty and the shown name differs from the item's own name, the first bonus ID.
 local function variantOf(id, link)
   if type(link) ~= "string" then return nil end
   local rest, name = link:match("|Hitem:%-?%d+:([^|]*)|h%[(.-)%]|h")
   if not rest then return nil end
-  local suffix = tonumber((select(6, strsplit(":", rest)))) or 0
+  local f = { strsplit(":", rest) }
+  local suffix = tonumber(f[6]) or 0
+  if suffix == 0 then
+    local base = baseName(id)
+    if base and name and name ~= base then
+      local nb = tonumber(f[12]) or 0
+      if nb > 0 then suffix = tonumber(f[13]) or 0 end
+      if linkSamples and #linkSamples < 30 then
+        -- unique ID, level and spec say nothing about the item; blank them
+        f[7], f[8], f[9] = "", "", ""
+        linkSamples[#linkSamples + 1] = id .. ":" .. table.concat(f, ":") .. " [" .. name .. "]"
+      end
+    end
+  end
   return id .. ":" .. suffix, suffix, name
 end
 
@@ -250,7 +274,16 @@ local function addonVersion()
 end
 
 -- Turns the variants into saved rows (a slice per frame), then stores the scan and the tooltip prices.
-local function finishScan(h, vars, total, noLink, linkRounds)
+local function topUnlinked(unlinked)
+  local list = {}
+  for id, n in pairs(unlinked or {}) do list[#list + 1] = { id, n } end
+  table.sort(list, function(a, b) return a[2] > b[2] end)
+  local out = {}
+  for k = 1, math.min(50, #list) do out[k] = list[k][1] .. ":" .. list[k][2] end
+  return out
+end
+
+local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
   local list = {}
   for key in pairs(vars) do list[#list + 1] = key end
   local rows, items = {}, {}
@@ -298,9 +331,12 @@ local function finishScan(h, vars, total, noLink, linkRounds)
       auctions = total,
       noLink = noLink,                    -- auctions whose item link wasn't loaded (counted under suffix 0)
       linkRounds = linkRounds,            -- auctions still without a link after the first read and each retry
+      noLinkItems = topUnlinked(unlinked), -- the 50 items with the most auctions that never got a link: "ID:auctions"
+      linkSamples = linkSamples,          -- up to 30 links of random-stat items (unique ID, level and spec blanked)
       rows = rows,
     })
     while #db.scans > MAX_SCANS do table.remove(db.scans, 1) end
+    linkSamples = nil
     scan = nil
     setStatus(("Done: %s auctions, %s items."):format(num(total), num(#list)))
     say(("full scan done: %s auctions, %s item versions."):format(num(total), num(#list)))
@@ -351,6 +387,8 @@ local function processList(total, first, read)
   end
   local h = getHouse(house)
   local vars, pending, requested = {}, {}, {}
+  local unlinked = {}   -- item ID -> auctions that never got a link
+  linkSamples = {}
   local load = C_Item and C_Item.RequestLoadItemDataByID
 
   local function stopped()
@@ -376,7 +414,10 @@ local function processList(total, first, read)
         if id and count and count > 0 then
           if link or final then
             addAuction(vars, id, count, buyout, minBid, bid, link, left)
-            if final and not link then missing[#missing + 1] = k end
+            if final and not link then
+              missing[#missing + 1] = k
+              unlinked[id] = (unlinked[id] or 0) + 1
+            end
           else
             missing[#missing + 1] = k
             if load and not requested[id] then requested[id] = true; pcall(load, id) end
@@ -400,17 +441,18 @@ local function processList(total, first, read)
     if #missing == 0 or round >= #RETRY_WAITS then
       if #missing == 0 then
         setStatus("Saving...")
-        finishScan(h, vars, total, 0, rounds)
+        finishScan(h, vars, total, 0, rounds, unlinked)
       else
         -- last try: whatever still has no link counts under suffix 0
         pass(missing, true, function(still)
           setStatus("Saving...")
-          finishScan(h, vars, total, #still, rounds)
+          finishScan(h, vars, total, #still, rounds, unlinked)
         end)
       end
       return
     end
     round = round + 1
+    requested = {}   -- ask again each round: some loads fail or get dropped
     setStatus(("Loading item details for %s auctions..."):format(num(#missing)))
     C_Timer.After(RETRY_WAITS[round], function()
       if stopped() then return end
