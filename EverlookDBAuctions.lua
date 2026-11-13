@@ -123,15 +123,29 @@ local function setStatus(text)
   if panel then panel.status:SetText(text or "") end
 end
 
+local RETRY_AFTER = 60          -- a scan that didn't finish can be tried again by hand after a minute
+
+-- A scan was started but never finished (UI reloaded, auction house closed, or no answer from the server).
+local function unfinished(h)
+  return not scan and h.tried ~= nil and (not h.scanned or h.scanned < h.tried)
+end
+
+-- Seconds until the Full scan button may be used again.
+local function scanWait(h)
+  if not h.tried then return 0 end
+  return h.tried + (unfinished(h) and RETRY_AFTER or SCAN_COOLDOWN) - time()
+end
+
 local function refreshPanel()
   if not panel or not house then return end
   local h = getHouse(house)
   local n = 0
   for _ in pairs(h.items) do n = n + 1 end
   local side = house:match("%-(%a+)$") or "?"
-  panel.info:SetText(("%s auction house\n%s items priced%s"):format(side, num(n),
-    h.scanned and ("\nlast full scan " .. ago(h.scanned)) or "\nno full scan yet"))
-  local wait = h.tried and (h.tried + SCAN_COOLDOWN - time()) or 0
+  panel.info:SetText(("%s auction house\n%s items priced%s%s"):format(side, num(n),
+    h.scanned and ("\nlast full scan " .. ago(h.scanned)) or "\nno full scan yet",
+    unfinished(h) and "\n|cffff9040the last scan didn't finish|r" or ""))
+  local wait = scanWait(h)
   if scan then
     panel.button:Disable()
     panel.button:SetText("Scanning...")
@@ -480,7 +494,7 @@ function startScan(auto)
   if scan then return end
   if not house or not ahFrame() or not ahFrame():IsShown() then say("open the auction house first."); return end
   local h = getHouse(house)
-  local wait = h.tried and (h.tried + SCAN_COOLDOWN - time()) or 0
+  local wait = scanWait(h)
   if wait > 0 then say(("the server allows one full scan about every 15 minutes; try again in %d:%02d."):format(math.floor(wait / 60), wait % 60)); return end
   local kind = apiKind()
   if kind == "modern" then
