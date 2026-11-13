@@ -467,18 +467,30 @@ local function hideResults()
   if Q.frame then Q.frame:Hide() end
 end
 
+-- Blizzard's own list (its tip text and column headers) would show through, so it is hidden while ours is open.
+local function blizzardList(shown)
+  local area = _G.AuctionHouseFrame and AuctionHouseFrame.BrowseResultsFrame
+  if not area then return end
+  for _, child in ipairs({ area:GetChildren() }) do
+    if child ~= Q.frame then child:SetAlpha(shown and 1 or 0) end
+  end
+  for _, region in ipairs({ area:GetRegions() }) do region:SetAlpha(shown and 1 or 0) end
+end
+
 local function makeResults()
   local ah = _G.AuctionHouseFrame
   local area = ah and ah.BrowseResultsFrame
   if Q.frame or not area then return Q.frame end
   local f = CreateFrame("Frame", "EverlookAuctionsQueryResults", area, "BackdropTemplate")
   f:SetAllPoints(area)
-  f:SetFrameLevel(area:GetFrameLevel() + 20)
+  f:SetFrameLevel(area:GetFrameLevel() + 200)
   f:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
     tile = true, tileSize = 16, edgeSize = 14, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
   f:SetBackdropColor(0.04, 0.04, 0.05, 0.97)
   f:SetBackdropBorderColor(0.6, 0.5, 0.2, 1)
   f:EnableMouse(true)
+  f:SetScript("OnShow", function() blizzardList(false) end)
+  f:SetScript("OnHide", function() blizzardList(true) end)
 
   local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
   close:SetSize(56, 22)
@@ -588,7 +600,9 @@ function ns.query(text)
   local f = makeResults()
   if not f then return end
   f.box:SetText(text)
-  local results, head = run((text:gsub("^%s*where%s+", "")))
+  -- the game's edit boxes give a typed | back as || (| starts its escape codes)
+  local plain = text:gsub("||", "|"):gsub("^%s*where%s+", "")
+  local results, head = run(plain)
   Q.results = results or {}
   Q.offset = 0
   f.head:SetText(results and head or ("|cffff6060" .. head .. "|r"))
