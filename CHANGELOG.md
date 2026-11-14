@@ -1,5 +1,10 @@
 # EverlookDB Auctions
 
+## v0.2.1 (2026-11-14)
+
+- The full scan now steps aside for you: while a buy, bid, post or cancel waits for the server (and for 4 seconds after), the scan pauses. Before, a big scan could make the buyout popup spin for a long time.
+- The scan asks the server for item details a few at a time instead of thousands at once.
+
 ## v0.2.0 (2026-11-14)
 
 - Darker, cleaner look for the whole auction house and the addon's own panels: one palette, flat fills with 1 px borders, clear hover and selected states, larger text.

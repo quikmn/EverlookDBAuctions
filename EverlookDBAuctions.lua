@@ -14,6 +14,8 @@ local VERSION = 2
 local SCAN_COOLDOWN = 15 * 60   -- the server allows one full scan about every 15 minutes
 local SCAN_TIMEOUT = 90         -- no answer by then: the server refused (throttled) or the AH closed
 local BATCH = 1000              -- auctions read per frame, so a big scan doesn't freeze the game
+local LOADS_PER_STEP = 15       -- item-detail requests per frame: a flood of them delays the player's own buys and posts
+local YIELD_FOR = 4             -- seconds a running scan pauses after the player buys, bids, posts or cancels
 local HISTORY_DAYS = 30
 local MAX_SCANS = 4             -- full scans kept for upload to EverlookDB.com (newest; about 300 KB each)
 local STALE = 24 * 3600         -- older prices are shown grey
@@ -25,6 +27,25 @@ local house          -- the house key while an auction house is open, e.g. "Ever
 local houseSide      -- "Alliance", "Horde" or "Neutral" while an auction house is open
 local panel          -- the small frame beside the auction house
 local scan = nil     -- { started = time, mode = "replicate"|"getall" } while a full scan runs
+
+-- The player always goes first: while one of their auction house actions waits for the server, or for a few seconds
+-- after it, a running scan stops reading and stops asking for item details.
+local yieldUntil, awaiting, sentAt = 0, 0, 0
+local function yielding()
+  -- a reply that never comes stops counting after 5 seconds, so a lost one can't stall the scan
+  return (awaiting > 0 and GetTime() - sentAt < 5) or GetTime() < yieldUntil
+end
+local function playerActed() yieldUntil = GetTime() + YIELD_FOR end
+do
+  local api = C_AuctionHouse or {}
+  for _, name in ipairs({ "PlaceBid", "StartCommoditiesPurchase", "ConfirmCommoditiesPurchase", "PostItem",
+      "PostCommodity", "CancelAuction" }) do
+    if api[name] then hooksecurefunc(api, name, playerActed) end
+  end
+  for _, name in ipairs({ "PlaceAuctionBid", "PostAuction", "StartAuction", "CancelAuction" }) do
+    if _G[name] then hooksecurefunc(name, playerActed) end
+  end
+end
 
 -- Forever hides some values from addons ("secret values"). Treat any of them as unknown.
 local isSecret = issecretvalue or function() return false end
@@ -432,10 +453,17 @@ local function processList(total, first, read)
     return
   end
   local h = getHouse(house)
-  local vars, pending, requested = {}, {}, {}
+  local vars, requested = {}, {}
   local unlinked = {}   -- item ID -> auctions that never got a link
   linkSamples = {}
   local load = C_Item and C_Item.RequestLoadItemDataByID
+  local queue, qi = {}, 1   -- item IDs waiting to be asked for, a few per frame
+
+  local function pump()
+    local stop = math.min(qi + LOADS_PER_STEP - 1, #queue)
+    for k = qi, stop do pcall(load, queue[k]) end
+    qi = stop + 1
+  end
 
   local function stopped()
     if not scan then return true end
@@ -453,6 +481,12 @@ local function processList(total, first, read)
     local i, missing = 1, {}
     local function step()
       if stopped() then return end
+      if yielding() then
+        setStatus("Paused while the auction house answers you...")
+        C_Timer.After(0.25, step)
+        return
+      end
+      if load then pump() end
       local stop = math.min(i + BATCH - 1, n)
       for j = i, stop do
         local k = list and list[j] or (first + j - 1)
@@ -466,7 +500,7 @@ local function processList(total, first, read)
             end
           else
             missing[#missing + 1] = k
-            if load and not requested[id] then requested[id] = true; pcall(load, id) end
+            if load and not requested[id] then requested[id] = true; queue[#queue + 1] = id end
           end
         end
       end
@@ -498,12 +532,21 @@ local function processList(total, first, read)
       return
     end
     round = round + 1
-    requested = {}   -- ask again each round: some loads fail or get dropped
     setStatus(("Loading item details for %s auctions..."):format(num(#missing)))
-    C_Timer.After(RETRY_WAITS[round], function()
+    local function drain()
       if stopped() then return end
-      pass(missing, false, after)
-    end)
+      if load and qi <= #queue then
+        if not yielding() then pump() end
+        C_Timer.After(0, drain)
+        return
+      end
+      requested, queue, qi = {}, {}, 1   -- ask again next round: some loads fail or get dropped
+      C_Timer.After(RETRY_WAITS[round], function()
+        if stopped() then return end
+        pass(missing, false, after)
+      end)
+    end
+    drain()
   end
   pass(nil, false, after)
 end
@@ -685,6 +728,7 @@ function events.AUCTION_HOUSE_CLOSED()
     if scan.reading then scan.aborted = true else scan = nil end
   end
   house = nil
+  awaiting = 0
 end
 
 function events.REPLICATE_ITEM_LIST_UPDATE()
@@ -700,6 +744,12 @@ function events.AUCTION_ITEM_LIST_UPDATE()
   local _, total = GetNumAuctionItems("list")
   processList(total or 0, 1, readClassic)
 end
+
+function events.AUCTION_HOUSE_THROTTLED_MESSAGE_SENT() awaiting = awaiting + 1; sentAt = GetTime() end
+local function answered() awaiting = math.max(0, awaiting - 1) end
+events.AUCTION_HOUSE_THROTTLED_MESSAGE_RESPONSE_RECEIVED = answered
+events.AUCTION_HOUSE_THROTTLED_MESSAGE_DROPPED = answered
+function events.AUCTION_HOUSE_THROTTLED_SYSTEM_READY() awaiting = 0 end
 
 function events.AUCTION_HOUSE_BROWSE_RESULTS_UPDATED() captureBrowse() end
 function events.AUCTION_HOUSE_BROWSE_RESULTS_ADDED() captureBrowse() end
