@@ -1,5 +1,5 @@
-# Push a tag like v1.0.0 and this builds EverlookDB-v1.0.0.zip and a GitHub release.
-# WowUp (and other GitHub-aware addon managers) install and update from those releases.
+# Push a tag like v1.0.0 and this builds EverlookDBAuctions-v1.0.0-forever.zip and a GitHub release, plus a copy named EverlookDBAuctions.zip
+# so https://github.com/quikmn/EverlookDBAuctions/releases/latest/download/EverlookDBAuctions.zip always gets the newest. WowUp uses release.json.
 name: Release
 
 on:
@@ -19,3 +19,9 @@ jobs:
       - uses: BigWigsMods/packager@v2
         env:
           GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}
+      - name: Same zip under a fixed name (direct download link on everlookdb.com)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp .release/EverlookDBAuctions-${GITHUB_REF_NAME}-forever.zip .release/EverlookDBAuctions.zip
+          gh release upload "$GITHUB_REF_NAME" .release/EverlookDBAuctions.zip --clobber
