@@ -18,7 +18,7 @@ local T = {
   edgeHi   = { 0.290, 0.318, 0.376, 1 },     -- #4a5160  hovered borders
   text     = { 0.902, 0.914, 0.933, 1 },     -- #e6e9ee  main text
   dim      = { 0.604, 0.639, 0.698, 1 },     -- #9aa3b2  secondary text
-  mute     = { 0.427, 0.455, 0.506, 1 },     -- #6d7481  labels, disabled
+  mute     = { 0.471, 0.502, 0.557, 1 },     -- #78808e  labels, disabled (4.5:1 on the surface)
   accent   = { 1, 0.82, 0, 1 },              -- #ffd100  EverlookDB gold: active tab, selection, main actions
   accentBg = { 0.196, 0.161, 0.043, 1 },     -- #32290b  main action fill
   accentHi = { 0.263, 0.216, 0.063, 1 },     -- #433710  main action hovered
@@ -28,7 +28,12 @@ local T = {
   thumb    = { 0.239, 0.263, 0.310, 1 },     -- scroll thumb
   good     = { 0.427, 0.792, 0.478, 1 },     -- #6dca7a
   bad      = { 0.925, 0.373, 0.341, 1 },     -- #ec5f57
+  badBg    = { 0.212, 0.090, 0.086, 1 },     -- #361716  danger action hovered
   info     = { 0.478, 0.698, 1, 1 },         -- #7ab2ff
+  accentUp = { 1, 0.871, 0.251, 1 },         -- #ffde40  main action hovered
+  onAccent = { 0.090, 0.071, 0.012, 1 },     -- #171203  text on a gold fill
+  sheen    = { 1, 1, 1, 0.05 },              -- the light top edge of raised things
+  glow     = { 1, 0.82, 0, 0.22 },           -- soft ring around a focused box or an armed button
 }
 ns.T = T
 
@@ -124,9 +129,24 @@ local function setEdge(f, edge)
   if s then for _, tex in ipairs(s.edges) do tex:SetColorTexture(unpack(edge)) end end
 end
 
+-- Raised things (buttons, header bands) are a touch lighter at the top, so they read as raised, not printed.
+local LIFT = 0.022
+local canGradient = CreateColor ~= nil
+local function shade(tex, c, lift)
+  if lift and canGradient and tex.SetGradient then
+    tex:SetColorTexture(1, 1, 1, 1)
+    local a = c[4] or 1
+    tex:SetGradient("VERTICAL", CreateColor(c[1], c[2], c[3], a),
+      CreateColor(math.min(1, c[1] + lift), math.min(1, c[2] + lift), math.min(1, c[3] + lift), a))
+  else
+    tex:SetColorTexture(c[1], c[2], c[3], c[4] or 1)
+  end
+end
+UI.shade, UI.LIFT = shade, LIFT
+
 local function setFill(f, fill)
   local s = skins[f]
-  if s then s.fill:SetColorTexture(unpack(fill)) end
+  if s then shade(s.fill, fill, s.lift) end
 end
 
 UI.paint, UI.setEdge, UI.setFill = paint, setEdge, setFill
@@ -165,34 +185,122 @@ end
 UI.shadow = shadow
 
 ---------------------------------------------------------------------------------------------------------------------
--- Buttons: "primary" (gold, for the one main action), "small", or plain. Plain buttons can be toggles
--- (b:EdbActive(true)). Add tooltips with HookScript, so the hover look keeps working.
+-- Colors that change smoothly: a hover or press fades over a tenth of a second instead of snapping. One shared
+-- frame runs only while something is fading.
 
-local function buttonState(b)
+local FADE = 0.10
+local fading = {}
+local fader = CreateFrame("Frame")
+local function lerp(a, b, t)
+  return { a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t,
+    (a[4] or 1) + ((b[4] or 1) - (a[4] or 1)) * t }
+end
+local function eased(f, now)
+  local t = math.min(1, (now - f.start) / FADE)
+  return 1 - (1 - t) * (1 - t), t
+end
+local function fadeStep()
+  local now, any = GetTime(), false
+  for obj, f in pairs(fading) do
+    local e, t = eased(f, now)
+    for k, to in pairs(f.to) do f.apply(obj, k, lerp(f.from[k], to, e)) end
+    if t >= 1 then fading[obj] = nil else any = true end
+  end
+  if not any then fader:SetScript("OnUpdate", nil) end
+end
+-- Fades obj's named colors to `to` (name -> color); draw(obj, name, color) draws one. The first call, and
+-- `instant`, draw at once.
+local function fadeTo(obj, cur, to, draw, instant)
+  if instant or not cur.shown then
+    for k, c in pairs(to) do cur[k] = c; draw(obj, k, c) end
+    cur.shown = true
+    fading[obj] = nil
+    return
+  end
+  local from, f, now = {}, fading[obj], GetTime()
+  for k, c in pairs(to) do
+    -- start from where a running fade is now, so a quick in-and-out stays smooth
+    from[k] = (f and f.to[k]) and lerp(f.from[k], f.to[k], (eased(f, now))) or cur[k] or c
+    cur[k] = c
+  end
+  fading[obj] = { start = now, from = from, to = to, apply = draw }
+  fader:SetScript("OnUpdate", fadeStep)
+end
+UI.fadeTo = fadeTo
+
+-- A soft 2 px ring just outside a frame (a focused box, an armed button); ring:SetShown(on).
+local function ring(f)
+  local r = CreateFrame("Frame", nil, f)
+  r:SetPoint("TOPLEFT", -2, 2)
+  r:SetPoint("BOTTOMRIGHT", 2, -2)
+  for _, p in ipairs({ { "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true },
+      { "TOPLEFT", "BOTTOMLEFT", false }, { "TOPRIGHT", "BOTTOMRIGHT", false } }) do
+    local t = r:CreateTexture(nil, "BACKGROUND")
+    t:SetPoint(p[1])
+    t:SetPoint(p[2])
+    if p[3] then t:SetHeight(2) else t:SetWidth(2) end
+    t:SetColorTexture(unpack(T.glow))
+  end
+  r:Hide()
+  return r
+end
+UI.ring = ring
+
+---------------------------------------------------------------------------------------------------------------------
+-- Buttons, by role:
+--   "primary"  the one main action of a panel (Post, Buy, Search): solid gold with dark text
+--   "danger"   something that takes an auction or a list away (Cancel, Delete): red text, a red tint on hover
+--   plain      everything else: raised grey; can be a toggle (b:EdbActive(true)) with a gold edge and text
+-- Add "small" for the compact text in rows and toolbars ("small", "small danger"). An active primary button
+-- (b:EdbActive(true), e.g. Confirm) gets a soft gold ring. Add tooltips with HookScript, so the hover look keeps
+-- working.
+
+local function buttonColors(b)
   local enabled = b:IsEnabled()
   local over, down, on = b.edbOver and enabled, b.edbDown and enabled, b.edbOn
-  local fill, edge, text
-  if b.edbKind == "primary" then
-    fill = not enabled and T.raised or down and T.accentBg or over and T.accentHi or T.accentBg
-    edge = enabled and T.accent or T.edge
-    text = enabled and T.accent or T.mute
-  else
-    fill = not enabled and T.surface or down and T.input or (over or on) and T.raisedHi or T.raised
-    edge = on and T.accent or over and T.edgeHi or T.edge
-    text = not enabled and T.mute or on and T.accent or T.text
+  if not enabled then return b.edbRole == "primary" and T.raised or T.surface, T.edge, T.mute end
+  if b.edbRole == "primary" then
+    local fill = down and T.accentHi or over and T.accentUp or T.accent
+    return fill, fill, down and T.accent or T.onAccent
+  elseif b.edbRole == "danger" then
+    return down and T.input or (over or on) and T.badBg or T.raised, (over or on) and T.bad or T.edge, T.bad
   end
-  setFill(b, fill)
-  setEdge(b, edge)
-  if b.edbLabel then b.edbLabel:SetTextColor(text[1], text[2], text[3], text[4] or 1) end
+  return down and T.input or (over or on) and T.raisedHi or T.raised,
+    on and T.accent or over and T.edgeHi or T.edge,
+    on and T.accent or T.text
+end
+
+local function drawButton(b, k, c)
+  if k == "fill" then setFill(b, c)
+  elseif k == "edge" then setEdge(b, c)
+  elseif b.edbLabel then b.edbLabel:SetTextColor(c[1], c[2], c[3], c[4] or 1) end
+end
+
+local function buttonState(b, instant)
+  local fill, edge, text = buttonColors(b)
+  b.edbCur = b.edbCur or {}
+  fadeTo(b, b.edbCur, { fill = fill, edge = edge, text = text }, drawButton, instant == true)
+  local enabled = b:IsEnabled()
+  if b.edbRing then b.edbRing:SetShown(b.edbOn and enabled and true or false) end
+  b.edbSheen:SetShown(enabled and not b.edbDown and true or false)
 end
 
 function UI.button(parent, label, w, h, kind)
   local b = CreateFrame("Button", nil, parent)
   b:SetSize(w or 100, h or 24)
-  b.edbKind = kind
-  paint(b, T.raised, T.edge)
+  kind = kind or ""
+  b.edbRole = kind:find("primary") and "primary" or kind:find("danger") and "danger" or nil
+  local s = paint(b, T.raised, T.edge)
+  s.lift = LIFT
+  b.edbSheen = b:CreateTexture(nil, "BORDER", nil, -7)
+  b.edbSheen:SetPoint("TOPLEFT", 1, -1)
+  b.edbSheen:SetPoint("TOPRIGHT", -1, -1)
+  onePixel(b.edbSheen, true)
+  b.edbSheen:SetColorTexture(unpack(T.sheen))
+  if b.edbRole == "primary" then b.edbRing = ring(b) end
   local fs = b:CreateFontString(nil, "OVERLAY")
-  fs:SetFontObject(fontObject(kind == "small" and "small" or "body"))
+  fs:SetFontObject(fontObject(kind:find("small") and "small" or "body"))
+  if b.edbRole == "primary" then fs:SetShadowOffset(0, 0) end   -- dark text on gold needs no shadow
   fs:SetPoint("LEFT", 4, 0)
   fs:SetPoint("RIGHT", -4, 0)
   fs:SetWordWrap(false)
@@ -203,15 +311,14 @@ function UI.button(parent, label, w, h, kind)
   b:HookScript("OnLeave", function() b.edbOver = false; b.edbDown = false; buttonState(b) end)
   b:HookScript("OnMouseDown", function() b.edbDown = true; buttonState(b) end)
   b:HookScript("OnMouseUp", function() b.edbDown = false; buttonState(b) end)
-  pcall(b.HookScript, b, "OnEnable", function() buttonState(b) end)
-  pcall(b.HookScript, b, "OnDisable", function() buttonState(b) end)
-  -- SetEnabled, Enable and Disable redraw it too (in case the scripts above don't exist in this client)
-  hooksecurefunc(b, "Enable", buttonState)
-  hooksecurefunc(b, "Disable", buttonState)
-  hooksecurefunc(b, "SetEnabled", buttonState)
+  -- Enable, Disable and SetEnabled redraw it at once: no fade when the program changes it, only the pointer
+  local function now() buttonState(b, true) end
+  hooksecurefunc(b, "Enable", now)
+  hooksecurefunc(b, "Disable", now)
+  hooksecurefunc(b, "SetEnabled", now)
   b.EdbActive = function(self, on) self.edbOn = on and true or nil; buttonState(self) end
-  b.EdbRefresh = buttonState
-  buttonState(b)
+  b.EdbRefresh = function(self) buttonState(self, true) end
+  buttonState(b, true)
   return UI.own(b)
 end
 
@@ -244,8 +351,10 @@ function UI.input(parent, w, h, opts)
   if opts.numeric then e:SetNumeric(true) end
   if opts.max then e:SetMaxLetters(opts.max) end
   paint(e, T.input, T.edge)
+  e.edbRing = ring(e)
   local function edge()
     setEdge(e, e:HasFocus() and T.accent or e.edbOver and T.edgeHi or T.edge)
+    e.edbRing:SetShown(e:HasFocus())
     if e.edbHint then e.edbHint:SetShown(e:GetText() == "" and not e:HasFocus()) end
   end
   if opts.hint then
@@ -432,7 +541,7 @@ function UI.headerBand(parent, h)
   band:SetHeight(h or 20)
   local bg = band:CreateTexture(nil, "BACKGROUND")
   bg:SetAllPoints()
-  bg:SetColorTexture(unpack(T.raised))
+  shade(bg, T.raised, LIFT)
   local line = UI.line(band, true)
   line:SetPoint("BOTTOMLEFT")
   line:SetPoint("BOTTOMRIGHT")
@@ -467,6 +576,23 @@ function UI.check(parent, text, onClick)
   end)
   b:EdbChecked(false)
   return UI.own(b)
+end
+
+-- A status tag: short text on a faint tint of its color (Undercut, Lowest, Sold...). tag:EdbSet(text, color).
+function UI.badge(parent, w, h)
+  local f = CreateFrame("Frame", nil, parent)
+  f:SetSize(w or 64, h or 16)
+  f.bg = f:CreateTexture(nil, "BACKGROUND", nil, 3)
+  f.bg:SetAllPoints()
+  f.text = UI.text(f, "small")
+  f.text:SetPoint("CENTER", 0, 0)
+  f.EdbSet = function(self, text, color)
+    self.text:SetText(text or "")
+    color = color or T.mute
+    self.text:SetTextColor(color[1], color[2], color[3], 1)
+    self.bg:SetColorTexture(color[1], color[2], color[3], (text and text ~= "") and 0.14 or 0)
+  end
+  return UI.own(f)
 end
 
 -- A small grey column label.
@@ -531,8 +657,15 @@ local function blizzButtonState(b)
   local on = b:IsEnabled()
   local over, down = s.over and on, s.down and on
   if s.main then
-    setFill(b, not on and T.raised or down and T.accentBg or over and T.accentHi or T.accentBg)
-    setEdge(b, on and T.accent or T.edge)
+    local fill = not on and T.raised or down and T.accentHi or over and T.accentUp or T.accent
+    setFill(b, fill)
+    setEdge(b, on and fill or T.edge)
+    local fs = b.GetFontString and b:GetFontString()
+    if fs then
+      local c = on and T.onAccent or T.mute
+      fs:SetTextColor(c[1], c[2], c[3], 1)
+      fs:SetShadowOffset(0, 0)
+    end
   else
     setFill(b, not on and T.surface or down and T.input or over and T.raisedHi or T.raised)
     setEdge(b, over and T.edgeHi or T.edge)
@@ -541,6 +674,7 @@ end
 
 local function styleButton(b)
   local s = paint(b, T.raised, T.edge)
+  s.lift = LIFT
   s.main = isMain(b)
   local hl = b.GetHighlightTexture and b:GetHighlightTexture()
   if hl then recolor(hl, { 0, 0, 0, 0 }) end

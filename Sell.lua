@@ -997,13 +997,11 @@ local function buildOwnRow(L)
   b.icon:SetSize(16, 16)
   b.icon:SetPoint("LEFT", 8, 0)
   b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-  b.cancel = UI.button(b, "Cancel", 58, 18, "small")
+  b.cancel = UI.button(b, "Cancel", 58, 18, "small danger")
   b.cancel:SetPoint("RIGHT", -2, 0)
   b.cancel:SetScript("OnClick", function() cancelAuction(b.item) end)
-  b.state = UI.text(b, "small")
-  b.state:SetPoint("RIGHT", b.cancel, "LEFT", -8, 0)
-  b.state:SetWidth(64)
-  b.state:SetJustifyH("RIGHT")
+  b.state = UI.badge(b, 70, 16)
+  b.state:SetPoint("RIGHT", b.cancel, "LEFT", -6, 0)
   b.price = UI.text(b, "body")
   b.price:SetPoint("RIGHT", b.state, "LEFT", -8, 0)
   b.price:SetWidth(100)
@@ -1052,8 +1050,7 @@ local function fillOwnRow(b, a)
   b.qty:SetText(num(a.qty))
   b.price:SetText(a.unit and money(a.unit) or (C_MUTE .. "-|r"))
   local state, color = ownedState(a)
-  b.state:SetText(a.cancelling and "Cancelling" or state)
-  b.state:SetTextColor(unpack(a.cancelling and T.mute or color))
+  b.state:EdbSet(a.cancelling and "Cancelling" or state, a.cancelling and T.mute or color)
   b.cancel:SetShown(not a.sold)
   b.cancel:SetEnabled(not a.cancelling)
 end
@@ -1161,17 +1158,48 @@ local function makeFrame()
   sp.stats:SetPoint("BOTTOMLEFT", 0, -2)
   sp.stats:SetPoint("RIGHT", sp, "RIGHT", 0, 0)
   sp:EnableMouse(true)
-  sp:SetScript("OnEnter", function(self)
-    if not self.data or #self.data == 0 then return end
+  -- hovering shows the day under the pointer (its bar lights up) and the 30-day low, median and high
+  local function hovered(self)
+    local x = GetCursorPosition() / self:GetEffectiveScale() - (self:GetLeft() or 0)
+    local i = math.floor(x / 5) + 1
+    local first = ns.today() - 29
+    for _, h in ipairs(self.data or {}) do
+      if h[1] - first + 1 == i then return h, i end
+    end
+  end
+  local function showTip(self)
+    local h, i = hovered(self)
+    if h == self.tipDay and self.tipShown then return end
+    self.tipDay, self.tipShown = h, true
+    for k, bar in ipairs(self.bars) do
+      if bar:IsShown() then bar:SetColorTexture(unpack(k == i and T.text or k == 30 and T.accent or T.edgeHi)) end
+    end
     GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
-    GameTooltip:SetText("Lowest price per day", 1, 1, 1)
-    GameTooltip:AddDoubleLine("Lowest", money(self.lo), T.dim[1], T.dim[2], T.dim[3], 1, 1, 1)
+    if h then
+      local d = ns.today() - h[1]
+      GameTooltip:SetText(money(h[2]), 1, 1, 1)
+      GameTooltip:AddLine(d == 0 and "Lowest today" or d == 1 and "Lowest yesterday" or ("Lowest %d days ago"):format(d),
+        T.dim[1], T.dim[2], T.dim[3])
+    else
+      GameTooltip:SetText("Lowest price per day", 1, 1, 1)
+    end
+    GameTooltip:AddDoubleLine("30-day low", money(self.lo), T.dim[1], T.dim[2], T.dim[3], 1, 1, 1)
     GameTooltip:AddDoubleLine("Median", money(self.med), T.dim[1], T.dim[2], T.dim[3], 1, 1, 1)
     GameTooltip:AddDoubleLine("Highest", money(self.hi), T.dim[1], T.dim[2], T.dim[3], 1, 1, 1)
     GameTooltip:AddLine(("%d of the last 30 days, from your scans and searches."):format(#self.data), T.mute[1], T.mute[2], T.mute[3], true)
     GameTooltip:Show()
+  end
+  sp:SetScript("OnEnter", function(self)
+    if not self.data or #self.data == 0 then return end
+    self.tipShown = false
+    showTip(self)
+    self:SetScript("OnUpdate", showTip)
   end)
-  sp:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  sp:SetScript("OnLeave", function(self)
+    self:SetScript("OnUpdate", nil)
+    GameTooltip:Hide()
+    drawHistory()
+  end)
   f.spark = sp
 
   local div = UI.line(P, true)
@@ -1269,7 +1297,7 @@ local function makeFrame()
   f.source:SetPoint("TOPLEFT", 12, -170)
   f.source:SetPoint("RIGHT", P, "RIGHT", -12, 0)
   needs(label(P, "TOTAL", 12, -188))
-  f.total = needs(UI.text(P, "body"))
+  f.total = needs(UI.text(P, "big"))
   f.total:SetPoint("TOPLEFT", 12, -202)
   needs(label(P, "DEPOSIT", 150, -188))
   f.deposit = needs(UI.text(P, "body"))
@@ -1349,7 +1377,7 @@ local function makeFrame()
   f.cur = UI.list(Lw, LIST_ROW, buildCurRow, fillCurRow)
   f.cur:SetPoint("TOPLEFT", 1, -58)
   f.cur:SetPoint("BOTTOMRIGHT", -3, 4)
-  f.ownBand = band({ { "ITEM", 30 }, { "QTY", -264, true }, { "PRICE EACH", -152, true }, { "STATUS", -82, true } })
+  f.ownBand = band({ { "ITEM", 30 }, { "QTY", -264, true }, { "PRICE EACH", -144, true }, { "STATUS", -70, true } })
   f.own = UI.list(Lw, LIST_ROW, buildOwnRow, fillOwnRow)
   f.own:SetPoint("TOPLEFT", 1, -58)
   f.own:SetPoint("BOTTOMRIGHT", -3, 4)

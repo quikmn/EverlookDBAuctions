@@ -1,5 +1,15 @@
 # EverlookDB Auctions
 
+## v0.4.0 (2026-11-14)
+
+- Buttons now look like what they do. The main action on each panel (Post, Buy, Search, Run list) is solid gold. Cancel, Remove and Delete are red. Everything else is a quiet grey.
+- Hover and press fade in smoothly instead of snapping. Buttons and header bands have a slight raised look.
+- A focused text box gets a soft gold ring. So does an armed Confirm button, so you can see it is waiting for your second click.
+- Your auctions: Undercut, Lowest and Sold are shown as small coloured tags.
+- Selling tab: the total is larger. Hover the 30-day chart to see each day's lowest price.
+- Grey labels are a little brighter, so small text is easier to read.
+- Blizzard's own main buttons (Search, Buyout, Post) get the same gold look when the EverlookDB look is on.
+
 ## v0.3.0 (2026-11-14)
 
 - Disenchant value in tooltips: for gear that can be disenchanted, what its materials are worth on your auction house, from each material's chance (classic-db) and its lowest price. You can turn it off in the options.

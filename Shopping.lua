@@ -128,7 +128,7 @@ end
 
 local function buildQueryRow(L)
   local b = UI.row(L, ROW)
-  b.remove = UI.button(b, "Remove", 64, 18, "small")
+  b.remove = UI.button(b, "Remove", 64, 18, "small danger")
   b.remove:SetPoint("RIGHT", -2, 0)
   b.run = UI.button(b, "Run", 44, 18, "small")
   b.run:SetPoint("RIGHT", b.remove, "LEFT", -4, 0)
@@ -249,7 +249,7 @@ local function makeFrame()
   end)
   f.name:HookScript("OnEditFocusLost", function() render() end)
 
-  f.del = needs(UI.button(R, "Delete", 64, 24, "small"))
+  f.del = needs(UI.button(R, "Delete", 64, 24, "small danger"))
   f.del:SetPoint("TOPRIGHT", -12, -24)
   f.del:SetScript("OnClick", function()
     local l, i = picked()
