@@ -141,10 +141,10 @@ local function refreshPanel()
   local h = getHouse(house)
   local n = 0
   for _ in pairs(h.items) do n = n + 1 end
-  local side = house:match("%-(%a+)$") or "?"
-  panel.info:SetText(("%s auction house\n%s items priced%s%s"):format(side, num(n),
-    h.scanned and ("\nlast full scan " .. ago(h.scanned)) or "\nno full scan yet",
-    unfinished(h) and "\n|cffff9040the last scan didn't finish|r" or ""))
+  panel.values[1]:SetText(house:match("%-(%a+)$") or "?")
+  panel.values[2]:SetText(num(n))
+  panel.values[3]:SetText(h.scanned and ago(h.scanned) or "never")
+  panel.warn:SetText(unfinished(h) and "The last scan didn't finish." or "")
   local wait = scanWait(h)
   if scan then
     panel.button:Disable()
@@ -160,39 +160,57 @@ end
 
 local startScan
 
+-- The panel: a header with the addon's mark, what is saved for this auction house, and the Full scan button
+-- (Search.lua adds Advanced search above it).
 local function makePanel(parent)
-  local f = CreateFrame("Frame", "EverlookAuctionsPanel", parent, "BackdropTemplate")
-  f:SetSize(220, 158)
-  f:SetPoint("TOPLEFT", parent, "TOPRIGHT", 4, -24)
+  local UI, T = ns.UI, ns.T
+  local f = UI.own(CreateFrame("Frame", "EverlookAuctionsPanel", parent))
+  f:SetSize(220, 176)
+  f:SetPoint("TOPLEFT", parent, "TOPRIGHT", 6, -24)
   f:SetFrameStrata(parent:GetFrameStrata())
-  f:SetBackdrop({
-    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 16,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 },
-  })
-  f:SetBackdropColor(0.06, 0.06, 0.08, 0.92)
-  f:SetBackdropBorderColor(0.6, 0.5, 0.2, 1)
+  f:EnableMouse(true)
+  UI.panel(f, T.bg, T.edge)
+  UI.shadow(f, 5)
 
-  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-  title:SetPoint("TOPLEFT", 12, -12)
+  local band = f:CreateTexture(nil, "BACKGROUND", nil, -7)
+  band:SetPoint("TOPLEFT", 1, -1)
+  band:SetPoint("TOPRIGHT", -1, -1)
+  band:SetHeight(28)
+  band:SetColorTexture(unpack(T.raised))
+  local line = UI.line(f, true)
+  line:SetPoint("TOPLEFT", band, "BOTTOMLEFT")
+  line:SetPoint("TOPRIGHT", band, "BOTTOMRIGHT")
+  local mark = f:CreateTexture(nil, "ARTWORK")
+  mark:SetSize(16, 16)
+  mark:SetPoint("LEFT", band, "LEFT", 9, 0)
+  mark:SetTexture("Interface\\AddOns\\" .. ADDON .. "\\Media\\icon")
+  local title = UI.text(f, "title")
+  title:SetPoint("LEFT", mark, "RIGHT", 7, 0)
   title:SetText("EverlookDB Auctions")
 
-  f.info = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  f.info:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
-  f.info:SetWidth(196)
-  f.info:SetSpacing(2)
-  f.info:SetJustifyH("LEFT")
+  -- label / value pairs
+  f.values = {}
+  for k, label in ipairs({ "Auction house", "Items priced", "Last full scan" }) do
+    local l = UI.text(f, "mute")
+    l:SetPoint("TOPLEFT", 12, -40 - (k - 1) * 18)
+    l:SetText(label)
+    local v = UI.text(f, "small")
+    v:SetPoint("TOPRIGHT", -12, -40 - (k - 1) * 18)
+    v:SetJustifyH("RIGHT")
+    f.values[k] = v
+  end
+  f.warn = UI.text(f, "small")
+  f.warn:SetPoint("TOPLEFT", 12, -40 - 3 * 18)
+  f.warn:SetTextColor(unpack(T.bad))
 
-  f.button = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  f.button:SetSize(196, 24)
+  f.button = UI.button(f, "Full scan", 196, 26)
   f.button:SetPoint("BOTTOMLEFT", 12, 40)
   f.button:SetScript("OnClick", function() startScan() end)
 
-  f.status = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  f.status:SetPoint("TOPLEFT", f.button, "BOTTOMLEFT", 0, -6)
+  f.status = UI.text(f, "mute")
+  f.status:SetPoint("TOPLEFT", f.button, "BOTTOMLEFT", 0, -8)
   f.status:SetWidth(196)
-  f.status:SetJustifyH("LEFT")
+  f.status:SetWordWrap(true)
 
   -- the cooldown countdown on the button, and a fresh full scan every 15 minutes while the auction house is open
   local acc = 0
@@ -696,10 +714,10 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   print(("  /eah auto on|off  automatic full scan when you open the auction house (now %s)"):format(db.auto == false and "off" or "on"))
 end
 
--- Shared with Sell.lua
+-- Shared with Sell.lua, Search.lua and Skin.lua
 ns.db = function() return db end
 ns.house = function() return house end
-ns.money, ns.num, ns.ago, ns.say, ns.variantOf, ns.ahFrame = money, num, ago, say, variantOf, ahFrame
+ns.money, ns.num, ns.ago, ns.say, ns.variantOf, ns.ahFrame, ns.ok = money, num, ago, say, variantOf, ahFrame, ok
 
 -- The newest full scan's row for "id:suffix" on the open auction house: { low, p10, med, qty, n, at }.
 function ns.latestRow(key)

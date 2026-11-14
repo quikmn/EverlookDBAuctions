@@ -7,7 +7,7 @@
 ## IconTexture: Interface\AddOns\EverlookDBAuctions\Media\icon
 
 EverlookDBAuctions.lua
+Skin.lua
 Data.lua
 Sell.lua
 Search.lua
-Skin.lua

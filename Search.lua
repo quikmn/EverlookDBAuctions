@@ -10,9 +10,11 @@
 -- Steps: where, sort by <col> [asc|desc], top <n> [by <col>], count.
 
 local ADDON, ns = ...
+local UI, T = ns.UI, ns.T
+local C_BAD, C_MUTE, C_DIM, C_GOOD, C_INFO, C_ACCENT =
+  UI.hex(T.bad), UI.hex(T.mute), UI.hex(T.dim), UI.hex(T.good), UI.hex(T.info), UI.hex(T.accent)
 
-local ROWS = 16
-local ROW_H = 20
+local ROW_H = 22
 
 local Q = { results = {}, offset = 0 }
 local liveStep   -- the live check (defined further down; the panel's scroll uses it)
@@ -529,25 +531,25 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- The Advanced search panel, over the auction list
 
-local ROW_TOP = 74          -- first result row, from the top of the panel
+local ROW_TOP = 84          -- first result row, from the top of the panel
 
 -- Result columns: header, column to sort by, right edge (from the panel's right), width, and how to show the value.
 -- Live-checked values are white; values only from the scan are grey; sold-out rows say so.
-local GREY = "|cff8c97ae"
+local GREY = C_DIM .. ""
 local COLS = {
   { "Up", "qty", -10, 40, function(r)
     local l = liveOf(r)
-    if l then return l.gone and "|cffff6060-|r" or ns.num(l.qty or 0) end
+    if l then return l.gone and C_BAD .. "-|r" or ns.num(l.qty or 0) end
     return GREY .. ns.num(r.qty or 0) .. "|r"
   end },
   { "Typical", "median", -56, 86, function(r) return r.median and (GREY .. ns.money(r.median) .. "|r") or "" end },
   { "Lowest", "price", -148, 86, function(r)
     local l = liveOf(r)
     if l then
-      if l.gone then return "|cffff6060sold out|r" end
-      return l.price and ns.money(l.price) or "|cff808080bids only|r"
+      if l.gone then return C_BAD .. "sold out|r" end
+      return l.price and ns.money(l.price) or C_MUTE .. "bids only|r"
     end
-    return r.price and (GREY .. ns.money(r.price) .. "|r") or "|cff808080bids only|r"
+    return r.price and (GREY .. ns.money(r.price) .. "|r") or C_MUTE .. "bids only|r"
   end },
   { "Req", "reqlevel", -240, 30, function(r)
     local v = r[Q.extra or "reqlevel"] or 0
@@ -588,6 +590,7 @@ local function render()
     local mark = ""
     if Q.sortCol == h.col then mark = Q.sortDesc and " v" or " ^" end
     h.text:SetText(h.label .. mark)
+    h.text:SetTextColor(unpack(Q.sortCol == h.col and T.accent or T.mute))
   end
   f.more:SetText(#Q.results > n
     and ("%d-%d of %d, scroll for more"):format(Q.offset + 1, math.min(Q.offset + n, #Q.results), #Q.results) or "")
@@ -596,6 +599,7 @@ end
 local function hideResults()
   if Q.frame then Q.frame:Hide() end
 end
+ns.closeSearch = hideResults
 
 -- Blizzard's own list (its tip text and column headers) would show through, so it is hidden while ours is open.
 local function blizzardList(shown)
@@ -610,7 +614,7 @@ end
 local function setStatus(text, isError)
   if not Q.frame then return end
   Q.headBase = not isError and text or nil
-  Q.frame.head:SetText(isError and ("|cffff6060" .. text .. "|r") or text)
+  Q.frame.head:SetText(isError and (C_BAD .. text .. "|r") or text)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -628,70 +632,92 @@ local EXAMPLES = {
 }
 
 local GUIDE = table.concat({
-  "|cffffd100How it works|r",
+  C_ACCENT .. "How it works|r",
   "Searches everything in the last full scan of this auction house (it rescans every 15 minutes while it is open), then checks each result live. White prices are live; grey ones are from the scan and still being checked; sold out means none are up now. Click a result to see its auctions and buy it.",
   "",
-  "|cffffd100Conditions|r   join them with |cff8fc7ffand|r, |cff8fc7ffor|r, |cff8fc7ffnot|r and ( )",
-  "|cff8fc7ffis|r, |cff8fc7ffis not|r   |cff8fc7ffgt|r, |cff8fc7ffge|r (at least), |cff8fc7fflt|r, |cff8fc7ffle|r (at most)   |cff8fc7ffhas|r (contains)",
-  "|cff8fc7fflike|r \"*of the bear\"  (* = anything)   |cff8fc7ffbetween|r (20 .. 30)   |cff8fc7ffin|r (head, chest)",
-  "A word on its own searches names:  |cff9fe07ewand|r",
+  C_ACCENT .. "Conditions|r   join them with " .. C_INFO .. "and|r, " .. C_INFO .. "or|r, " .. C_INFO .. "not|r and ( )",
+  C_INFO .. "is|r, " .. C_INFO .. "is not|r   " .. C_INFO .. "gt|r, " .. C_INFO .. "ge|r (at least), " .. C_INFO .. "lt|r, " .. C_INFO .. "le|r (at most)   " .. C_INFO .. "has|r (contains)",
+  C_INFO .. "like|r \"*of the bear\"  (* = anything)   " .. C_INFO .. "between|r (20 .. 30)   " .. C_INFO .. "in|r (head, chest)",
+  "A word on its own searches names:  " .. C_GOOD .. "wand|r",
   "",
-  "|cffffd100Steps|r   after a |",
-  "|cff8fc7ff| sort by|r price   |cff8fc7ff| sort by|r ilvl desc, price   |cff8fc7ff| top|r 10 |cff8fc7ffby|r sta   |cff8fc7ff| count|r",
+  C_ACCENT .. "Steps|r   after a |",
+  C_INFO .. "| sort by|r price   " .. C_INFO .. "| sort by|r ilvl desc, price   " .. C_INFO .. "| top|r 10 " .. C_INFO .. "by|r sta   " .. C_INFO .. "| count|r",
   "Or click a column header to sort; click again to flip it.",
   "",
-  "|cffffd100Columns|r",
+  C_ACCENT .. "Columns|r",
   "name, quality (poor, common, uncommon, rare, epic, legendary), ilvl, reqlevel, category, type (Cloth, Wand, Potion...)",
   "slot: head, neck, shoulder, back, chest, robe, shirt, tabard, wrist, hands, waist, legs, feet, finger, trinket, onehand, twohand, mainhand, offhand, holdable, shield, ranged, wand, thrown, bag",
   "price (lowest buyout), median (typical), qty (how many up), auctions, sell (vendor price)",
   "slots (bag size), source (vendor, crafted, drop, quest, skinning), profession, skill, droprate (best drop %)",
   "Money: 5g, 50s, 1g50s, 20c",
   "",
-  "|cffffd100Stats|r",
+  C_ACCENT .. "Stats|r",
   "str, agi, sta, int, spi, armor, ap, sp, healing, mp5, defense, dps, hit, crit, block",
-  "fire_res, frost_res, nature_res, shadow_res, arcane_res, and |cff8fc7ffstats|r (every stat as text: stats has spirit)",
+  "fire_res, frost_res, nature_res, shadow_res, arcane_res, and " .. C_INFO .. "stats|r (every stat as text: stats has spirit)",
   "",
-  "|cffffd100Examples|r   click one to run it",
+  C_ACCENT .. "Examples|r   click one to run it",
 }, "\n")
 
 local function makeGuide(f)
-  local g = CreateFrame("Frame", nil, f, "BackdropTemplate")
-  g:SetPoint("TOPLEFT", 6, -36)
-  g:SetPoint("BOTTOMRIGHT", -6, 6)
+  local g = UI.own(CreateFrame("Frame", nil, f))
+  g:SetPoint("TOPLEFT", 1, -40)
+  g:SetPoint("BOTTOMRIGHT", -1, 1)
   g:SetFrameLevel(f:GetFrameLevel() + 20)
-  g:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background" })
-  g:SetBackdropColor(0.05, 0.06, 0.09, 1)
+  UI.panel(g, T.bg, T.bg)
   g:EnableMouse(true)
   g:Hide()
 
-  local scroll = CreateFrame("ScrollFrame", nil, g, "UIPanelScrollFrameTemplate")
-  scroll:SetPoint("TOPLEFT", 10, -8)
-  scroll:SetPoint("BOTTOMRIGHT", -30, 8)
+  -- scrolls with the mouse wheel; the thin bar on the right shows where you are
+  local scroll = CreateFrame("ScrollFrame", nil, g)
+  scroll:SetPoint("TOPLEFT", 14, -10)
+  scroll:SetPoint("BOTTOMRIGHT", -20, 10)
   local content = CreateFrame("Frame", nil, scroll)
   content:SetSize(10, 10)
   scroll:SetScrollChild(content)
-  scroll:SetScript("OnSizeChanged", function(self, w) content:SetWidth(w) end)
+  scroll:SetScript("OnSizeChanged", function(_, w) content:SetWidth(w) end)
+  local track = g:CreateTexture(nil, "ARTWORK")
+  track:SetPoint("TOPRIGHT", -8, -10)
+  track:SetPoint("BOTTOMRIGHT", -8, 10)
+  track:SetWidth(4)
+  track:SetColorTexture(unpack(T.input))
+  local thumb = g:CreateTexture(nil, "OVERLAY")
+  thumb:SetWidth(4)
+  thumb:SetColorTexture(unpack(T.thumb))
+  local function place()
+    local range = scroll:GetVerticalScrollRange() or 0
+    local h = track:GetHeight()
+    if range <= 0 or h <= 0 then thumb:Hide(); return end
+    local th = math.max(20, h * h / (h + range))
+    thumb:SetHeight(th)
+    thumb:ClearAllPoints()
+    thumb:SetPoint("TOP", track, "TOP", 0, -(h - th) * scroll:GetVerticalScroll() / range)
+    thumb:Show()
+  end
+  scroll:EnableMouseWheel(true)
+  scroll:SetScript("OnMouseWheel", function(self, delta)
+    local range = self:GetVerticalScrollRange() or 0
+    self:SetVerticalScroll(math.max(0, math.min(range, self:GetVerticalScroll() - delta * 40)))
+    place()
+  end)
 
-  local text = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  local text = UI.text(content, "small")
   text:SetPoint("TOPLEFT", 0, 0)
   text:SetPoint("RIGHT", content, "RIGHT", 0, 0)
-  text:SetJustifyH("LEFT")
-  text:SetSpacing(3)
+  text:SetWordWrap(true)
+  text:SetSpacing(4)
   text:SetText(GUIDE)
 
   local prev
-  for i, ex in ipairs(EXAMPLES) do
-    local b = CreateFrame("Button", nil, content)
-    b:SetHeight(18)
+  for _, ex in ipairs(EXAMPLES) do
+    local b = UI.row(content, 22)
     b:SetPoint("LEFT", content, "LEFT", 0, 0)
     b:SetPoint("RIGHT", content, "RIGHT", 0, 0)
-    if prev then b:SetPoint("TOP", prev, "BOTTOM", 0, -2) else b:SetPoint("TOP", text, "BOTTOM", 0, -6) end
-    b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
-    local q = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    q:SetPoint("LEFT", 4, 0)
-    q:SetText("|cff9fe07e" .. ex[1] .. "|r")
-    local d = b:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    d:SetPoint("RIGHT", -4, 0)
+    if prev then b:SetPoint("TOP", prev, "BOTTOM", 0, 0) else b:SetPoint("TOP", text, "BOTTOM", 0, -8) end
+    local q = UI.text(b, "small")
+    q:SetPoint("LEFT", 6, 0)
+    q:SetText(C_GOOD .. ex[1] .. "|r")
+    local d = UI.text(b, "dim")
+    d:SetPoint("RIGHT", -6, 0)
     d:SetText(ex[2])
     b:SetScript("OnClick", function()
       g:Hide()
@@ -703,7 +729,9 @@ local function makeGuide(f)
   -- size the scroll content once the text has its real height
   g:SetScript("OnShow", function()
     content:SetWidth(scroll:GetWidth())
-    content:SetHeight(text:GetStringHeight() + 12 + #EXAMPLES * 20)
+    content:SetHeight(text:GetStringHeight() + 12 + #EXAMPLES * 22)
+    scroll:SetVerticalScroll(0)
+    C_Timer.After(0, place)
   end)
   return g
 end
@@ -725,33 +753,33 @@ local function headerClick(self)
 end
 
 local function makeHeader(f, label, col, right, width)
-  local h = CreateFrame("Button", nil, f)
-  h:SetSize(width, 16)
+  local h = UI.own(CreateFrame("Button", nil, f))
+  h:SetSize(width, 20)
   if right then
-    h:SetPoint("TOPRIGHT", f, "TOPRIGHT", right, -(ROW_TOP - 18))
+    h:SetPoint("TOPRIGHT", f, "TOPRIGHT", right, -(ROW_TOP - 21))
   else
-    h:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -(ROW_TOP - 18))
+    h:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -(ROW_TOP - 21))
   end
-  h.text = h:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  h.text = UI.text(h, "head")
   h.text:SetPoint(right and "RIGHT" or "LEFT", 0, 0)
-  h:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
   h.label, h.col = label, col
   h:SetScript("OnClick", headerClick)
+  h:SetScript("OnEnter", function(self) self.text:SetTextColor(unpack(T.text)) end)
+  h:SetScript("OnLeave", function(self) self.text:SetTextColor(unpack(Q.sortCol == self.col and T.accent or T.mute)) end)
   Q.headers[#Q.headers + 1] = h
 end
 
 local function makeRow(f, k)
-  local b = CreateFrame("Button", nil, f)
-  b:SetHeight(ROW_H)
-  b:SetPoint("TOPLEFT", 8, -ROW_TOP - (k - 1) * ROW_H)
-  b:SetPoint("RIGHT", -8, 0)
-  b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+  local b = UI.row(f, ROW_H)
+  b:SetPoint("TOPLEFT", 1, -ROW_TOP - (k - 1) * ROW_H)
+  b:SetPoint("RIGHT", -1, 0)
   b.icon = b:CreateTexture(nil, "ARTWORK")
-  b.icon:SetSize(16, 16)
-  b.icon:SetPoint("LEFT", 4, 0)
+  b.icon:SetSize(18, 18)
+  b.icon:SetPoint("LEFT", 12, 0)
+  b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
   b.cells = {}
   for c, col in ipairs(COLS) do
-    local fs = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    local fs = UI.text(b, "body")
     fs:SetPoint("RIGHT", f, "RIGHT", col[3], 0)
     fs:SetPoint("TOP", b, "TOP", 0, 0)
     fs:SetPoint("BOTTOM", b, "BOTTOM", 0, 0)
@@ -759,22 +787,21 @@ local function makeRow(f, k)
     fs:SetJustifyH("RIGHT")
     b.cells[c] = fs
   end
-  b.name = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  b.name:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
+  b.name = UI.text(b, "body")
+  b.name:SetPoint("LEFT", b.icon, "RIGHT", 8, 0)
   b.name:SetPoint("RIGHT", f, "RIGHT", NAME_RIGHT, 0)
-  b.name:SetJustifyH("LEFT")
-  b.name:SetWordWrap(false)
   b:SetScript("OnEnter", function(self)
     if not self.row then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     local link = "item:" .. self.row.id .. (self.row.suffix ~= 0 and ("::::::::::::1:" .. self.row.suffix) or "")
     pcall(GameTooltip.SetHyperlink, GameTooltip, link)
-    GameTooltip:AddLine("Click to see its live auctions.", 0.4, 0.8, 1, true)
+    GameTooltip:AddLine("Click to see its live auctions.", T.info[1], T.info[2], T.info[3], true)
     GameTooltip:Show()
   end)
   b:SetScript("OnLeave", function() GameTooltip:Hide() end)
   b:SetScript("OnClick", function(self)
     if not self.row then return end
+    if ns.openBuy then ns.openBuy(self.row) return end
     -- a normal Blizzard search for the name shows its live auctions; buy from there as usual
     local bar = AuctionHouseFrame.SearchBar
     bar:SetSearchText(self.row.name)
@@ -787,66 +814,56 @@ local function makeResults()
   local ah = _G.AuctionHouseFrame
   local area = ah and ah.BrowseResultsFrame
   if Q.frame or not area then return Q.frame end
-  local f = CreateFrame("Frame", "EverlookAuctionsQueryResults", area, "BackdropTemplate")
+  local f = UI.own(CreateFrame("Frame", "EverlookAuctionsQueryResults", area))
   f:SetAllPoints(area)
   f:SetFrameLevel(area:GetFrameLevel() + 200)
-  f:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 14, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
-  f:SetBackdropColor(0.04, 0.05, 0.08, 0.98)
-  f:SetBackdropBorderColor(0.6, 0.5, 0.2, 1)
+  UI.panel(f, T.bg, T.edge)
   f:EnableMouse(true)
   f:SetScript("OnShow", function() blizzardList(false) end)
   f:SetScript("OnHide", function() blizzardList(true) end)
   f:Hide()   -- frames start shown; hiding first makes the first Show run OnShow too
 
-  -- top bar: query box, Search, ?, Close
-  local close = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  close:SetSize(56, 22)
+  -- top bar: query box, Search, Guide, Close
+  local close = UI.button(f, "Close", 60, 24)
   close:SetPoint("TOPRIGHT", -8, -8)
-  close:SetText("Close")
   close:SetScript("OnClick", hideResults)
 
-  local help = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  help:SetSize(64, 22)
-  help:SetPoint("RIGHT", close, "LEFT", -4, 0)
-  help:SetText("Guide")
+  local help = UI.button(f, "Guide", 64, 24)
+  help:SetPoint("RIGHT", close, "LEFT", -6, 0)
 
-  local go = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
-  go:SetSize(70, 22)
-  go:SetPoint("RIGHT", help, "LEFT", -4, 0)
-  go:SetText("Search")
+  local go = UI.button(f, "Search", 76, 24, "primary")
+  go:SetPoint("RIGHT", help, "LEFT", -6, 0)
 
-  local box = CreateFrame("EditBox", "EverlookAuctionsQueryBox", f, "InputBoxTemplate")
-  box:SetHeight(22)
-  box:SetPoint("TOPLEFT", 16, -8)
-  box:SetPoint("RIGHT", go, "LEFT", -8, 0)
-  box:SetAutoFocus(false)
-  box:SetMaxLetters(400)
-  box:SetFontObject("ChatFontNormal")
+  local box = UI.input(f, 100, 24, { hint = "slot is trinket and price lt 5g | sort by price", max = 400 })
+  box:SetPoint("TOPLEFT", 8, -8)
+  box:SetPoint("RIGHT", go, "LEFT", -6, 0)
   local function search()
     box:ClearFocus()
     if box:GetText():match("%S") then ns.query(box:GetText()) end
   end
   box:SetScript("OnEnterPressed", search)
-  box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
   go:SetScript("OnClick", search)
   f.box = box
 
-  f.head = f:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-  f.head:SetPoint("TOPLEFT", 14, -36)
+  f.head = UI.text(f, "dim")
+  f.head:SetPoint("TOPLEFT", 12, -44)
   f.head:SetPoint("RIGHT", -12, 0)
-  f.head:SetJustifyH("LEFT")
-  f.head:SetWordWrap(false)
   f.head:SetText("Type a query and press Enter. Guide explains how.")
+
+  local band = UI.headerBand(f, 22)
+  band:SetPoint("TOPLEFT", 1, -(ROW_TOP - 22))
+  band:SetPoint("TOPRIGHT", -1, -(ROW_TOP - 22))
+  band:SetFrameLevel(f:GetFrameLevel() + 1)
 
   Q.headers = {}
   makeHeader(f, "Item", "name", nil, 120)
   for _, col in ipairs(COLS) do makeHeader(f, col[1], col[2], col[3], col[4]) end
+  for _, h in ipairs(Q.headers) do h:SetFrameLevel(band:GetFrameLevel() + 1) end
 
   Q.rows = {}
   for k = 1, rowsFit(f) do Q.rows[k] = makeRow(f, k) end
 
-  f.more = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  f.more = UI.text(f, "mute")
   f.more:SetPoint("BOTTOMRIGHT", -12, 8)
 
   f:EnableMouseWheel(true)
@@ -857,7 +874,11 @@ local function makeResults()
   end)
 
   f.guide = makeGuide(f)
-  help:SetScript("OnClick", function() f.guide:SetShown(not f.guide:IsShown()) end)
+  help:SetScript("OnClick", function()
+    f.guide:SetShown(not f.guide:IsShown())
+    help:EdbActive(f.guide:IsShown())
+  end)
+  f.guide:HookScript("OnHide", function() help:EdbActive(false) end)
 
   Q.frame = f
   return f
@@ -935,8 +956,8 @@ local function liveHead()
   for k = 1, total do if liveFresh(Q.results[k]) then done = done + 1 end end
   local tail
   if total == 0 then tail = ""
-  elseif done >= total then tail = "  |cff9fe07elive prices checked|r"
-  else tail = ("  |cff8fc7ffchecking live prices %d/%d...|r"):format(done, total) end
+  elseif done >= total then tail = "  " .. C_GOOD .. "live prices checked|r"
+  else tail = ("  " .. C_INFO .. "checking live prices %d/%d...|r"):format(done, total) end
   Q.frame.head:SetText(Q.headBase .. tail)
 end
 
@@ -1054,7 +1075,7 @@ local function show(text)
       sortRows(Q.results, { { col = Q.sortCol, desc = Q.sortDesc } })
     end
     if (missing or 0) > 0 then
-      setStatus(head .. ("  |cff8c97aelearning %s more items (only the first time)...|r"):format(ns.num(missing)))
+      setStatus(head .. ("  " .. C_DIM .. "learning %s more items (only the first time)...|r"):format(ns.num(missing)))
     else
       setStatus(head)
     end
@@ -1129,12 +1150,10 @@ end
 local function makeButton()
   local panel = _G.EverlookAuctionsPanel
   if Q.button or not panel or not panel.button then return end
-  local b = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-  b:SetSize(196, 24)
-  b:SetPoint("BOTTOMLEFT", panel.button, "TOPLEFT", 0, 4)
-  b:SetText("Advanced search")
+  local b = UI.button(panel, "Advanced search", 196, 26, "primary")
+  b:SetPoint("BOTTOMLEFT", panel.button, "TOPLEFT", 0, 6)
   b:SetScript("OnClick", ns.openSearch)
-  panel:SetHeight(panel:GetHeight() + 28)
+  panel:SetHeight(panel:GetHeight() + 32)
   Q.button = b
 end
 

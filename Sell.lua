@@ -8,6 +8,7 @@
 -- Posting itself is always Blizzard's own Post button: one click per post.
 
 local ADDON, ns = ...
+local UI, T = ns.UI, ns.T
 
 local ROWS = 16
 local ROW_H = 20
@@ -199,17 +200,16 @@ local function refresh()
 end
 
 local function makeRow(parent, k)
-  local b = CreateFrame("Button", nil, parent)
+  local b = UI.row(parent, ROW_H)
   b:SetSize(196, ROW_H)
   b:SetPoint("TOPLEFT", parent.list, "TOPLEFT", 0, -(k - 1) * ROW_H)
-  b:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
   b.icon = b:CreateTexture(nil, "ARTWORK")
   b.icon:SetSize(16, 16)
-  b.icon:SetPoint("LEFT", 0, 0)
-  b.price = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-  b.price:SetPoint("RIGHT", 0, 0)
+  b.icon:SetPoint("LEFT", 2, 0)
+  b.price = UI.text(b, "small")
+  b.price:SetPoint("RIGHT", -2, 0)
   b.price:SetJustifyH("RIGHT")
-  b.name = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.name = UI.text(b, "small")
   b.name:SetPoint("LEFT", b.icon, "RIGHT", 4, 0)
   b.name:SetPoint("RIGHT", b.price, "LEFT", -4, 0)
   b.name:SetJustifyH("LEFT")
@@ -235,18 +235,18 @@ end
 local function makeFrame()
   local panel = _G.EverlookAuctionsPanel
   if S.frame or not panel then return end
-  local f = CreateFrame("Frame", "EverlookAuctionsSell", panel, "BackdropTemplate")
+  local f = UI.own(CreateFrame("Frame", "EverlookAuctionsSell", panel))
   f:SetSize(220, 92 + ROWS * ROW_H)
-  f:SetPoint("TOPLEFT", panel, "BOTTOMLEFT", 0, -4)
-  f:SetBackdrop(panel:GetBackdrop())
-  f:SetBackdropColor(panel:GetBackdropColor())
-  f:SetBackdropBorderColor(panel:GetBackdropBorderColor())
+  f:SetPoint("TOPLEFT", panel, "BOTTOMLEFT", 0, -6)
+  UI.panel(f, T.bg, T.edge)
+  UI.shadow(f, 5)
 
-  local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+  local title = UI.text(f, "title")
   title:SetPoint("TOPLEFT", 12, -12)
   title:SetText("Sell from your bags")
 
-  f.note = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.note = UI.text(f, "dim")
+  f.note:SetWordWrap(true)
   f.note:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
   f.note:SetWidth(196)
   f.note:SetJustifyH("LEFT")
@@ -257,14 +257,14 @@ local function makeFrame()
   f.list:SetSize(196, ROWS * ROW_H)
   for k = 1, ROWS do S.rows[k] = makeRow(f, k) end
 
-  f.empty = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  f.empty = UI.text(f, "mute")
   f.empty:SetPoint("TOPLEFT", f.list, "TOPLEFT", 0, -4)
   f.empty:SetText("Nothing in your bags can be sold here.")
 
-  f.more = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  f.more = UI.text(f, "mute")
   f.more:SetPoint("BOTTOMLEFT", 12, 12)
 
-  f.cut = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+  f.cut = UI.text(f, "mute")
   f.cut:SetPoint("BOTTOMRIGHT", -12, 12)
 
   f:EnableMouseWheel(true)
@@ -300,9 +300,10 @@ ev:SetScript("OnEvent", function(_, e)
   end
 end)
 
+local prevSlash, prevHelp = ns.slash, ns.help
 function ns.slash(msg)
   local arg = msg:match("^undercut%s*(.*)$")
-  if not arg then return false end
+  if not arg then return prevSlash and prevSlash(msg) or false end
   local db = ns.db()
   if arg == "" then
     ns.say("undercut is " .. undercutText() .. ". Set it with /eah undercut 1s, 50c, 1g, 5% or 0.")
@@ -327,5 +328,6 @@ function ns.slash(msg)
 end
 
 function ns.help()
+  if prevHelp then prevHelp() end
   print(("  /eah undercut 1s|50c|5%%|0  how far under the cheapest auction to price (now %s)"):format(undercutText()))
 end
