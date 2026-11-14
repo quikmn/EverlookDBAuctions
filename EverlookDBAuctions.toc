@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: EverlookDB Auctions
-## Notes: Auction house prices: full scans, prices in item tooltips. Saves no player names. /eah
+## Notes: Auction house prices, a Selling tab, shopping lists and price tooltips. Saves no player names. /eah
 ## Author: quikmn
 ## Version: v0.1.6
 ## SavedVariables: EverlookAuctionsDB
