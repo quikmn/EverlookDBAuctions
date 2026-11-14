@@ -767,6 +767,28 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
   if ns.slash and ns.slash(msg) then return end
   if msg == "scan" then startScan(); return end
+  if msg == "debug" then
+    -- what is shown where: for bug reports about tabs and panels ("I click Selling and nothing changes")
+    local ah = _G.AuctionHouseFrame
+    say(("debug: AuctionHouseFrame %s, mode %s, tab %s"):format(ah and (ah:IsShown() and "shown" or "hidden") or "missing",
+      tostring(ah and ah.GetDisplayMode and select(2, pcall(ah.GetDisplayMode, ah))), tostring(ah and ah.selectedTab)))
+    for _, name in ipairs({ "EverlookAuctionsSelling", "EverlookAuctionsShopping", "EverlookAuctionsQueryResults",
+        "EverlookAuctionsSellingTab", "EverlookAuctionsShoppingTab" }) do
+      local f = _G[name]
+      if not f then
+        print(("  %s: not made"):format(name))
+      else
+        local w, h = f:GetSize()
+        print(("  %s: %s (visible %s), %dx%d, strata %s level %d, alpha %.2f, parent %s"):format(name,
+          f:IsShown() and "shown" or "hidden", tostring(f:IsVisible()), w or 0, h or 0, f:GetFrameStrata(),
+          f:GetFrameLevel(), f:GetEffectiveAlpha(), tostring(f:GetParent() and f:GetParent():GetName())))
+      end
+    end
+    for i, t in ipairs(ah and ah.Tabs or {}) do
+      print(("  Blizzard tab %d: %s, id %s"):format(i, tostring(t:GetText()), tostring(t:GetID())))
+    end
+    return
+  end
   if msg == "test" then
     db.reloadAfterScan = not db.reloadAfterScan
     say(db.reloadAfterScan and "test mode on: the UI reloads after the next full scan, so it is saved at once."
