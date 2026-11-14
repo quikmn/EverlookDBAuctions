@@ -1,7 +1,7 @@
 -- EverlookDB Auctions: options, in the game's Settings under AddOns (or /eah options).
 --   Selling   undercut, default duration
 --   Tooltips  auction price, 30-day low and median, vendor price, full-stack price with Shift
---   General   automatic full scan, the EverlookDB look for Blizzard's auction house
+--   General   automatic full scan, the EverlookDB look for Blizzard's auction house, crafting cost
 local ADDON, ns = ...
 local UI, T = ns.UI, ns.T
 
@@ -35,6 +35,7 @@ local function refresh()
   for _, c in ipairs(p.tips) do c:EdbChecked(ns.tipOn(c.key)) end
   p.auto:EdbChecked(db.auto ~= false)
   p.skin:EdbChecked(db.skin ~= false)
+  p.craft:EdbChecked(db.craft ~= false)
 end
 
 local function build()
@@ -108,6 +109,11 @@ local function build()
     ns.db().skin = on
   end)
   p.skin:SetPoint("TOPLEFT", 16, -430)
+  p.craft = UI.check(p, "Crafting cost beside the profession window", function(_, on)
+    ns.db().craft = on
+    if ns.craftRefresh then ns.craftRefresh() end
+  end)
+  p.craft:SetPoint("TOPLEFT", 16, -454)
 
   p:SetScript("OnShow", refresh)
 
