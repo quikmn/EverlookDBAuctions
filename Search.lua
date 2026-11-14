@@ -571,7 +571,15 @@ local function render()
   for k = 1, n do
     local b, r = Q.rows[k], Q.results[Q.offset + k]
     b.row = r
-    if r then
+    if r and r.header then
+      -- a shopping list's search: its query and how many it found
+      b.icon:SetTexture(nil)
+      b.name:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+      b.name:SetText(C_ACCENT .. r.name .. "|r   " .. C_MUTE .. (r.err or (ns.num(r.count) .. " found")) .. "|r")
+      for c in ipairs(COLS) do b.cells[c]:SetText("") end
+      b:Show()
+    elseif r then
+      b.name:SetPoint("RIGHT", f, "RIGHT", NAME_RIGHT, 0)
       b.icon:SetTexture(r.icon)
       local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[(ENUMS.quality[r.quality] or 2) - 1]
       local l = liveOf(r)
@@ -740,6 +748,7 @@ end
 -- The panel
 
 local function headerClick(self)
+  if Q.grouped then return end   -- a shopping list keeps its searches in order
   if Q.sortCol == self.col then
     Q.sortDesc = not Q.sortDesc
   else
@@ -791,7 +800,7 @@ local function makeRow(f, k)
   b.name:SetPoint("LEFT", b.icon, "RIGHT", 8, 0)
   b.name:SetPoint("RIGHT", f, "RIGHT", NAME_RIGHT, 0)
   b:SetScript("OnEnter", function(self)
-    if not self.row then return end
+    if not self.row or self.row.header then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     local link = "item:" .. self.row.id .. (self.row.suffix ~= 0 and ("::::::::::::1:" .. self.row.suffix) or "")
     pcall(GameTooltip.SetHyperlink, GameTooltip, link)
@@ -800,7 +809,7 @@ local function makeRow(f, k)
   end)
   b:SetScript("OnLeave", function() GameTooltip:Hide() end)
   b:SetScript("OnClick", function(self)
-    if not self.row then return end
+    if not self.row or self.row.header then return end
     if ns.openBuy then ns.openBuy(self.row) return end
     -- a normal Blizzard search for the name shows its live auctions; buy from there as usual
     local bar = AuctionHouseFrame.SearchBar
@@ -834,9 +843,17 @@ local function makeResults()
   local go = UI.button(f, "Search", 76, 24, "primary")
   go:SetPoint("RIGHT", help, "LEFT", -6, 0)
 
+  local save = UI.button(f, "Save", 56, 24)
+  save:SetPoint("RIGHT", go, "LEFT", -6, 0)
+  save:SetScript("OnClick", function()
+    local q = Q.last or f.box:GetText():gsub("||", "|")
+    if ns.saveToList and q and q:match("%S") then ns.saveToList(q) end
+  end)
+  UI.tip(save, "Save to a shopping list", "Adds this search to the shopping list picked in the Shopping tab.")
+
   local box = UI.input(f, 100, 24, { hint = "slot is trinket and price lt 5g | sort by price", max = 400 })
   box:SetPoint("TOPLEFT", 8, -8)
-  box:SetPoint("RIGHT", go, "LEFT", -6, 0)
+  box:SetPoint("RIGHT", save, "LEFT", -6, 0)
   local function search()
     box:ClearFocus()
     if box:GetText():match("%S") then ns.query(box:GetText()) end
@@ -951,9 +968,14 @@ local live = { tried = {}, busy = nil }
 
 local function liveHead()
   if not Q.frame or not Q.headBase then return end
-  local total = math.min(#Q.results, LIVE_MAX)
-  local done = 0
-  for k = 1, total do if liveFresh(Q.results[k]) then done = done + 1 end end
+  local total, done = 0, 0
+  for k = 1, math.min(#Q.results, LIVE_MAX) do
+    local r = Q.results[k]
+    if not r.header then
+      total = total + 1
+      if liveFresh(r) then done = done + 1 end
+    end
+  end
   local tail
   if total == 0 then tail = ""
   elseif done >= total then tail = "  " .. C_GOOD .. "live prices checked|r"
@@ -997,7 +1019,7 @@ function liveStep()
   local function pick(from, to)
     for k = from, to do
       local r = Q.results[k]
-      if r and not liveFresh(r) and not live.tried[r.id] then return r end
+      if r and not r.header and not liveFresh(r) and not live.tried[r.id] then return r end
     end
   end
   local r = pick(Q.offset + 1, Q.offset + #Q.rows) or pick(1, math.min(#Q.results, LIVE_MAX))
@@ -1106,8 +1128,33 @@ function ns.query(text)
   local plain = text:gsub("||", "|"):gsub("^%s*where%s+", "")
   if plain ~= Q.last then Q.sortCol = nil end
   live.tried = {}
-  Q.last, Q.tries, Q.offset = plain, 0, 0
+  Q.last, Q.tries, Q.offset, Q.grouped = plain, 0, 0, nil
   show(plain)
+end
+ns.lastQuery = function() return Q.last end
+
+-- Runs every search of a shopping list over the last full scan and shows the results one search after another,
+-- each under its query. Live prices are checked as for a single search.
+function ns.queryList(list)
+  local f = makeResults()
+  if not f or not list then return end
+  f.guide:Hide()
+  f.box:SetText("")
+  f:Show()
+  local out, total = {}, 0
+  for _, q in ipairs(list.queries or {}) do
+    local plain = q:gsub("||", "|"):gsub("^%s*where%s+", "")
+    local results, head = run(plain)
+    out[#out + 1] = { header = true, name = q, count = results and #results or 0, err = not results and head or nil }
+    for _, r in ipairs(results or {}) do out[#out + 1] = r end
+    total = total + (results and #results or 0)
+  end
+  live.tried = {}
+  Q.results, Q.grouped, Q.groupList, Q.last, Q.offset, Q.sortCol = out, list.name, list, nil, 0, nil
+  setStatus(("%s: %d searches, %s results in the last full scan"):format(list.name, #(list.queries or {}), ns.num(total)))
+  render()
+  liveHead()
+  liveStep()
 end
 
 -- A new full scan came in: search again with the fresh prices.
@@ -1117,6 +1164,8 @@ function ns.onScan()
   if Q.frame and Q.frame:IsShown() and Q.last then
     Q.tries = 0
     show(Q.last)
+  elseif Q.frame and Q.frame:IsShown() and Q.grouped and Q.groupList then
+    ns.queryList(Q.groupList)
   end
 end
 

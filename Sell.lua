@@ -1336,6 +1336,8 @@ local function blizzardTabs(selectCurrent)
   end
 end
 
+ns.blizzardTabs = blizzardTabs
+
 local function closeSelling()
   if not S.frame or not S.frame:IsShown() then return end
   S.frame:Hide()

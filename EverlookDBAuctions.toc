@@ -11,4 +11,5 @@ Skin.lua
 Data.lua
 Sell.lua
 Search.lua
+Shopping.lua
 Options.lua
