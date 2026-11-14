@@ -1,5 +1,12 @@
 # EverlookDB Auctions
 
+## v0.5.0 (2026-11-14)
+
+- Your auctions: a new button cancels your next undercut auction. Each click cancels one auction, and the next click waits for the server's answer. The button shows how many of your auctions are undercut, and its tooltip shows what the next cancel costs.
+- Selling tab: when you post the last of an item, the next item in your list is picked, ready to post.
+- Selling tab: when the cheapest auction is a single one far below the usual price (often bait), the price line tells you the usual price.
+- Shopping lists: each search shows what one of each result costs at the lowest price, which is handy for lists of materials.
+
 ## v0.4.0 (2026-11-14)
 
 - Buttons now look like what they do. The main action on each panel (Post, Buy, Search, Run list) is solid gold. Cancel, Remove and Delete are red. Everything else is a quiet grey.

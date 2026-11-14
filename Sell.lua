@@ -17,7 +17,7 @@ local _, ns = ...
 local UI, T = ns.UI, ns.T
 local AH = C_AuctionHouse or {}
 local money, num = ns.money, ns.num
-local C_MUTE, C_DIM = UI.hex(T.mute), UI.hex(T.dim)
+local C_MUTE = UI.hex(T.mute)
 
 local SORTS = { { sortOrder = 0, reverseSort = false } }   -- by price (Enum.AuctionHouseSortOrder.Price)
 local DURATIONS = { { 1, "12h" }, { 2, "24h" }, { 3, "48h" } }
@@ -291,12 +291,24 @@ local function summarize(e)
     if a.unit and b.unit then return a.unit < b.unit end
     return a.unit ~= nil and b.unit == nil
   end)
+  local others = 0
   for _, r in ipairs(e.rows) do
     if r.unit then
       if r.others > 0 and not e.lowestOther then e.lowestOther = r.unit end
       if r.mine and not e.lowestMine then e.lowestMine = r.unit end
+      others = others + r.others
     end
   end
+  -- the median price per unit of everyone else's; the cheapest is "lone" when it is a single unit under 60% of that
+  local acc, first = 0, nil
+  for _, r in ipairs(e.rows) do
+    if r.unit and r.others > 0 then
+      first = first or r
+      acc = acc + r.others
+      if acc >= others / 2 then e.usual = r.unit; break end
+    end
+  end
+  e.lone = first ~= nil and others >= 5 and first.others == 1 and e.usual ~= nil and first.unit < e.usual * 0.6
 end
 
 local function readCommodity(id)
@@ -578,8 +590,10 @@ local function suggest()
   local mem = s and s.memory[g.key]
   local e = g.ckey and Live.cache[g.ckey]
   if e and e.lowestOther and (not e.lowestMine or e.lowestOther < e.lowestMine) then
-    return undercutPrice(e.lowestOther),
-      ("Undercuts the cheapest auction (%s) by %s."):format(money(e.lowestOther), undercutText())
+    local why = ("Undercuts the cheapest auction (%s) by %s."):format(money(e.lowestOther), undercutText())
+    local usual = e.lone and e.usual
+    if usual then why = why .. (" The cheapest is a lone one far under the usual %s."):format(money(usual)) end
+    return undercutPrice(e.lowestOther), why
   end
   if e and e.lowestMine then
     return e.lowestMine, ("Matches your own cheapest auction (%s)."):format(money(e.lowestMine))
@@ -616,6 +630,7 @@ local function renderBags()
     or S.mode == "hidden" and "Nothing hidden. Shift+right-click an item to hide it."
     or S.filter ~= "" and "Nothing matches." or "Nothing in your bags can be sold here.")
   f.bags:SetItems(out)
+  S.visible = out
   f.bagCount:SetText(num(#S.groups) .. " items")
   for _, b in ipairs(f.modes) do b:EdbActive(b.mode == S.mode) end
 end
@@ -640,6 +655,13 @@ local function renderCurrent()
   end
 end
 
+-- The first of your auctions someone else is cheaper than, or nil.
+local function nextUndercut()
+  for _, a in ipairs(S.owned) do
+    if not a.sold and not a.cancelling and ownedState(a) == "Undercut" then return a end
+  end
+end
+
 local function renderOwned()
   local f = S.frame
   if not f then return end
@@ -653,8 +675,11 @@ local function renderOwned()
         if ownedState(a) == "Undercut" then under = under + 1 end
       end
     end
-    f.info:SetText(("%s up, %s%s undercut|r"):format(num(n), under > 0 and UI.hex(T.bad) or C_DIM, num(under)))
+    f.info:SetText(("%s up"):format(num(n)))
+    f.cutNext:SetText(under > 0 and ("Undercut: cancel (%d)"):format(under) or "None undercut")
+    f.cutNext:SetEnabled(under > 0 and not S.cancelPending and nextUndercut() ~= nil)
   end
+  f.cutNext:SetShown(S.view == "own")
 end
 
 local function setView(v)
@@ -763,8 +788,10 @@ end
 -- Bags changed: read them again and keep the picked item (or let go of it when it's gone).
 local function refreshBags()
   if not S.frame or not S.frame:IsShown() then return end
-  collect()
   local g = S.sel
+  local was
+  for i, v in ipairs(S.visible or {}) do if g and v.key == g.key then was = i; break end end
+  collect()
   if g then
     local again
     for _, n in ipairs(S.groups) do if n.key == g.key then again = n; break end end
@@ -781,6 +808,12 @@ local function refreshBags()
     end
   end
   renderBags()
+  -- you just posted the last of the picked item: pick the one that took its place in the list
+  if g and not S.sel and S.advance == g.key and was then
+    S.advance = nil
+    local nxt = S.visible[was] or S.visible[#S.visible]
+    if nxt then selectGroup(nxt) end
+  end
 end
 
 function onLive(c)
@@ -882,6 +915,10 @@ local function cancelAuction(a)
   local okCall, err = pcall(AH.CancelAuction, a.id)
   if okCall then
     a.cancelling = true
+    -- one cancel at a time: the next waits for the server's answer (or 5 seconds)
+    local mine = {}
+    S.cancelPending = mine
+    C_Timer.After(5, function() if S.cancelPending == mine then S.cancelPending = nil; renderOwned() end end)
     setStatus(("Cancelling %s..."):format(a.name), T.dim)
     renderOwned()
   else
@@ -1354,6 +1391,17 @@ local function makeFrame()
       request(S.sel.itemKey, S.sel.commodity, true)
     end
   end)
+  f.cutNext = UI.button(Lw, "Cancel undercut", 120, 22, "small danger")
+  f.cutNext:SetPoint("LEFT", f.ownBtn, "RIGHT", 12, 0)
+  f.cutNext:SetScript("OnClick", function() cancelAuction(nextUndercut()) end)
+  UI.tip(f.cutNext, "Cancel your next undercut auction", function()
+    local a = nextUndercut()
+    if not a then return "None of your auctions is undercut right now." end
+    local cost = try(AH.GetCancelCost, a.id)
+    return ("%s, at %s.%s One click cancels one auction."):format(a.name, a.unit and money(a.unit) or "-",
+      (cost and cost > 0) and (" Costs " .. money(cost) .. ".") or "")
+  end)
+  f.cutNext:Hide()
   f.info = UI.text(Lw, "mute")
   f.info:SetPoint("RIGHT", refresh, "LEFT", -10, 0)
   f.info:SetJustifyH("RIGHT")
@@ -1509,6 +1557,7 @@ end
 
 local function posted(job)
   S.posting = nil
+  S.advance = job.key   -- when that was the last of it, the next item in the list gets picked
   setStatus(("Posted %s x %s at %s each."):format(num(job.qty), job.name, money(job.unit)), T.good)
   updateTotals()
   queryOwned()
@@ -1570,6 +1619,7 @@ function events.AUCTION_HOUSE_POST_ERROR()
 end
 
 function events.AUCTION_CANCELED()
+  S.cancelPending = nil
   if not S.frame or not S.frame:IsShown() then return end
   setStatus("Auction cancelled.", T.good)
   queryOwned()

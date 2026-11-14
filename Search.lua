@@ -575,7 +575,8 @@ local function render()
       -- a shopping list's search: its query and how many it found
       b.icon:SetTexture(nil)
       b.name:SetPoint("RIGHT", f, "RIGHT", -12, 0)
-      b.name:SetText(C_ACCENT .. r.name .. "|r   " .. C_MUTE .. (r.err or (ns.num(r.count) .. " found")) .. "|r")
+      local tail = r.err or (ns.num(r.count) .. " found" .. (r.sum and r.count > 1 and (", one of each " .. ns.money(r.sum)) or ""))
+      b.name:SetText(C_ACCENT .. r.name .. "|r   " .. C_MUTE .. tail .. "|r")
       for c in ipairs(COLS) do b.cells[c]:SetText("") end
       b:Show()
     elseif r then
@@ -1149,7 +1150,13 @@ function ns.queryList(list)
   for _, q in ipairs(list.queries or {}) do
     local plain = q:gsub("||", "|"):gsub("^%s*where%s+", "")
     local results, head = run(plain)
-    out[#out + 1] = { header = true, name = q, count = results and #results or 0, err = not results and head or nil }
+    -- what one of each costs at the lowest price (from the scan): a list of materials shows its total
+    local sum, priced = 0, 0
+    for _, r in ipairs(results or {}) do
+      if r.price then sum, priced = sum + r.price, priced + 1 end
+    end
+    out[#out + 1] = { header = true, name = q, count = results and #results or 0, err = not results and head or nil,
+      sum = priced > 0 and sum or nil }
     for _, r in ipairs(results or {}) do out[#out + 1] = r end
     total = total + (results and #results or 0)
   end
