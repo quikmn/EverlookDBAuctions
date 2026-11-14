@@ -576,8 +576,27 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- Tooltips
 
+-- Which tooltip lines to show (db.tip, set in the options): auction price, 30-day low and median, vendor price,
+-- and with Shift held, the price of a full stack.
+local function tipOn(key)
+  local t = db and db.tip
+  if not t or t[key] == nil then return key ~= "vendor" end   -- everything but the vendor line is on by default
+  return t[key]
+end
+ns.tipOn = tipOn
+
+local function stackSize(id)
+  local okGet, n = pcall(C_Item.GetItemMaxStackSizeByID or function() return nil end, id)
+  if okGet and n then return n end
+  local info = { pcall(C_Item.GetItemInfo, id) }
+  return info[1] and info[9] or 1
+end
+
 local function priceLines(tooltip, id)
   if not db then return end
+  local stack = IsShiftKeyDown() and tipOn("stack") and stackSize(id) or 1
+  local function each(p) return stack > 1 and (p * stack) or p end
+  local suffix = stack > 1 and (" x" .. stack) or ""
   local keys = { factionKey() }
   local neutral = (GetRealmName() or "?") .. "-Neutral"
   if db.houses[neutral] then keys[#keys + 1] = neutral end
@@ -585,22 +604,32 @@ local function priceLines(tooltip, id)
     local h = db.houses[key]
     local it = h and h.items[id]
     local label = key:match("%-(%a+)$") == "Neutral" and "Neutral AH" or "AH"
-    if it and it[1] then
-      local fresh = (time() - it[4]) < STALE
-      local r, g, b = fresh and 1 or 0.6, fresh and 0.82 or 0.6, fresh and 0 or 0.6
-      tooltip:AddDoubleLine(label .. " (" .. (it[2] or "?") .. " up, " .. ago(it[4]) .. ")", money(it[1]),
-        r, g, b, 1, 1, 1)
-    elseif h and h.scanned and h.days[id] then
-      tooltip:AddDoubleLine(label, "none up in the last scan", 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
-    end
-    local d = h and h.days[id]
-    if d then
-      local low
-      for _, p in pairs(d) do if not low or p < low then low = p end end
-      if low and (not it or low < (it[1] or math.huge)) then
-        tooltip:AddDoubleLine("  " .. HISTORY_DAYS .. "-day low", money(low), 0.6, 0.6, 0.6, 0.8, 0.8, 0.8)
+    if tipOn("auction") then
+      if it and it[1] then
+        local fresh = (time() - it[4]) < STALE
+        local r, g, b = fresh and 1 or 0.6, fresh and 0.82 or 0.6, fresh and 0 or 0.6
+        tooltip:AddDoubleLine(label .. suffix .. " (" .. (it[2] or "?") .. " up, " .. ago(it[4]) .. ")", money(each(it[1])),
+          r, g, b, 1, 1, 1)
+      elseif h and h.scanned and h.days[id] then
+        tooltip:AddDoubleLine(label, "none up in the last scan", 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
       end
     end
+    local d = h and h.days[id]
+    if d and tipOn("history") then
+      local list = {}
+      for _, p in pairs(d) do list[#list + 1] = p end
+      table.sort(list)
+      if #list > 0 then
+        local low, med = list[1], list[math.floor((#list + 1) / 2)]
+        tooltip:AddDoubleLine("  " .. HISTORY_DAYS .. "-day low" .. (#list > 2 and " / median" or ""),
+          money(each(low)) .. (#list > 2 and (" / " .. money(each(med))) or ""), 0.6, 0.6, 0.6, 0.8, 0.8, 0.8)
+      end
+    end
+  end
+  if tipOn("vendor") then
+    local info = { pcall(C_Item.GetItemInfo, id) }
+    local sell = info[1] and info[12]
+    if sell and sell > 0 then tooltip:AddDoubleLine("Vendor" .. suffix, money(each(sell)), 0.6, 0.6, 0.6, 1, 1, 1) end
   end
 end
 

@@ -435,6 +435,36 @@ function UI.headerBand(parent, h)
   return UI.own(band)
 end
 
+-- A check box with a label: b:EdbChecked(on), b.checked. onClick(b, checked) runs after a click.
+function UI.check(parent, text, onClick)
+  local b = CreateFrame("Button", nil, parent)
+  b:SetHeight(20)
+  local box = CreateFrame("Frame", nil, b)
+  box:SetSize(16, 16)
+  box:SetPoint("LEFT", 0, 0)
+  paint(box, T.input, T.edge)
+  local mark = box:CreateTexture(nil, "ARTWORK")
+  mark:SetPoint("TOPLEFT", 4, -4)
+  mark:SetPoint("BOTTOMRIGHT", -4, 4)
+  mark:SetColorTexture(unpack(T.accent))
+  local fs = UI.text(b, "body")
+  fs:SetPoint("LEFT", box, "RIGHT", 8, 0)
+  fs:SetText(text)
+  b:SetWidth(24 + math.max(40, fs:GetStringWidth()))
+  b.EdbChecked = function(self, on)
+    self.checked = on and true or false
+    mark:SetShown(self.checked)
+  end
+  b:SetScript("OnEnter", function() setEdge(box, T.edgeHi) end)
+  b:SetScript("OnLeave", function() setEdge(box, T.edge) end)
+  b:SetScript("OnClick", function(self)
+    self:EdbChecked(not self.checked)
+    if onClick then onClick(self, self.checked) end
+  end)
+  b:EdbChecked(false)
+  return UI.own(b)
+end
+
 -- A small grey column label.
 function UI.label(parent, text, kind)
   local fs = UI.text(parent, kind or "head")

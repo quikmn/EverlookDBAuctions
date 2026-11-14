@@ -11,3 +11,4 @@ Skin.lua
 Data.lua
 Sell.lua
 Search.lua
+Options.lua

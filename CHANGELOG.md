@@ -7,6 +7,8 @@
 - Your auctions are checked against the live auctions and marked Undercut, Lowest or Sold.
 - 30-day price chart (lowest per day) for the item you're selling.
 - The bag list beside the auction house is gone; the Selling tab replaces it.
+- Tooltips: 30-day median next to the 30-day low, vendor price (off by default), and the price of a full stack while Shift is held.
+- Options in the game's Settings under AddOns (or /eah options): undercut, default duration, which tooltip lines to show, automatic full scan, and the auction house look.
 
 ## [v0.1.0](https://github.com/quikmn/EverlookDBAuctions/tree/v0.1.0) (2026-11-13)
 [Full Changelog](https://github.com/quikmn/EverlookDBAuctions/commits/v0.1.0) [Previous Releases](https://github.com/quikmn/EverlookDBAuctions/releases)
