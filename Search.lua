@@ -804,13 +804,13 @@ local function makeRow(f, k)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     local link = "item:" .. self.row.id .. (self.row.suffix ~= 0 and ("::::::::::::1:" .. self.row.suffix) or "")
     pcall(GameTooltip.SetHyperlink, GameTooltip, link)
-    GameTooltip:AddLine("Click to see its live auctions.", T.info[1], T.info[2], T.info[3], true)
+    GameTooltip:AddLine("Click to see its live auctions and buy.", T.info[1], T.info[2], T.info[3], true)
     GameTooltip:Show()
   end)
   b:SetScript("OnLeave", function() GameTooltip:Hide() end)
   b:SetScript("OnClick", function(self)
     if not self.row or self.row.header then return end
-    if ns.openBuy then ns.openBuy(self.row) return end
+    if ns.openBuy and ns.openBuy(self.row) then return end
     -- a normal Blizzard search for the name shows its live auctions; buy from there as usual
     local bar = AuctionHouseFrame.SearchBar
     bar:SetSearchText(self.row.name)
@@ -1015,6 +1015,7 @@ local function liveSend()
 end
 
 function liveStep()
+  if ns.buyOpen then return end   -- the buy panel is using the search results
   if live.busy or not Q.frame or not Q.frame:IsShown() or not C_AuctionHouse.SendSearchQuery then return end
   local function pick(from, to)
     for k = from, to do
@@ -1121,6 +1122,7 @@ end
 function ns.query(text)
   local f = makeResults()
   if not f then return end
+  if ns.closeBuy then ns.closeBuy() end
   f.box:SetText(text)
   f.guide:Hide()
   f:Show()
@@ -1132,12 +1134,14 @@ function ns.query(text)
   show(plain)
 end
 ns.lastQuery = function() return Q.last end
+ns.liveStep = function() liveStep() end
 
 -- Runs every search of a shopping list over the last full scan and shows the results one search after another,
 -- each under its query. Live prices are checked as for a single search.
 function ns.queryList(list)
   local f = makeResults()
   if not f or not list then return end
+  if ns.closeBuy then ns.closeBuy() end
   f.guide:Hide()
   f.box:SetText("")
   f:Show()
