@@ -734,3 +734,20 @@ function ns.latestRow(key)
     end
   end
 end
+
+-- Lowest price per day for an item on the open auction house (last 30 days), oldest first: { { day, price }, ... }.
+function ns.history(id)
+  local out = {}
+  local h = db and house and db.houses[house]
+  local d = h and h.days[id]
+  if d then for day, p in pairs(d) do out[#out + 1] = { day, p } end end
+  table.sort(out, function(a, b) return a[1] < b[1] end)
+  return out
+end
+
+-- The open auction house's saved price for an item: { lowest unit buyout, quantity, auctions, time } or nil.
+function ns.houseItem(id)
+  local h = db and house and db.houses[house]
+  return h and h.items[id]
+end
+ns.today = today

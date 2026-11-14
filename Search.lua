@@ -1135,6 +1135,9 @@ function ns.openSearch()
   if not ah then return end
   local f = makeResults()
   if not f then return end
+  -- the addon's own tabs cover the auction list; close them
+  if ns.closeSelling then ns.closeSelling() end
+  if ns.closeOthers then ns.closeOthers() end
   if AuctionHouseFrameDisplayMode and ah.GetDisplayMode and ah:GetDisplayMode() ~= AuctionHouseFrameDisplayMode.Buy then
     Q.opening = true
     ah:SetDisplayMode(AuctionHouseFrameDisplayMode.Buy)
