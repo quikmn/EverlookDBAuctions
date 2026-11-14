@@ -2,15 +2,17 @@
 ## Title: EverlookDB Auctions
 ## Notes: Auction house prices, a Selling tab, shopping lists and price tooltips. Saves no player names. /eah
 ## Author: quikmn
-## Version: v0.2.1
+## Version: v0.3.0
 ## SavedVariables: EverlookAuctionsDB
 ## IconTexture: Interface\AddOns\EverlookDBAuctions\Media\icon
 
 EverlookDBAuctions.lua
 Skin.lua
 Data.lua
+Disenchant.lua
 Sell.lua
 Search.lua
 Shopping.lua
 Buy.lua
 Options.lua
+API.lua

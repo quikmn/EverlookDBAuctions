@@ -269,6 +269,9 @@ local function prepare(g)
   else g.commodity = g.maxStack > 1 end       -- not known yet: stackable things are commodities on this auction house
   g.itemKey = (g.loc and try(AH.GetItemKeyFromItem, g.loc)) or try(AH.MakeItemKey, g.id, 0, 0, 0)
   g.ckey = ckey(g.itemKey)
+  local info = ns.itemInfo and ns.itemInfo(g.id)
+  g.vendor = info and info[9] or 0
+  g.de = ns.disenchantValue and ns.disenchantValue(g.id)
 end
 
 local function available(g)
@@ -410,6 +413,23 @@ local function queryOwned()
   if AH.QueryOwnedAuctions then pcall(AH.QueryOwnedAuctions, SORTS) end
 end
 
+-- Whether an owned commodity auction's buyoutAmount is the price of the whole auction or of one: learned from your
+-- own posts (the price you posted at is remembered), kept in db.sell.ownedTotal. Until then, one (as on retail).
+local function learnOwnedPrice(itemID, qty, buy)
+  local s = sdb()
+  if not s or s.ownedTotal ~= nil or qty < 2 or not itemID then return end
+  local mem = s.memory[itemID .. ":0"]
+  if not mem or not mem.p then return end
+  if buy == mem.p * qty then s.ownedTotal = true elseif buy == mem.p then s.ownedTotal = false end
+end
+
+local function ownedUnit(commodity, qty, buy)
+  if not buy or buy <= 0 then return nil end
+  local s = sdb()
+  if commodity and not (s and s.ownedTotal) then return buy end
+  return math.floor(buy / math.max(1, qty))
+end
+
 local function readOwned()
   local list = {}
   for i = 1, (try(AH.GetNumOwnedAuctions) or 0) do
@@ -423,12 +443,13 @@ local function readOwned()
       local qty = okv(a.quantity) or 1
       local buy = okv(a.buyoutAmount)
       local commodity = info and info.isCommodity
+      if commodity then learnOwnedPrice(itemID, qty, buy) end
       list[#list + 1] = {
         id = id, key = k, ckey = ckey(k), itemID = itemID, link = link, commodity = commodity,
         name = (link and link:match("%[(.-)%]")) or (info and info.itemName) or (itemID and try(C_Item.GetItemNameByID, itemID)) or "?",
         quality = (info and info.quality) or (itemID and try(C_Item.GetItemQualityByID, itemID)),
         icon = (info and info.iconFileID) or (itemID and try(C_Item.GetItemIconByID, itemID)),
-        qty = qty, unit = buy and (commodity and buy or math.floor(buy / math.max(1, qty))) or nil,
+        qty = qty, unit = ownedUnit(commodity, qty, buy),
         sold = okv(a.status) == 1, left = okv(a.timeLeftSeconds), band = okv(a.timeLeft),
         hasBid = (okv(a.bidAmount) or 0) > 0,
       }
@@ -522,9 +543,19 @@ local function updateTotals()
   if g.commodity then dep = try(AH.CalculateCommodityDeposit, g.id, S.dur, qty)
   elseif g.loc then dep = try(AH.CalculateItemDeposit, g.loc, S.dur, qty) end
   f.deposit:SetText(dep and money(dep) or "-")
-  f.source:SetText(S.source or "")
+  -- the auction house keeps 5% of a sale (more at a neutral house): say so when a vendor or disenchanting pays more
+  local net = math.floor(unit * 0.95)
+  local warn
+  if unit > 0 and (g.vendor or 0) > net then
+    warn = ("A vendor pays %s each, more than this nets after the 5%% cut."):format(money(g.vendor))
+  elseif unit > 0 and g.de and g.de > net then
+    warn = ("Disenchanting is worth about %s, more than this nets after the 5%% cut."):format(money(g.de))
+  end
+  f.source:SetText(warn and (UI.hex(T.bad) .. warn .. "|r") or S.source or "")
   f.post:SetEnabled(not S.posting and not S.warned and qty >= 1 and qty <= (S.avail or 0) and unit >= 100)
-  f.post:SetText(S.posting and "Posting..." or (qty > 1 and ("Post " .. num(qty)) or "Post"))
+  local m = S.posting and S.posting.multi
+  f.post:SetText(m and ("Posting %d / %d"):format(m[1], m[2]) or S.posting and "Posting..."
+    or (qty > 1 and ("Post " .. num(qty)) or "Post"))
 end
 
 local function setQty(n)
@@ -702,6 +733,7 @@ local function updatePost()
   local s = sdb()
   local mem = s and s.memory[g.key]
   if mem and mem.p then bits[#bits + 1] = "last posted at " .. money(mem.p) end
+  if g.de then bits[#bits + 1] = "disenchant ~" .. money(g.de) end
   f.sub:SetText(table.concat(bits, "   "))
   f.qty:SetText(tostring(S.qty or 1))
   f.stack:SetShown(g.maxStack > 1)
@@ -760,6 +792,32 @@ function onLive(c)
   if S.view == "own" then renderOwned() end
 end
 
+-- A post was sent: wait for the server. Several of an item (not a commodity) go up as that many auctions of one, one
+-- after another (the game's "multisell"); Post stays off until the last one is up or it stops.
+local function waitForPost(job)
+  S.posting = job
+  setStatus(("Posting %s x %s..."):format(num(job.qty), job.name), T.dim)
+  updateTotals()
+  local function check()
+    if S.posting ~= job then return end
+    -- a multisell that is still moving gets more time; anything else is given up on after 5 seconds of silence
+    if job.multi and GetTime() - (job.heard or 0) < 5 then C_Timer.After(1, check); return end
+    S.posting = nil
+    updateTotals()
+  end
+  job.heard = GetTime()
+  C_Timer.After(5, check)
+end
+
+-- The server wants a confirm for this post (an unusual price): show our own, which posts exactly what is set here.
+local function askConfirm(job)
+  if StaticPopup_Hide then pcall(StaticPopup_Hide, "AUCTION_HOUSE_POST_WARNING") end
+  S.posting, S.warned = nil, job
+  S.frame.confirm:Show()
+  setStatus("Confirm the post, or don't.", T.accent)
+  updateTotals()
+end
+
 -- Post: one click, one post. The price, quantity and duration are remembered for this item.
 local function post()
   local g = S.sel
@@ -771,34 +829,29 @@ local function post()
     return
   end
   local qty, unit, dur = S.qty or 0, S.unit or 0, S.dur or 2
-  if qty < 1 or unit < 100 then return end
-  local okCall, err
+  if qty < 1 or unit < 100 or qty > (S.avail or 0) then return end
+  local okCall, needsConfirm
   if g.commodity then
     if not AH.PostCommodity then setStatus("This client can't post commodities.", T.bad); return end
-    okCall, err = pcall(AH.PostCommodity, loc, dur, qty, unit)
+    okCall, needsConfirm = pcall(AH.PostCommodity, loc, dur, qty, unit)
   else
+    -- quantity is how many auctions of one; the buyout is per auction, so per item (as Blizzard's own Sell tab does)
     if not AH.PostItem then setStatus("This client can't post items.", T.bad); return end
-    okCall, err = pcall(AH.PostItem, loc, dur, qty, nil, unit)
+    okCall, needsConfirm = pcall(AH.PostItem, loc, dur, qty, nil, unit)
   end
   if not okCall then
-    setStatus("Couldn't post: " .. tostring(err), T.bad)
+    setStatus("Couldn't post: " .. tostring(needsConfirm), T.bad)
     return
   end
   local s = sdb()
   if s then s.memory[g.key] = { p = unit, d = dur, q = qty, at = time() } end
-  local job = { name = g.name, qty = qty, unit = unit, commodity = g.commodity, loc = loc, dur = dur, id = g.id }
-  S.posting = job
-  setStatus(("Posting %s x %s..."):format(num(qty), g.name), T.dim)
-  updateTotals()
-  C_Timer.After(5, function()
-    if S.posting == job then
-      S.posting = nil
-      updateTotals()
-    end
-  end)
+  local job = { name = g.name, qty = qty, unit = unit, commodity = g.commodity, loc = loc, dur = dur, id = g.id, key = g.key }
+  -- several of an item go up one auction at a time; count them until the last one is up
+  if not g.commodity and qty > 1 then job.multi = { 0, qty } end
+  if needsConfirm == true then askConfirm(job) else waitForPost(job) end
 end
 
--- The server asks to confirm a post (an unusual price): one more click posts it.
+-- The confirm: one more click posts it.
 local function confirmPost()
   local job = S.warned
   S.frame.confirm:Hide()
@@ -811,12 +864,11 @@ local function confirmPost()
     okCall = pcall(AH.ConfirmPostItem, job.loc, job.dur, job.qty, nil, job.unit)
   end
   if okCall then
-    S.posting = job
-    setStatus(("Posting %s x %s..."):format(num(job.qty), job.name), T.dim)
+    waitForPost(job)
   else
     setStatus("Couldn't confirm the post.", T.bad)
+    updateTotals()
   end
-  updateTotals()
 end
 
 -- Cancel: one click, one auction.
@@ -1427,9 +1479,7 @@ function events.OWNED_AUCTIONS_UPDATED()
   checkOwned()
 end
 
-function events.AUCTION_HOUSE_AUCTION_CREATED()
-  local job = S.posting
-  if not job then return end
+local function posted(job)
   S.posting = nil
   setStatus(("Posted %s x %s at %s each."):format(num(job.qty), job.name, money(job.unit)), T.good)
   updateTotals()
@@ -1440,15 +1490,48 @@ function events.AUCTION_HOUSE_AUCTION_CREATED()
   end)
 end
 
+function events.AUCTION_HOUSE_AUCTION_CREATED()
+  local job = S.posting
+  if not job then return end
+  if not job.multi then posted(job); return end
+  -- one auction of a multisell is up; AUCTION_MULTISELL_UPDATE counts them when the client sends it
+  job.heard, job.created = GetTime(), (job.created or 0) + 1
+  if not job.counted then
+    job.multi[1] = math.min(job.created, job.multi[2])
+    if job.multi[1] >= job.multi[2] then posted(job); return end
+  end
+  updateTotals()
+end
+
+function events.AUCTION_MULTISELL_START(total)
+  local job = S.posting
+  if not job then return end
+  job.multi, job.heard, job.counted = { 0, tonumber(total) or job.qty }, GetTime(), true
+  updateTotals()
+end
+
+function events.AUCTION_MULTISELL_UPDATE(done, total)
+  local job = S.posting
+  if not job then return end
+  job.multi, job.heard, job.counted = { tonumber(done) or 0, tonumber(total) or job.qty }, GetTime(), true
+  if job.multi[1] >= job.multi[2] then posted(job) else updateTotals() end
+end
+
+function events.AUCTION_MULTISELL_FAILURE()
+  local job = S.posting
+  if not job then return end
+  S.posting = nil
+  local done = job.multi and job.multi[1] or 0
+  setStatus(("Posting stopped after %d of %d."):format(done, job.qty), T.bad)
+  updateTotals()
+  queryOwned()
+end
+
 function events.AUCTION_HOUSE_POST_WARNING()
   local job = S.posting
   if not job or not S.frame or not S.frame:IsShown() then return end
   -- Blizzard's own confirm would act on its own sell frame; ours posts what you set here
-  if StaticPopup_Hide then pcall(StaticPopup_Hide, "AUCTION_HOUSE_POST_WARNING") end
-  S.posting, S.warned = nil, job
-  S.frame.confirm:Show()
-  setStatus("Confirm the post, or don't.", T.accent)
-  updateTotals()
+  askConfirm(job)
 end
 
 function events.AUCTION_HOUSE_POST_ERROR()

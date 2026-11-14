@@ -669,6 +669,10 @@ local function priceLines(tooltip, id)
       end
     end
   end
+  if tipOn("disenchant") and ns.disenchantValue then
+    local value = ns.disenchantValue(id)
+    if value then tooltip:AddDoubleLine("Disenchant (estimate)", money(value), 0.6, 0.6, 0.6, 1, 1, 1) end
+  end
   if tipOn("vendor") then
     local info = { pcall(C_Item.GetItemInfo, id) }
     local sell = info[1] and info[12]
@@ -798,14 +802,20 @@ ns.db = function() return db end
 ns.house = function() return house end
 ns.money, ns.num, ns.ago, ns.say, ns.variantOf, ns.ahFrame, ns.ok = money, num, ago, say, variantOf, ahFrame, ok
 
--- The newest full scan's row for "id:suffix" on the open auction house: { low, p10, med, qty, n, at }.
-function ns.latestRow(key)
-  if not db or not house then return nil end
-  local side = house:match("%-(%a+)$")
-  local realm = GetRealmName()
+-- Which saved auction house to read: the one given ("Alliance", "Horde" or "Neutral" on this realm), else the one
+-- that is open, else the player's own faction's.
+local function keyFor(side)
+  if side then return (GetRealmName() or "?") .. "-" .. side end
+  return house or factionKey()
+end
+
+-- The newest full scan's row for "id:suffix": { low, p10, med, qty, n, at } (at is server time), or nil.
+function ns.scanRowFor(key, side)
+  if not db then return nil end
+  local realm, want = keyFor(side):match("^(.*)%-(%a+)$")
   for k = #db.scans, 1, -1 do
     local sc = db.scans[k]
-    if sc.realm == realm and sc.side == side then
+    if sc.realm == realm and sc.side == want then
       local row = sc.rows and sc.rows[key]
       if not row then return nil end
       local f = { strsplit(",", row) }
@@ -814,19 +824,43 @@ function ns.latestRow(key)
   end
 end
 
--- Lowest price per day for an item on the open auction house (last 30 days), oldest first: { { day, price }, ... }.
-function ns.history(id)
+-- Lowest price per day for an item (last 30 days), oldest first: { { day, price }, ... }.
+function ns.historyFor(id, side)
   local out = {}
-  local h = db and house and db.houses[house]
+  local h = db and db.houses[keyFor(side)]
   local d = h and h.days[id]
   if d then for day, p in pairs(d) do out[#out + 1] = { day, p } end end
   table.sort(out, function(a, b) return a[1] < b[1] end)
   return out
 end
 
--- The open auction house's saved price for an item: { lowest unit buyout, quantity, auctions, time } or nil.
-function ns.houseItem(id)
-  local h = db and house and db.houses[house]
+-- The saved price for an item: { lowest unit buyout, quantity, auctions, time } or nil.
+function ns.itemFor(id, side)
+  local h = db and db.houses[keyFor(side)]
   return h and h.items[id]
 end
+
+-- What disenchanting an item is worth: the sum over its materials of chance x average count x the material's
+-- lowest saved price (Disenchant.lua, from classic-db). Returns the value in copper, the age in seconds of the oldest
+-- material price, and the materials { { itemID, chance %, min, max, price }, ... }; nil when the item can't be
+-- disenchanted or a material has no price yet.
+function ns.disenchantValue(id, side)
+  local kind = ns.DE_ITEMS and ns.DE_ITEMS[id]
+  local mats = kind and ns.DE_GROUPS[kind]
+  if not mats then return nil end
+  local value, oldest, out = 0, 0, {}
+  for k, m in ipairs(mats) do
+    local it = ns.itemFor(m[1], side)
+    if not it or not it[1] then return nil end
+    value = value + m[2] / 100 * (m[3] + m[4]) / 2 * it[1]
+    oldest = math.max(oldest, time() - (it[4] or 0))
+    out[k] = { m[1], m[2], m[3], m[4], it[1] }
+  end
+  return math.floor(value + 0.5), oldest, out
+end
+
+-- The same three for the open auction house only (nil while it is closed).
+function ns.latestRow(key) return house and ns.scanRowFor(key) end
+function ns.history(id) return house and ns.historyFor(id) or {} end
+function ns.houseItem(id) return house and ns.itemFor(id) end
 ns.today = today

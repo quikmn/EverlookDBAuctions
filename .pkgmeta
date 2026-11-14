@@ -3,3 +3,4 @@ package-as: EverlookDBAuctions
 ignore:
   - README.md
   - .github
+  - tools

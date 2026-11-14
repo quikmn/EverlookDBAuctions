@@ -10,6 +10,7 @@ local O = {}
 local TIP_LINES = {
   { "auction", "Auction price, how many are up and how old the price is" },
   { "history", "30-day low and median" },
+  { "disenchant", "What disenchanting it is worth (an estimate from material prices)" },
   { "vendor", "Vendor price" },
   { "stack", "Hold Shift for the price of a full stack" },
 }
@@ -98,15 +99,15 @@ local function build()
   end
 
   -- general
-  section(p, "General", -350)
+  section(p, "General", -374)
   p.auto = UI.check(p, "Full scan when you open the auction house (at most every 15 minutes)", function(_, on)
     ns.db().auto = on
   end)
-  p.auto:SetPoint("TOPLEFT", 16, -382)
+  p.auto:SetPoint("TOPLEFT", 16, -406)
   p.skin = UI.check(p, "EverlookDB look for Blizzard's auction house (after /reload)", function(_, on)
     ns.db().skin = on
   end)
-  p.skin:SetPoint("TOPLEFT", 16, -406)
+  p.skin:SetPoint("TOPLEFT", 16, -430)
 
   p:SetScript("OnShow", refresh)
 

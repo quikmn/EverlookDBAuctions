@@ -1,5 +1,14 @@
 # EverlookDB Auctions
 
+## v0.3.0 (2026-11-14)
+
+- Disenchant value in tooltips: for gear that can be disenchanted, what its materials are worth on your auction house, from each material's chance (classic-db) and its lowest price. You can turn it off in the options.
+- Selling tab: the item line shows what disenchanting is worth. A red line warns you when a vendor, or disenchanting, would pay more than your price brings in after the auction house's 5% cut.
+- Posting several of one item (they go up as single auctions, one after another) shows "Posting 2 / 5". Post stays off until the last one is up, so a second click can't post them twice.
+- When the server asks you to confirm a post, the Selling tab's own Confirm shows right away.
+- Your auctions: the price of a commodity auction is read the right way, learned from your own posts.
+- For addon authors: EverlookDBAuctionsAPI, a small read-only API with price, 30-day history and disenchant value (see the README).
+
 ## v0.2.1 (2026-11-14)
 
 - The full scan now steps aside for you: while a buy, bid, post or cancel waits for the server (and for 4 seconds after), the scan pauses. Before, a big scan could make the buyout popup spin for a long time.
