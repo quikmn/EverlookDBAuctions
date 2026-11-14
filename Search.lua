@@ -6,7 +6,7 @@
 -- auctions, stats str, agi, sta, int, spi, armor, ap, sp, healing, mp5, defense, dps, hit, crit, spellhit,
 -- spellcrit, block, fire_res (and holy, nature, frost, shadow, arcane), and `stats` (all stats as text).
 -- From EverlookDB's data (Data.lua): slots (bag size), source (vendor, crafted, drop, quest, skinning,
--- pickpocket), profession (that makes it) and skill (needed to make it).
+-- pickpocket), profession (that makes it), skill (needed to make it) and droprate (best drop chance, %).
 -- Steps: where, sort by <col> [asc|desc], top <n> [by <col>], count.
 
 local ADDON, ns = ...
@@ -55,7 +55,7 @@ local KIND = {   -- text, number, enum or money
   name = "text", category = "text", type = "text", quality = "enum", slot = "enum",
   ilvl = "number", reqlevel = "number", stack = "number", qty = "number", auctions = "number",
   sell = "money", price = "money", median = "money",
-  slots = "number", skill = "number", profession = "text", source = "text",
+  slots = "number", skill = "number", profession = "text", source = "text", droprate = "number",
 }
 for k in pairs(STATS) do KIND[k] = "number" end
 KIND.stats = "text"   -- every stat on the item as text, e.g. "Stamina 5, Agility 3": `stats has agility`
@@ -65,7 +65,7 @@ local ALIAS = {
   buyout = "price", med = "median", typical = "median", quantity = "qty", count = "qty", up = "auctions",
   strength = "str", agility = "agi", stamina = "sta", stam = "sta", intellect = "int", intel = "int", spirit = "spi",
   ac = "armor", armour = "armor", firres = "fire_res", fireres = "fire_res", frostres = "frost_res",
-  bagslots = "slots", size = "slots", prof = "profession", craftedby = "profession", from = "source",
+  drop = "droprate", dropchance = "droprate", chance = "droprate", bagslots = "slots", size = "slots", prof = "profession", craftedby = "profession", from = "source",
   natureres = "nature_res", shadowres = "shadow_res", arcaneres = "arcane_res", blockvalue = "block", attackpower = "ap", spellpower = "sp", heal = "healing", def = "defense",
 }
 local function column(word)
@@ -417,7 +417,7 @@ local function test(row, e)
 end
 
 -- Every item version in the newest full scan of the open auction house, with item details.
--- Data.lua: { source bits, profession index, skill, bag slots } per item
+-- Data.lua: { source bits, profession index, skill, bag slots, best drop chance in % } per item
 local EMPTY_DATA = {}
 local sourceCache = {}
 local function sourceText(bits)
@@ -459,7 +459,7 @@ local function dataset()
         slot = EQUIP[c[7] or ""] or "none", stack = c[10], sell = c[9],
         price = tonumber(f[1]), median = tonumber(f[3]), qty = tonumber(f[4]), auctions = tonumber(f[5]),
         source = sourceText(d[1]), profession = ns.PROFESSIONS and ns.PROFESSIONS[d[2] or 0] or "",
-        skill = d[3] or 0, slots = d[4] or 0,
+        skill = d[3] or 0, slots = d[4] or 0, droprate = d[5] or 0,
       }
     end
   end
@@ -493,7 +493,8 @@ ns.sortRows = sortRows
 
 local function run(text)
   local lower = " " .. (text or ""):lower() .. " "
-  Q.extra = lower:find("[^%w_]slots[^%w_]") and "slots" or lower:find("[^%w_]skill[^%w_]") and "skill" or nil
+  Q.extra = lower:find("[^%w_]slots[^%w_]") and "slots" or lower:find("[^%w_]skill[^%w_]") and "skill"
+    or lower:find("[^%w_]droprate[^%w_]") and "droprate" or nil
   local okParse, steps = pcall(parse, text)
   if not okParse then
     return nil, type(steps) == "table" and steps.query or tostring(steps)
@@ -580,9 +581,9 @@ local function render()
     end
   end
   for _, h in ipairs(Q.headers) do
-    if h.col == "reqlevel" or h.col == "slots" or h.col == "skill" then
+    if h.col == "reqlevel" or h.col == "slots" or h.col == "skill" or h.col == "droprate" then
       h.col = Q.extra or "reqlevel"
-      h.label = Q.extra == "slots" and "Slots" or Q.extra == "skill" and "Skill" or "Req"
+      h.label = Q.extra == "slots" and "Slots" or Q.extra == "skill" and "Skill" or Q.extra == "droprate" and "Drop%" or "Req"
     end
     local mark = ""
     if Q.sortCol == h.col then mark = Q.sortDesc and " v" or " ^" end
@@ -643,7 +644,7 @@ local GUIDE = table.concat({
   "name, quality (poor, common, uncommon, rare, epic, legendary), ilvl, reqlevel, category, type (Cloth, Wand, Potion...)",
   "slot: head, neck, shoulder, back, chest, robe, shirt, tabard, wrist, hands, waist, legs, feet, finger, trinket, onehand, twohand, mainhand, offhand, holdable, shield, ranged, wand, thrown, bag",
   "price (lowest buyout), median (typical), qty (how many up), auctions, sell (vendor price)",
-  "slots (bag size), source (vendor, crafted, drop, quest, skinning), profession, skill",
+  "slots (bag size), source (vendor, crafted, drop, quest, skinning), profession, skill, droprate (best drop %)",
   "Money: 5g, 50s, 1g50s, 20c",
   "",
   "|cffffd100Stats|r",

@@ -2,7 +2,7 @@
 ## Title: EverlookDB Auctions
 ## Notes: Auction house prices: full scans, prices in item tooltips. Saves no player names. /eah
 ## Author: quikmn
-## Version: v0.1.5
+## Version: v0.1.6
 ## SavedVariables: EverlookAuctionsDB
 ## IconTexture: Interface\AddOns\EverlookDBAuctions\Media\icon
 
