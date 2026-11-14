@@ -24,10 +24,11 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 - `/eah undercut 1s` sets how far under the cheapest auction to price: `50c`, `1g`, `5%`, or `0` to match it
 - `/eah test` reloads the UI after every full scan, so the scan is saved to disk at once (for testing)
 - `/eah auto off` (or `on`) stops or restarts the automatic full scan when you open the auction house (at most every 15 minutes)
+- `/eah skin off` (or `on`) turns the EverlookDB look for the auction house off or on (then `/reload`)
 
 ## Coming next
 
-Searches using the same query language as EverlookDB.com (stats, level, slot, price), saved searches, and alerts when one of them has a match under your price.
+Saved searches, shopping lists, and alerts when one of them has a match under your price.
 
 ## License
 
