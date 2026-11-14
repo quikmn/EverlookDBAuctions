@@ -1,5 +1,5 @@
 # Push a tag like v1.0.0 and this builds EverlookDBAuctions-v1.0.0-forever.zip and a GitHub release, plus a copy named EverlookDBAuctions.zip
-# so https://github.com/quikmn/EverlookDBAuctions/releases/latest/download/EverlookDBAuctions.zip always gets the newest. WowUp uses release.json.
+# so https://github.com/quikmn/EverlookDBAuctions/releases/latest/download/EverlookDBAuctions.zip always gets the newest. WowUp uses release.json; the same zip goes to CurseForge.
 name: Release
 
 on:
@@ -25,3 +25,7 @@ jobs:
         run: |
           cp .release/EverlookDBAuctions-${GITHUB_REF_NAME}-forever.zip .release/EverlookDBAuctions.zip
           gh release upload "$GITHUB_REF_NAME" .release/EverlookDBAuctions.zip --clobber
+      - name: Upload to CurseForge (project 1804897, WoW Forever)
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+        run: bash .github/curseforge-upload.sh 1804897 .release/EverlookDBAuctions-${GITHUB_REF_NAME}-forever.zip EverlookDBAuctions.toc
