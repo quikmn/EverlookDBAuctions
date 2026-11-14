@@ -46,7 +46,36 @@ local function onePixel(t, horizontal)
   elseif horizontal then t:SetHeight(1) else t:SetWidth(1) end
 end
 
--- A flat fill with a 1 px border, drawn behind the frame's own content. l/t/r/b move the edges.
+-- A soft top-to-bottom gradient of a color: a little lighter at the top, a little darker at the bottom.
+local function shade(t, c, lift)
+  lift = lift or 0.035
+  local ok = CreateColor and pcall(function()
+    t:SetColorTexture(1, 1, 1, 1)
+    t:SetGradient("VERTICAL", CreateColor(c[1] - lift * 0.5, c[2] - lift * 0.5, c[3] - lift * 0.5, c[4] or 1),
+      CreateColor(c[1] + lift, c[2] + lift, c[3] + lift, c[4] or 1))
+  end)
+  if not ok then t:SetColorTexture(unpack(c)) end
+end
+
+-- A soft drop shadow outside the frame: rings one pixel wide, fading out.
+local function shadow(f, size)
+  size = size or 6
+  for i = 1, size do
+    local alpha = 0.32 * (1 - (i - 1) / size)
+    local function strip(p1, x1, y1, p2, x2, y2)
+      local t = f:CreateTexture(nil, "BACKGROUND", nil, -8)
+      t:SetPoint(p1, x1, y1)
+      t:SetPoint(p2, x2, y2)
+      t:SetColorTexture(0, 0, 0, alpha)
+    end
+    strip("TOPLEFT", -i, i, "TOPRIGHT", i, i - 1)              -- top
+    strip("BOTTOMLEFT", -i, -i + 1, "BOTTOMRIGHT", i, -i)      -- bottom
+    strip("TOPLEFT", -i, i - 1, "BOTTOMLEFT", -i + 1, -i + 1)  -- left
+    strip("TOPRIGHT", i - 1, i - 1, "BOTTOMRIGHT", i, -i + 1)  -- right
+  end
+end
+
+-- A gradient fill with a 1 px border, drawn behind the frame's own content. l/t/r/b move the edges.
 local function paint(f, fill, edge, l, t, r, b)
   local s = skins[f]
   if not s then
@@ -70,9 +99,15 @@ local function paint(f, fill, edge, l, t, r, b)
     s.right:SetPoint("TOPRIGHT", s.fill)
     s.right:SetPoint("BOTTOMRIGHT", s.fill)
     onePixel(s.right, false)
+    -- a faint light line just inside the top edge, so panels and buttons read as raised
+    s.shine = f:CreateTexture(nil, "BORDER", nil, -7)
+    s.shine:SetPoint("TOPLEFT", s.fill, 1, -1)
+    s.shine:SetPoint("TOPRIGHT", s.fill, -1, -1)
+    onePixel(s.shine, true)
+    s.shine:SetColorTexture(1, 1, 1, 0.07)
     skins[f] = s
   end
-  if fill then s.fill:SetColorTexture(unpack(fill)) end
+  if fill then shade(s.fill, fill) end
   if edge then
     for _, k in ipairs({ "top", "bottom", "left", "right" }) do s[k]:SetColorTexture(unpack(edge)) end
   end
@@ -123,12 +158,22 @@ local function styleButton(b)
   local pushed = b.GetPushedTexture and b:GetPushedTexture()
   if pushed and not pushed:GetAtlas() then pushed:SetAlpha(0) end
   hoverEdge(b, base)
+  b:HookScript("OnMouseDown", function() if b:IsEnabled() then shade(skins[b].fill, C.input) end end)
+  b:HookScript("OnMouseUp", function() shade(skins[b].fill, C.panel) end)
 end
 
 -- Tabs hang under the frame and overlap their neighbours by 15; the insets leave a 1 px gap between them.
 local function tabState(tab, selected)
   if not tabs[tab] then return end
-  paint(tab, selected and C.panel or C.bg, selected and C.gold or C.edge)
+  local s = paint(tab, selected and C.panel or C.bg, selected and C.gold or C.edge)
+  if not s.bar then
+    s.bar = tab:CreateTexture(nil, "BORDER", nil, -6)
+    s.bar:SetPoint("BOTTOMLEFT", s.fill, 1, 1)
+    s.bar:SetPoint("BOTTOMRIGHT", s.fill, -1, 1)
+    s.bar:SetHeight(2)
+    s.bar:SetColorTexture(unpack(C.gold))
+  end
+  s.bar:SetShown(selected and true or false)
   tabs[tab] = selected and "on" or "off"
 end
 
@@ -170,7 +215,20 @@ end
 
 local function styleRow(row)
   recolor(row.HighlightTexture, C.hover)
-  recolor(row.SelectedHighlight, C.select)
+  local sel = row.SelectedHighlight
+  recolor(sel, C.select)
+  if isTex(sel) then
+    local bar = row:CreateTexture(nil, "OVERLAY", nil, 7)
+    bar:SetPoint("TOPLEFT", sel)
+    bar:SetPoint("BOTTOMLEFT", sel)
+    bar:SetWidth(2)
+    bar:SetColorTexture(unpack(C.gold))
+    local function sync() bar:SetShown(sel:IsShown()) end
+    hooksecurefunc(sel, "Show", sync)
+    hooksecurefunc(sel, "Hide", sync)
+    hooksecurefunc(sel, "SetShown", sync)
+    sync()
+  end
 end
 
 local function styleClose(b)
@@ -270,15 +328,33 @@ local function style(f)
     end
   end
 
-  if f.GetBackdrop and f:GetBackdrop() then flatten(f) end
+  if f.GetBackdrop and f:GetBackdrop() then
+    flatten(f)
+    local name = f.GetName and f:GetName()
+    if name == "EverlookAuctionsPanel" or name == "EverlookAuctionsSell" then shadow(f, 6) end
+  end
   if not killed then return end
   if f:IsObjectType("EditBox") then
     paint(f, C.input, C.edge, -5, 0, 0, 0)
     hoverEdge(f, C.edge)
   elseif f:IsObjectType("Button") then
     if f.LeftActive or f.MiddleActive then styleTab(f) else styleButton(f) end
+  elseif f == _G.AuctionHouseFrame then
+    local s = paint(f, C.bg, C.edge)
+    shadow(f, 8)
+    local band = f:CreateTexture(nil, "BACKGROUND", nil, -7)
+    band:SetPoint("TOPLEFT", 1, -1)
+    band:SetPoint("TOPRIGHT", -1, -1)
+    band:SetHeight(22)
+    shade(band, C.panel, 0.05)
+    local line = f:CreateTexture(nil, "BORDER", nil, -6)
+    line:SetPoint("TOPLEFT", band, "BOTTOMLEFT")
+    line:SetPoint("TOPRIGHT", band, "BOTTOMRIGHT")
+    onePixel(line, true)
+    line:SetColorTexture(C.gold[1], C.gold[2], C.gold[3], 0.45)
+    s.shine:Hide()
   else
-    paint(f, f == _G.AuctionHouseFrame and C.bg or C.panel, C.edge)
+    paint(f, C.panel, C.edge)
   end
 end
 
