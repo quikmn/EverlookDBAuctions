@@ -1117,5 +1117,5 @@ function ns.slash(msg)
 end
 function ns.help()
   if prevHelp then prevHelp() end
-  print(("  /eah skin on|off  the EverlookDB look for the auction house (now %s)"):format(enabled() and "on" or "off"))
+  print(("  /eah skin on  or  /eah skin off  the EverlookDB look for the auction house (now %s)"):format(enabled() and "on" or "off"))
 end

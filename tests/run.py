@@ -91,6 +91,7 @@ def main() -> int:
     failures += below_vendor()
     failures += query_language()
     failures += search_queue()
+    failures += undercut()
 
     if failures:
         for f in failures:
@@ -708,6 +709,56 @@ def search_queue():
     ans.full = True
     out = Q.liveFromBrowse(rows, ans, Q.nameOf)
     check(out[1].price == 4400 and out[2] is None, "a key without a name yet: no sold out")
+    return failures
+
+
+def undercut():
+    """The undercut: copper steps where the auction house takes copper (items and stackable goods alike), whole
+    silver where it doesn't, and what /eah undercut says."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("undercut: " + what)
+
+    for copper in (True, False):
+        lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+        lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+        lua.execute("C_AuctionHouse = { SupportsCopperValues = function() return %s end }" % ("true" if copper else "false"))
+        ns = lua.table()
+        run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+        run(CRAFT_SETUP, "setup", ns)
+        said = []
+        ns.say = lambda m: said.append(m)
+        for name in ["Skin.lua", "Sell.lua"]:
+            run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        check(ns.setUndercut("1c") is True, "1c is accepted")
+        item = 44 * 100 + 14     # an item auction at 44s 14c
+        goods = 5 * 100 + 50     # a stackable good at 5s 50c each
+        if copper:
+            check(ns.undercutPrice(item) == item - 1, f"item: 1c under 44s14c is 44s13c, got {ns.undercutPrice(item)}")
+            check(ns.undercutPrice(goods) == goods - 1, "stackable good: 1c under too")
+            check(ns.undercutPrice(1) == 1, "never below 1c")
+            ns.setUndercut("5%")
+            check(ns.undercutPrice(10000) == 9500, "5% of 1g")
+        else:
+            check(ns.undercutPrice(item) == 4400, f"whole silver only: 44s, got {ns.undercutPrice(item)}")
+            check(ns.undercutPrice(4400) == 4300, "from a whole-silver price: a silver less")
+        ns.setUndercut("1c")
+        ns.slash("undercut 1c")
+        check(said and said[-1].startswith("undercut set to 1c"), f"confirmed in chat with the new value: {said}")
+        if copper:
+            check("whole silver" not in said[-1], f"no rounding note where copper works: {said[-1]}")
+        else:
+            check("whole silver" in said[-1], f"says it rounds to silver: {said[-1]}")
+        ns.slash("undercut banana")
+        check("isn't an undercut" in said[-1] and "for example" in said[-1], f"a wrong value gets an example: {said[-1]}")
+        printed = []
+        lua.globals().print = lambda *a: printed.append(" ".join(str(x) for x in a))
+        ns.help()
+        for line in printed:
+            bad = [i for i, ch in enumerate(line) if ch == "|" and not line[i + 1:i + 2] in ("c", "r", "|")]
+            check(not bad, f"help line without a stray |: {line}")
     return failures
 
 

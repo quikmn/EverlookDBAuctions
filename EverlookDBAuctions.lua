@@ -837,6 +837,7 @@ local frame = CreateFrame("Frame")
 for e in pairs(events) do pcall(frame.RegisterEvent, frame, e) end  -- some events exist only on one API
 frame:SetScript("OnEvent", function(_, e, ...) events[e](...) end)
 
+local showStatus   -- /eah status (below)
 SLASH_EVERLOOKAUCTIONS1 = "/eah"
 SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
@@ -880,7 +881,36 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
       or "automatic price updates are off. Press Update prices or type /eah scan when you want one.")
     return
   end
-  say("status")
+  if msg == "auto" then
+    say(("automatic price updates are %s. Set them with /eah auto on or /eah auto off."):format(db.auto == false and "off" or "on"))
+    return
+  end
+  if msg == "" then
+    -- bare /eah: the options
+    if ns.slash and ns.slash("options") then say("Options opened. /eah help lists commands.") end
+    return
+  end
+  if msg == "status" then
+    say("status")
+    showStatus()
+    return
+  end
+  if msg == "help" or msg == "?" or msg == "commands" then
+    say("commands")
+    print("  /eah  open the options")
+    print("  /eah status  which auction houses have prices, and how old")
+    print("  /eah scan  update prices now (auction house open)")
+    if ns.help then ns.help() end
+    print(("  /eah auto on  or  /eah auto off  update prices by themselves while the auction house is open (now %s)"):format(db.auto == false and "off" or "on"))
+    print(("  /eah test  reload after every full scan so it is saved at once (now %s)"):format(db.reloadAfterScan and "on" or "off"))
+    print("  /eah debug  what is shown where, and the addon's auction house searches (for bug reports)")
+    return
+  end
+  say(("unknown command \"%s\". /eah help lists the commands, for example /eah scan or /eah undercut 1s."):format(msg))
+end
+
+-- /eah status
+function showStatus()
   local kind = apiKind()
   print(("  auction API: %s; frame: %s"):format(kind or "none found",
     _G.AuctionHouseFrame and "AuctionHouseFrame (modern)" or _G.AuctionFrame and "AuctionFrame (classic)" or "not loaded yet"))
@@ -892,10 +922,7 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
     any = true
   end
   if not any then print("  no prices yet: open the auction house and let it update prices, or just search.") end
-  print("  /eah scan  update prices now (auction house open)")
-  if ns.help then ns.help() end
-  print(("  /eah test  reload after every full scan so it is saved at once (now %s)"):format(db.reloadAfterScan and "on" or "off"))
-  print(("  /eah auto on|off  update prices by themselves while the auction house is open (now %s)"):format(db.auto == false and "off" or "on"))
+  print("  /eah help lists the commands.")
 end
 
 -- Shared with Sell.lua, Search.lua and Skin.lua

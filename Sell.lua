@@ -111,29 +111,55 @@ local function setUndercut(arg)
     db.undercut = { copper = 0 }
   else
     local copper = parseMoney(arg)
-    if not copper then return false, "Undercut: use 1s, 50c, 1g, 5% or 0." end
+    if not copper then return false, ("\"%s\" isn't an undercut. Use 1s, 50c, 1g, 5%% or 0, for example /eah undercut 1c."):format(arg) end
     db.undercut = { copper = copper }
   end
   return true
 end
 ns.setUndercut, ns.undercutShort = setUndercut, undercutShort
 
--- Auction house prices go in whole silver.
-local function toSilver(copper) return math.max(100, math.floor(copper / 100) * 100) end
+-- The smallest price step this auction house takes: copper when C_AuctionHouse.SupportsCopperValues() says so
+-- (WoW Forever does, for items and stackable goods alike: Blizzard's own sell frame asks the same function), else
+-- whole silver.
+local function priceStep()
+  local f = AH.SupportsCopperValues
+  if type(f) == "function" then
+    local okCall, v = pcall(f)
+    if okCall and v then return 1 end
+  end
+  return 100
+end
+ns.priceStep = priceStep
+
+local function roundPrice(copper)
+  local step = priceStep()
+  return math.max(step, math.floor(copper / step) * step)
+end
 
 -- The price to post at when someone else's cheapest auction is `p`.
 local function undercutPrice(p)
   local u = undercut()
+  local step = priceStep()
   local new
   if u.pct then
     new = p * (1 - u.pct / 100)
   else
     new = p - (u.copper or 100)
   end
-  new = math.floor(new / 100) * 100
+  new = math.floor(new / step) * step
   local wantsBelow = u.pct and u.pct > 0 or (u.copper or 0) > 0
-  if wantsBelow and new >= p then new = math.floor((p - 1) / 100) * 100 end
-  return math.max(100, new)
+  if wantsBelow and new >= p then new = math.floor((p - 1) / step) * step end
+  return math.max(step, new)
+end
+ns.undercutPrice = undercutPrice
+
+-- Said after the undercut is set: when this auction house only takes whole silver, a copper undercut can't be exact.
+local function stepNote()
+  local u = undercut()
+  if priceStep() > 1 and not u.pct and (u.copper or 0) % 100 ~= 0 then
+    return " (this auction house only takes whole silver, so prices round down to it)"
+  end
+  return ""
 end
 
 -- The last full scan's numbers for the item at `loc` (its random-stat version when it has one).
@@ -167,7 +193,7 @@ local function fallback(frame, commodity)
   if (n or 0) > 0 or not full then return end
   local row = scanRow(loc)
   local p = row and (row.med or row.low)
-  if p then frame.PriceInput:SetAmount(toSilver(p)) end
+  if p then frame.PriceInput:SetAmount(roundPrice(p)) end
 end
 
 local function hookSellFrames()
@@ -604,7 +630,7 @@ local function suggest()
   local lead = e and "Nobody else is selling this. " or ""
   local tail = e and "" or " Checking live auctions..."
   if mem and mem.p then return mem.p, lead .. "Your last price (" .. ns.ago(mem.at) .. ")." .. tail end
-  if g.scan then return toSilver(g.scan), lead .. "Typical price from the last full scan." .. tail end
+  if g.scan then return roundPrice(g.scan), lead .. "Typical price from the last full scan." .. tail end
   return nil, e and "Nobody is selling this. Set a price." or "Checking live auctions..."
 end
 
@@ -612,7 +638,7 @@ local function applySuggestion()
   if not S.frame then return end
   if not S.userPrice then
     local p, src = suggest()
-    S.unit = p and toSilver(p) or 0
+    S.unit = p and roundPrice(p) or 0
     writePrice(S.unit)
     S.source = src
   end
@@ -1010,7 +1036,7 @@ local function buildCurRow(L)
     if not r or not r.unit or not S.sel then return end
     S.userPrice = true
     if r.others == 0 then
-      S.unit = toSilver(r.unit)
+      S.unit = roundPrice(r.unit)
       S.source = ("Matches your auction at %s."):format(money(r.unit))
     else
       S.unit = undercutPrice(r.unit)
@@ -1321,7 +1347,7 @@ local function makeFrame()
   f.cut:SetScript("OnEnterPressed", function(self)
     local okSet, why = setUndercut(self:GetText())
     if okSet then
-      setStatus("Undercut set to " .. undercutText() .. ".", T.good)
+      setStatus("Undercut set to " .. undercutText() .. stepNote() .. ".", T.good)
       S.userPrice = false
       applySuggestion()
     else
@@ -1330,7 +1356,10 @@ local function makeFrame()
     self:ClearFocus()
   end)
   f.cut:HookScript("OnEditFocusLost", function(self) self:SetText(undercutShort()) end)
-  UI.tip(f.cut, "How far under the cheapest auction", "1s, 50c, 1g, 5%, or 0 to match it. Press Enter to keep it.")
+  UI.tip(f.cut, "How far under the cheapest auction", function()
+    return "1s, 50c, 1c, 1g, 5%, or 0 to match it. Press Enter to keep it."
+      .. (priceStep() > 1 and " This auction house only takes whole silver, so prices round down to it." or "")
+  end)
 
   -- where the price comes from, then total and deposit
   f.source = needs(UI.text(P, "mute"))
@@ -1638,7 +1667,7 @@ function ns.slash(msg)
   local arg = msg:match("^undercut%s*(.*)$")
   if not arg then return prevSlash and prevSlash(msg) or false end
   if arg == "" then
-    ns.say("undercut is " .. undercutText() .. ". Set it with /eah undercut 1s, 50c, 1g, 5% or 0.")
+    ns.say("undercut is " .. undercutText() .. stepNote() .. ". Set it with /eah undercut 1s, 50c, 1g, 5% or 0, for example /eah undercut 1c.")
     return true
   end
   local okSet, why = setUndercut(arg)
@@ -1647,12 +1676,12 @@ function ns.slash(msg)
     return true
   end
   if S.frame then S.frame.cut:SetText(undercutShort()) end
-  ns.say("undercut set to " .. undercutText() .. ".")
+  ns.say("undercut set to " .. undercutText() .. stepNote() .. ".")
   return true
 end
 
 function ns.help()
   if prevHelp then prevHelp() end
   print("  /eah sell  open the Selling tab (auction house open)")
-  print(("  /eah undercut 1s|50c|5%%|0  how far under the cheapest auction to price (now %s)"):format(undercutText()))
+  print(("  /eah undercut 1s, 50c, 5%% or 0  how far under the cheapest auction to price (now %s)"):format(undercutText()))
 end
