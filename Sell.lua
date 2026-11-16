@@ -1509,10 +1509,30 @@ local function openSelling()
   if ns.closeOthers then ns.closeOthers("selling") end
   blizzardTabs(false)
   if S.tab then pcall(PanelTemplates_SelectTab, S.tab) end
+  ns.raise(f)
   f:Show()
   if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 end
 ns.openSelling = openSelling
+
+-- Puts one of our full panels above everything Blizzard shows in the auction house (its buy and sell views sit at
+-- high frame levels, and a panel under them opens invisibly). Called on every open, since Blizzard's levels change.
+function ns.raise(f)
+  local ah = _G.AuctionHouseFrame
+  if not (f and ah) then return end
+  local top = ah:GetFrameLevel()
+  local function walk(frame, depth)
+    for _, c in ipairs({ frame:GetChildren() }) do
+      if c ~= f and c:IsShown() then
+        top = math.max(top, c:GetFrameLevel())
+        if depth < 3 then walk(c, depth + 1) end
+      end
+    end
+  end
+  walk(ah, 1)
+  f:SetFrameStrata(ah:GetFrameStrata())
+  f:SetFrameLevel(math.min(top + 20, 9000))
+end
 
 -- A tab after Blizzard's (and after any tab made before it). Shared with Shopping.lua.
 function ns.makeTab(name, text, onClick, onBlizzard)

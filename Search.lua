@@ -802,7 +802,7 @@ local function render()
     if h.mode then h:SetShown(h.mode == (Q.vendor and "vendor" or "normal")) end
     if h.mode == "normal" and (h.col == "reqlevel" or h.col == "slots" or h.col == "skill" or h.col == "droprate") then
       h.col = Q.extra or "reqlevel"
-      h.label = Q.extra == "slots" and "Slots" or Q.extra == "skill" and "Skill" or Q.extra == "droprate" and "Drop%" or "Req"
+      h.label = Q.extra == "slots" and "Slots" or Q.extra == "skill" and "Skill" or Q.extra == "droprate" and "Drop%" or "Req lvl"
     end
     local mark = ""
     if Q.sortCol == h.col then mark = Q.sortDesc and " v" or " ^" end
