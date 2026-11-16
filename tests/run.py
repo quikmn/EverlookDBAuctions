@@ -86,6 +86,7 @@ def main() -> int:
     check(len(lists2) == 2 and lists2[1].name == "Trinkets" and lists2[1].want is None, "other lists untouched")
 
     failures += crafting_box()
+    failures += scroll_bars()
 
     if failures:
         for f in failures:
@@ -185,6 +186,65 @@ def crafting_box():
     check(len(db.lists) == 1 and "Updated" in L.status.text, "pressing again updates the same list")
     keys = sorted(k for k in db.keys())
     check(keys == ["listSel", "lists"], f"nothing else saved: {keys}")
+    return failures
+
+
+def scroll_bars():
+    """The scroll bar kit in Skin.lua: drag math, thumb size, and a list scrolled by its bar and the wheel."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(CRAFT_SETUP, "setup", ns)
+    run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
+    UI = ns.UI
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("scroll: " + what)
+
+    check(UI.BAR_W >= 12, f"the bar is wide enough to grab: {UI.BAR_W}")
+    # dragging: 100 px of room for a range of 50 rows; 30 px down from row 10 is row 25
+    check(UI.scrollDrag(10, 30, 100, 50) == 25, "drag maps cursor travel to the range")
+    check(UI.scrollDrag(0, 33.3, 100, 1000) == 333, "pixel scrolling lands on whole pixels")
+    check(UI.scrollDrag(10, 500, 100, 50) == 50, "never past the end")
+    check(UI.scrollDrag(10, -500, 100, 50) == 0, "never above the top")
+    check(UI.scrollDrag(5, 10, 0, 50) == 0, "no room: no movement math")
+    h, y = UI.scrollThumb(200, 0.05, 0, 100)
+    check(h == 30 and y == 0, f"thumb never smaller than 30 px: {h}")
+    h, y = UI.scrollThumb(200, 0.5, 100, 100)
+    check(h == 100 and y == 100, f"thumb at the bottom at the end: {h}, {y}")
+    h, _ = UI.scrollThumb(20, 0.1, 0, 10)
+    check(h == 20, "thumb never taller than its track")
+
+    # a list: 10 rows visible of 25 items; the wheel and the bar both scroll it, in whole rows
+    L = lua.eval("""function(UI)
+      local L = UI.list(UIParent, 20, function() return CreateFrame("Button") end, function() end)
+      L.count = 10
+      local items = {}
+      for i = 1, 25 do items[i] = i end
+      L:SetItems(items)
+      return L
+    end""")(UI)
+    L.scripts.OnMouseWheel(L, -1)
+    check(L.offset == 3, f"one wheel notch down scrolls 3 rows: {L.offset}")
+    L.scripts.OnMouseWheel(L, -10)
+    check(L.offset == 15, f"wheel stops at the last page: {L.offset}")
+    L.bar.scripts.OnMouseWheel(L.bar, 2)
+    check(L.offset == 9, f"the wheel over the bar scrolls too: {L.offset}")
+    L.bar.thumb.b = 50
+    G = lua.globals()
+    G.GetCursorPosition = lua.eval("function() return 0, 10 end")
+    L.bar.scripts.OnMouseDown(L.bar, "LeftButton")
+    check(L.offset == 15, f"a click below the thumb jumps a page: {L.offset}")
+    G.GetCursorPosition = lua.eval("function() return 0, 90 end")
+    L.bar.scripts.OnMouseDown(L.bar, "LeftButton")
+    check(L.offset == 6, f"a click above the thumb jumps a page back: {L.offset}")
+    L.bar.scripts.OnMouseDown(L.bar, "RightButton")
+    check(L.offset == 6, "only the left button pages")
+    L.bar.thumb.scripts.OnMouseDown(L.bar.thumb, "RightButton")
+    check(lua.eval("function(t) return rawget(t, 'drag') end")(L.bar.thumb) is None, "only the left button starts a drag")
     return failures
 
 

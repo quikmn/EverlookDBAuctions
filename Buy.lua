@@ -365,9 +365,9 @@ local function makeFrame()
     if right then l:SetPoint("RIGHT", band, "RIGHT", x, 0); l:SetJustifyH("RIGHT") else l:SetPoint("LEFT", band, "LEFT", x, 0) end
   end
   col("PRICE EACH", 12)
-  col("BUYOUT", -190, true)
-  col("AVAILABLE", -100, true)
-  col("TIME LEFT", -20, true)
+  col("BUYOUT", -196, true)
+  col("AVAILABLE", -106, true)
+  col("TIME LEFT", -26, true)
 
   f.list = UI.list(f, ROW, buildRow, fillRow)
   f.list:SetPoint("TOPLEFT", 0, -76)

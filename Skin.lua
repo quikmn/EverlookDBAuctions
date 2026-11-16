@@ -421,9 +421,147 @@ function UI.icon(parent, size)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
+-- Scroll bar: a 12 px track with a thumb you grab and drag with the left mouse button; a click on the track above or
+-- below the thumb jumps a page; the mouse wheel over it scrolls too. It knows nothing about what it scrolls:
+--   opts.get() the position now, opts.max() the furthest position, opts.set(v) scrolls there (v is whole and in
+--   range), opts.view() how much of the whole is visible (0..1), opts.page() how far one page is, opts.wheel how far
+--   one wheel notch goes. Positions are whole numbers (rows, or pixels: half pixels blur text).
+-- bar:Update() after the content or the position changes; it hides itself when there's nothing to scroll.
+
+UI.BAR_W = 12
+local BAR_MIN_THUMB = 30
+
+-- Where a drag puts the position: the start position plus the cursor's travel, scaled from the room the thumb has
+-- to move in to the whole range. Whole numbers, never past either end.
+function UI.scrollDrag(start, travel, room, max)
+  if not room or room <= 0 or not max or max <= 0 then return 0 end
+  local v = math.floor(start + travel * max / room + 0.5)
+  return math.max(0, math.min(max, v))
+end
+
+-- The thumb's height and how far down the track it sits.
+function UI.scrollThumb(trackH, view, pos, max)
+  local h = math.min(trackH, math.max(BAR_MIN_THUMB, trackH * math.max(0, math.min(1, view or 1))))
+  local y = (max and max > 0) and (trackH - h) * math.max(0, math.min(1, pos / max)) or 0
+  return h, y
+end
+
+function UI.scrollbar(parent, opts)
+  local bar = CreateFrame("Frame", nil, parent)
+  bar:SetWidth(UI.BAR_W)
+  local track = bar:CreateTexture(nil, "BACKGROUND")
+  track:SetAllPoints()
+  track:SetColorTexture(unpack(T.input))
+  local thumb = CreateFrame("Frame", nil, bar)
+  thumb:SetWidth(UI.BAR_W)
+  local tt = thumb:CreateTexture(nil, "ARTWORK")
+  tt:SetPoint("TOPLEFT", 2, 0)
+  tt:SetPoint("BOTTOMRIGHT", -2, 0)
+  tt:SetColorTexture(unpack(T.thumb))
+  bar.thumb = thumb
+
+  local function maxPos() return math.max(0, math.floor((opts.max() or 0) + 0.5)) end
+  local function lit(on) tt:SetColorTexture(unpack(on and T.edgeHi or T.thumb)) end
+  local function set(v)
+    v = math.max(0, math.min(maxPos(), math.floor(v + 0.5)))
+    if v ~= opts.get() then opts.set(v) end
+    bar:Update()
+  end
+  bar.Scroll = function(_, by) set(opts.get() + by) end
+
+  function bar:Update()
+    local m = maxPos()
+    if m <= 0 then self:Hide(); return end
+    local trackH = self:GetHeight()
+    if not trackH or trackH <= 0 then return end
+    local h, y = UI.scrollThumb(trackH, opts.view(), opts.get(), m)
+    thumb:SetHeight(h)
+    thumb:ClearAllPoints()
+    thumb:SetPoint("TOP", self, "TOP", 0, -y)
+    self:Show()
+  end
+
+  thumb:EnableMouse(true)
+  thumb:SetScript("OnEnter", function() lit(true) end)
+  thumb:SetScript("OnLeave", function(self) if not self.drag then lit(false) end end)
+  thumb:SetScript("OnMouseDown", function(self, button)
+    if button ~= "LeftButton" then return end
+    local _, y = GetCursorPosition()
+    self.drag = { y = y / self:GetEffectiveScale(), start = opts.get() }
+    lit(true)
+  end)
+  local function stop(self)
+    self.drag = nil
+    lit(self:IsMouseOver())
+  end
+  thumb:SetScript("OnMouseUp", stop)
+  thumb:SetScript("OnHide", function(self) self.drag = nil; lit(false) end)
+  thumb:SetScript("OnUpdate", function(self)
+    local d = self.drag
+    if not d then return end
+    if not IsMouseButtonDown("LeftButton") then stop(self); return end
+    local _, y = GetCursorPosition()
+    y = y / self:GetEffectiveScale()
+    set(UI.scrollDrag(d.start, d.y - y, bar:GetHeight() - self:GetHeight(), maxPos()))
+  end)
+  bar:EnableMouse(true)
+  bar:SetScript("OnMouseDown", function(self, button)
+    if button ~= "LeftButton" then return end
+    local _, y = GetCursorPosition()
+    y = y / self:GetEffectiveScale()
+    local page = math.max(1, opts.page() or 1)
+    local bottom = thumb:GetBottom()
+    if bottom and y < bottom then set(opts.get() + page) else set(opts.get() - page) end
+  end)
+  bar:EnableMouseWheel(true)
+  bar:SetScript("OnMouseWheel", function(_, delta) set(opts.get() - delta * (opts.wheel or 1)) end)
+  bar:SetScript("OnSizeChanged", function(self) self:Update() end)
+  bar:Hide()
+  return UI.own(bar)
+end
+
+-- A pixel-scrolling area: a ScrollFrame (anchor it yourself) showing child, with a scroll bar right of it, outside
+-- it, so leave UI.BAR_W + 4 px free on its right. The wheel scrolls 40 px. Returns the ScrollFrame; scroll.bar is
+-- the bar, scroll.Update() re-reads the content's height.
+function UI.scrollFrame(parent, child)
+  local scroll = CreateFrame("ScrollFrame", nil, parent)
+  child:SetParent(scroll)
+  scroll:SetScrollChild(child)
+  local function maxScroll() return math.max(0, (child:GetHeight() or 0) - (scroll:GetHeight() or 0)) end
+  local bar = UI.scrollbar(parent, {
+    get = function() return scroll:GetVerticalScroll() end,
+    max = maxScroll,
+    set = function(v) scroll:SetVerticalScroll(v) end,
+    view = function()
+      local h, c = scroll:GetHeight() or 0, child:GetHeight() or 0
+      return c > 0 and h / c or 1
+    end,
+    page = function() return (scroll:GetHeight() or 0) - 40 end,
+    wheel = 40,
+  })
+  bar:SetPoint("TOPLEFT", scroll, "TOPRIGHT", 4, 0)
+  bar:SetPoint("BOTTOMLEFT", scroll, "BOTTOMRIGHT", 4, 0)
+  scroll.bar = bar
+  local function update()
+    local m = maxScroll()
+    if scroll:GetVerticalScroll() > m then scroll:SetVerticalScroll(m) end
+    if scroll:IsShown() then bar:Update() else bar:Hide() end
+  end
+  scroll.Update = update
+  scroll:EnableMouseWheel(true)
+  scroll:SetScript("OnMouseWheel", function(_, delta) bar:Scroll(-delta * 40) end)
+  scroll:HookScript("OnVerticalScroll", function() bar:Update() end)
+  scroll:HookScript("OnSizeChanged", update)
+  scroll:HookScript("OnShow", update)
+  scroll:HookScript("OnHide", function() bar:Hide() end)
+  child:HookScript("OnSizeChanged", update)
+  return scroll
+end
+
+---------------------------------------------------------------------------------------------------------------------
 -- A scrolling list that only makes the rows that fit. build(list, i) makes row i (use UI.row);
--- fill(row, item, index) shows an item in it. list:SetItems(items), list:Refresh(). Mouse wheel and a slim thumb
--- you can drag scroll it; list.onScroll(list) runs after it scrolls.
+-- fill(row, item, index) shows an item in it. list:SetItems(items), list:Refresh(). The mouse wheel and the scroll
+-- bar on the right (drag it, or click above or below the thumb) scroll it; list.onScroll(list) runs after it scrolls.
 
 local function listRefresh(L)
   local n = L.count or 0
@@ -444,16 +582,7 @@ local function listRefresh(L)
     end
   end
   if L.empty then L.empty:SetShown(total == 0 and (L.empty:GetText() or "") ~= "") end
-  if total <= n or n == 0 then
-    L.bar:Hide()
-  else
-    L.bar:Show()
-    local h = L.bar:GetHeight()
-    local th = math.max(18, h * n / total)
-    L.thumb:SetHeight(th)
-    L.thumb:ClearAllPoints()
-    L.thumb:SetPoint("TOP", L.bar, "TOP", 0, -(h - th) * L.offset / maxOff)
-  end
+  L.bar:Update()
 end
 
 local function listLayout(L)
@@ -462,7 +591,7 @@ local function listLayout(L)
     local row = L.build(L, i)
     row:ClearAllPoints()
     row:SetPoint("TOPLEFT", L, "TOPLEFT", 0, -(i - 1) * L.rowH)
-    row:SetPoint("RIGHT", L, "RIGHT", -10, 0)
+    row:SetPoint("RIGHT", L, "RIGHT", -(UI.BAR_W + 4), 0)
     row:SetHeight(L.rowH)
     L.rows[i] = row
   end
@@ -480,44 +609,19 @@ end
 function UI.list(parent, rowH, build, fill)
   local L = CreateFrame("Frame", nil, parent)
   L.rows, L.items, L.offset, L.rowH, L.build, L.fill = {}, {}, 0, rowH, build, fill
-  local bar = CreateFrame("Frame", nil, L)
+  local bar = UI.scrollbar(L, {
+    get = function() return L.offset end,
+    max = function() return #L.items - (L.count or 0) end,
+    set = function(v) listScroll(L, v - L.offset) end,
+    view = function() return #L.items > 0 and (L.count or 0) / #L.items or 1 end,
+    page = function() return math.max(1, (L.count or 1) - 1) end,
+    wheel = 3,
+  })
   bar:SetPoint("TOPRIGHT", 0, 0)
   bar:SetPoint("BOTTOMRIGHT", 0, 0)
-  bar:SetWidth(6)
-  local track = bar:CreateTexture(nil, "BACKGROUND")
-  track:SetAllPoints()
-  track:SetColorTexture(unpack(T.input))
-  local thumb = CreateFrame("Button", nil, bar)
-  thumb:SetWidth(6)
-  local tt = thumb:CreateTexture(nil, "ARTWORK")
-  tt:SetAllPoints()
-  tt:SetColorTexture(unpack(T.thumb))
-  thumb:SetScript("OnEnter", function() tt:SetColorTexture(unpack(T.edgeHi)) end)
-  thumb:SetScript("OnLeave", function() if not thumb.dragging then tt:SetColorTexture(unpack(T.thumb)) end end)
-  thumb:SetScript("OnMouseDown", function(self)
-    local _, y = GetCursorPosition()
-    self.dragging, self.startY, self.startOff = true, y / self:GetEffectiveScale(), L.offset
-    self:SetScript("OnUpdate", function(s)
-      local _, cy = GetCursorPosition()
-      cy = cy / s:GetEffectiveScale()
-      local room = bar:GetHeight() - s:GetHeight()
-      local maxOff = math.max(0, #L.items - (L.count or 0))
-      if room > 0 and maxOff > 0 then
-        local off = math.floor(s.startOff + (s.startY - cy) / room * maxOff + 0.5)
-        if off ~= L.offset then listScroll(L, off - L.offset) end
-      end
-    end)
-  end)
-  local function stop(self)
-    self.dragging = false
-    self:SetScript("OnUpdate", nil)
-    if not self:IsMouseOver() then tt:SetColorTexture(unpack(T.thumb)) end
-  end
-  thumb:SetScript("OnMouseUp", stop)
-  thumb:SetScript("OnHide", stop)
-  L.bar, L.thumb = bar, thumb
+  L.bar = bar
   L:EnableMouseWheel(true)
-  L:SetScript("OnMouseWheel", function(_, delta) listScroll(L, -delta * 3) end)
+  L:SetScript("OnMouseWheel", function(_, delta) bar:Scroll(-delta * 3) end)
   L:SetScript("OnSizeChanged", function() listLayout(L) end)
   L:SetScript("OnShow", function() listLayout(L) end)
   L.SetItems = function(self, items)
@@ -529,7 +633,7 @@ function UI.list(parent, rowH, build, fill)
   -- a grey line shown while the list is empty (list.empty:SetText(...))
   L.empty = UI.text(L, "mute")
   L.empty:SetPoint("TOPLEFT", 10, -10)
-  L.empty:SetPoint("RIGHT", -16, 0)
+  L.empty:SetPoint("RIGHT", -(UI.BAR_W + 10), 0)
   L.empty:SetWordWrap(true)
   L.empty:Hide()
   return UI.own(L)

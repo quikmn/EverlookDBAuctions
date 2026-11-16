@@ -557,7 +557,8 @@ local COLS = {
   end },
   { "iLvl", "ilvl", -276, 30, function(r) return r.ilvl or "" end },
 }
-local NAME_RIGHT = -312     -- the item name stops here
+local BAR_SHIFT = 16        -- room for the scroll bar on the right: every column moves left by this much
+local NAME_RIGHT = -312 - BAR_SHIFT   -- the item name stops here
 
 local function rowsFit(f)
   return math.max(4, math.floor((f:GetHeight() - ROW_TOP - 22) / ROW_H))
@@ -574,7 +575,7 @@ local function render()
     if r and r.header then
       -- a shopping list's search: its query and how many it found
       b.icon:SetTexture(nil)
-      b.name:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+      b.name:SetPoint("RIGHT", f, "RIGHT", -12 - BAR_SHIFT, 0)
       local tail = r.err or (ns.num(r.count) .. " found" .. (r.sum and r.count > 1 and (", one of each " .. ns.money(r.sum)) or ""))
       if r.want then tail = "buy " .. ns.num(r.want) .. "   " .. tail end
       b.name:SetText(C_ACCENT .. r.name .. "|r   " .. C_MUTE .. tail .. "|r")
@@ -602,6 +603,7 @@ local function render()
     h.text:SetText(h.label .. mark)
     h.text:SetTextColor(unpack(Q.sortCol == h.col and T.accent or T.mute))
   end
+  if f.bar then f.bar:Update() end
   f.more:SetText(#Q.results > n
     and ("%d-%d of %d, scroll for more"):format(Q.offset + 1, math.min(Q.offset + n, #Q.results), #Q.results) or "")
 end
@@ -677,38 +679,13 @@ local function makeGuide(f)
   g:EnableMouse(true)
   g:Hide()
 
-  -- scrolls with the mouse wheel; the thin bar on the right shows where you are
-  local scroll = CreateFrame("ScrollFrame", nil, g)
-  scroll:SetPoint("TOPLEFT", 14, -10)
-  scroll:SetPoint("BOTTOMRIGHT", -20, 10)
-  local content = CreateFrame("Frame", nil, scroll)
+  -- scrolls with the mouse wheel or the scroll bar on the right (drag it, or click above or below the thumb)
+  local content = CreateFrame("Frame")
   content:SetSize(10, 10)
-  scroll:SetScrollChild(content)
-  scroll:SetScript("OnSizeChanged", function(_, w) content:SetWidth(w) end)
-  local track = g:CreateTexture(nil, "ARTWORK")
-  track:SetPoint("TOPRIGHT", -8, -10)
-  track:SetPoint("BOTTOMRIGHT", -8, 10)
-  track:SetWidth(4)
-  track:SetColorTexture(unpack(T.input))
-  local thumb = g:CreateTexture(nil, "OVERLAY")
-  thumb:SetWidth(4)
-  thumb:SetColorTexture(unpack(T.thumb))
-  local function place()
-    local range = scroll:GetVerticalScrollRange() or 0
-    local h = track:GetHeight()
-    if range <= 0 or h <= 0 then thumb:Hide(); return end
-    local th = math.max(20, h * h / (h + range))
-    thumb:SetHeight(th)
-    thumb:ClearAllPoints()
-    thumb:SetPoint("TOP", track, "TOP", 0, -(h - th) * scroll:GetVerticalScroll() / range)
-    thumb:Show()
-  end
-  scroll:EnableMouseWheel(true)
-  scroll:SetScript("OnMouseWheel", function(self, delta)
-    local range = self:GetVerticalScrollRange() or 0
-    self:SetVerticalScroll(math.max(0, math.min(range, self:GetVerticalScroll() - delta * 40)))
-    place()
-  end)
+  local scroll = UI.scrollFrame(g, content)
+  scroll:SetPoint("TOPLEFT", 14, -10)
+  scroll:SetPoint("BOTTOMRIGHT", -(UI.BAR_W + 12), 10)
+  scroll:HookScript("OnSizeChanged", function(_, w) content:SetWidth(w) end)
 
   local text = UI.text(content, "small")
   text:SetPoint("TOPLEFT", 0, 0)
@@ -741,7 +718,7 @@ local function makeGuide(f)
     content:SetWidth(scroll:GetWidth())
     content:SetHeight(text:GetStringHeight() + 12 + #EXAMPLES * 22)
     scroll:SetVerticalScroll(0)
-    C_Timer.After(0, place)
+    C_Timer.After(0, scroll.Update)
   end)
   return g
 end
@@ -767,7 +744,7 @@ local function makeHeader(f, label, col, right, width)
   local h = UI.own(CreateFrame("Button", nil, f))
   h:SetSize(width, 20)
   if right then
-    h:SetPoint("TOPRIGHT", f, "TOPRIGHT", right, -(ROW_TOP - 21))
+    h:SetPoint("TOPRIGHT", f, "TOPRIGHT", right - BAR_SHIFT, -(ROW_TOP - 21))
   else
     h:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -(ROW_TOP - 21))
   end
@@ -783,7 +760,7 @@ end
 local function makeRow(f, k)
   local b = UI.row(f, ROW_H)
   b:SetPoint("TOPLEFT", 1, -ROW_TOP - (k - 1) * ROW_H)
-  b:SetPoint("RIGHT", -1, 0)
+  b:SetPoint("RIGHT", -(BAR_SHIFT + 1), 0)
   b.icon = b:CreateTexture(nil, "ARTWORK")
   b.icon:SetSize(18, 18)
   b.icon:SetPoint("LEFT", 12, 0)
@@ -791,7 +768,7 @@ local function makeRow(f, k)
   b.cells = {}
   for c, col in ipairs(COLS) do
     local fs = UI.text(b, "body")
-    fs:SetPoint("RIGHT", f, "RIGHT", col[3], 0)
+    fs:SetPoint("RIGHT", f, "RIGHT", col[3] - BAR_SHIFT, 0)
     fs:SetPoint("TOP", b, "TOP", 0, 0)
     fs:SetPoint("BOTTOM", b, "BOTTOM", 0, 0)
     fs:SetWidth(col[4])
@@ -885,12 +862,24 @@ local function makeResults()
   f.more = UI.text(f, "mute")
   f.more:SetPoint("BOTTOMRIGHT", -12, 8)
 
+  -- the scroll bar beside the rows: drag it, or click above or below the thumb for the next page
+  f.bar = UI.scrollbar(f, {
+    get = function() return Q.offset end,
+    max = function() return #Q.results - #Q.rows end,
+    set = function(v)
+      Q.offset = v
+      render()
+      liveStep()
+    end,
+    view = function() return #Q.results > 0 and #Q.rows / #Q.results or 1 end,
+    page = function() return math.max(1, #Q.rows - 1) end,
+    wheel = 3,
+  })
+  f.bar:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -ROW_TOP)
+  f.bar:SetHeight(#Q.rows * ROW_H)
+
   f:EnableMouseWheel(true)
-  f:SetScript("OnMouseWheel", function(_, delta)
-    Q.offset = math.max(0, Q.offset - delta * 3)
-    render()
-    liveStep()
-  end)
+  f:SetScript("OnMouseWheel", function(_, delta) f.bar:Scroll(-delta * 3) end)
 
   f.guide = makeGuide(f)
   help:SetScript("OnClick", function()

@@ -335,10 +335,8 @@ local function makeFrame()
   local well = UI.panel(CreateFrame("Frame", nil, io), T.input, T.edge)
   well:SetPoint("TOPLEFT", 10, -36)
   well:SetPoint("BOTTOMRIGHT", -10, 44)
-  local scroll = CreateFrame("ScrollFrame", nil, well)
-  scroll:SetPoint("TOPLEFT", 8, -8)
-  scroll:SetPoint("BOTTOMRIGHT", -8, 8)
-  local box = CreateFrame("EditBox", nil, scroll)
+  local scroll
+  local box = CreateFrame("EditBox")
   box:SetMultiLine(true)
   box:SetAutoFocus(false)
   box:SetFontObject(UI.fontObject("body"))
@@ -349,15 +347,17 @@ local function makeFrame()
     local top = scroll:GetVerticalScroll()
     local bottom = top + scroll:GetHeight()
     y = -y
-    if y < top then scroll:SetVerticalScroll(y) elseif y + h > bottom then scroll:SetVerticalScroll(y + h - scroll:GetHeight()) end
+    if y < top then
+      scroll:SetVerticalScroll(math.floor(y))
+    elseif y + h > bottom then
+      scroll:SetVerticalScroll(math.ceil(y + h - scroll:GetHeight()))
+    end
   end)
-  scroll:SetScrollChild(box)
-  scroll:SetScript("OnSizeChanged", function(_, w) box:SetWidth(w) end)
-  scroll:EnableMouseWheel(true)
-  scroll:SetScript("OnMouseWheel", function(self, delta)
-    local range = self:GetVerticalScrollRange() or 0
-    self:SetVerticalScroll(math.max(0, math.min(range, self:GetVerticalScroll() - delta * 30)))
-  end)
+  -- the mouse wheel or the scroll bar on the right (drag it, or click above or below the thumb) scrolls the text
+  scroll = UI.scrollFrame(well, box)
+  scroll:SetPoint("TOPLEFT", 8, -8)
+  scroll:SetPoint("BOTTOMRIGHT", -(UI.BAR_W + 10), 8)
+  scroll:HookScript("OnSizeChanged", function(_, w) box:SetWidth(w) end)
   well:EnableMouse(true)
   well:SetScript("OnMouseDown", function() box:SetFocus() end)
   io.box = box

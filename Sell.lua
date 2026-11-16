@@ -1421,11 +1421,11 @@ local function makeFrame()
     end
     return bd
   end
-  f.curBand = band({ { "PRICE EACH", 12 }, { "AVAILABLE", -110, true }, { "TIME LEFT", -20, true } })
+  f.curBand = band({ { "PRICE EACH", 12 }, { "AVAILABLE", -116, true }, { "TIME LEFT", -26, true } })
   f.cur = UI.list(Lw, LIST_ROW, buildCurRow, fillCurRow)
   f.cur:SetPoint("TOPLEFT", 1, -58)
   f.cur:SetPoint("BOTTOMRIGHT", -3, 4)
-  f.ownBand = band({ { "ITEM", 30 }, { "QTY", -264, true }, { "PRICE EACH", -144, true }, { "STATUS", -70, true } })
+  f.ownBand = band({ { "ITEM", 30 }, { "QTY", -270, true }, { "PRICE EACH", -150, true }, { "STATUS", -76, true } })
   f.own = UI.list(Lw, LIST_ROW, buildOwnRow, fillOwnRow)
   f.own:SetPoint("TOPLEFT", 1, -58)
   f.own:SetPoint("BOTTOMRIGHT", -3, 4)
