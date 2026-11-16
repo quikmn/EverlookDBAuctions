@@ -1,5 +1,5 @@
 -- EverlookDB Auctions: selling.
---   Selling tab  a tab on the auction house with everything in your bags you can sell on the left, a post panel
+--   Quick sell   a tab on the auction house (named apart from Blizzard's own Sell tab) with everything in your bags you can sell on the left, a post panel
 --                (quantity, unit price, total, duration, deposit, 30-day price chart) and the live auctions for the
 --                picked item, and your own auctions with a Cancel button each. Each item's last price, quantity
 --                and duration are remembered. Right-click an item to make it a favourite (kept at the top);
@@ -47,6 +47,18 @@ local function clamp(n, lo, hi) return math.max(lo, math.min(hi, n)) end
 -- Settings: db.sell = { duration, memory = { [item key] = { p = unit price, d = duration, q = quantity, at } },
 -- fav = { [key] = true }, hidden = { [key] = true } }. db.undercut is shared with /eah undercut.
 
+local MEMORY_DAYS = 180          -- an item's remembered price is forgotten after this long without a post
+
+-- Drops remembered prices not used for MEMORY_DAYS (they would only grow the saved file). Returns how many went.
+local function pruneMemory(memory, now)
+  local gone = 0
+  for k, m in pairs(memory) do
+    if type(m) ~= "table" or (now - (m.at or 0)) > MEMORY_DAYS * 86400 then memory[k] = nil; gone = gone + 1 end
+  end
+  return gone
+end
+ns.pruneSellMemory = pruneMemory
+
 local function sdb()
   local db = ns.db()
   if not db then return nil end
@@ -55,6 +67,10 @@ local function sdb()
   s.memory = s.memory or {}
   s.fav = s.fav or {}
   s.hidden = s.hidden or {}
+  if not S.pruned then
+    S.pruned = true
+    pruneMemory(s.memory, time())
+  end
   return s
 end
 ns.sellSettings = sdb
@@ -110,7 +126,8 @@ local function setUndercut(arg)
   elseif arg == "0" then
     db.undercut = { copper = 0 }
   else
-    local copper = parseMoney(arg)
+    -- only gold, silver and copper amounts: "1.5s" or "1s banana" are not quietly read as 5s or 1s
+    local copper = arg:gsub("%d+[gsc]", "") == "" and parseMoney(arg) or nil
     if not copper then return false, ("\"%s\" isn't an undercut. Use 1s, 50c, 1g, 5%% or 0, for example /eah undercut 1c."):format(arg) end
     db.undercut = { copper = copper }
   end
@@ -152,6 +169,48 @@ local function undercutPrice(p)
   return math.max(step, new)
 end
 ns.undercutPrice = undercutPrice
+
+-- How the suggested price relates to the cheapest auction: "1c under the cheapest auction, 1s 21c."
+local function underText(cheapest, what)
+  local u = undercut()
+  what = what or "the cheapest auction"
+  if (u.pct and u.pct == 0) or (not u.pct and (u.copper or 0) == 0) then
+    return ("Matches %s, %s."):format(what, money(cheapest))
+  end
+  return ("%s under %s, %s."):format(u.pct and (u.pct .. "%") or money(u.copper), what, money(cheapest))
+end
+ns.underText = underText
+
+-- What the quantity means, for the line under it. Commodities (stackable goods on this auction house) go up as one
+-- listing that buyers take any amount of; other items go up as that many auctions of one.
+local function qtyNote(commodity, qty, unit)
+  if not qty or qty < 1 then return "" end
+  local priced = unit and unit > 0
+  if commodity then
+    local first = priced and ("Sells as one listing of %s at %s each, %s in all."):format(num(qty), money(unit), money(unit * qty))
+      or ("Sells as one listing of %s."):format(num(qty))
+    return first .. "\nBuyers can buy any amount of it, so there's no need to split it into stacks."
+  end
+  if qty == 1 then
+    return priced and ("Posts one auction at %s."):format(money(unit)) or "Posts one auction."
+  end
+  local first = priced and ("Posts %s separate auctions, one item each, at %s each, %s in all."):format(num(qty), money(unit), money(unit * qty))
+    or ("Posts %s separate auctions, one item each."):format(num(qty))
+  return first .. "\nEach is bought on its own."
+end
+ns.sellQtyNote = qtyNote
+
+-- A deposit bigger than the sale brings: what to say, or nil. vendorTotal is what a vendor pays for the same amount.
+local function depositWarning(deposit, total, vendorTotal)
+  if not deposit or deposit <= 0 or not total or total <= 0 or deposit <= total then return nil end
+  local out = ("The deposit (%s) is more than this sells for (%s). If it doesn't sell you lose %s."):format(
+    money(deposit), money(total), money(deposit))
+  if vendorTotal and vendorTotal > total then
+    return out .. (" A vendor pays %s for them."):format(money(vendorTotal))
+  end
+  return out .. " Selling more at once spreads the deposit."
+end
+ns.depositWarning = depositWarning
 
 -- Said after the undercut is set: when this auction house only takes whole silver, a copper undercut can't be exact.
 local function stepNote()
@@ -196,6 +255,30 @@ local function fallback(frame, commodity)
   if p then frame.PriceInput:SetAmount(roundPrice(p)) end
 end
 
+-- Blizzard's Sell tab: the deposit warning, in a line of ours under its Post button.
+local function blizzardDepositLine(frame)
+  if not frame.edbDepositLine then
+    local anchor = frame.PostButton
+    if not anchor then return end
+    local fs = frame:CreateFontString(nil, "OVERLAY", "GameFontRedSmall")
+    fs:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", -74, -10)
+    fs:SetWidth(330)
+    fs:SetJustifyH("LEFT")
+    fs:SetWordWrap(true)
+    frame.edbDepositLine = fs
+  end
+  local text
+  local loc = frame:GetItem()
+  if loc and loc:IsValid() then
+    local deposit, total = frame:GetDepositAmount(), frame:GetTotalPrice()
+    local qty = frame.GetQuantity and frame:GetQuantity() or 1
+    local id = C_Item.GetItemID(loc)
+    local sell = id and select(11, C_Item.GetItemInfo(id))
+    text = depositWarning(deposit, total, (sell or 0) * qty)
+  end
+  frame.edbDepositLine:SetText(text or "")
+end
+
 local function hookSellFrames()
   local ah = _G.AuctionHouseFrame
   if S.hooked or not ah or not ah.ItemSellFrame or not ah.CommoditiesSellFrame then return end
@@ -212,6 +295,11 @@ local function hookSellFrames()
   end)
   hooksecurefunc(items, "UpdatePriceSelection", function(self) pcall(fallback, self, false) end)
   hooksecurefunc(goods, "UpdatePriceSelection", function(self) pcall(fallback, self, true) end)
+  -- a red line under Post when the deposit is more than the sale brings
+  for _, fr in ipairs({ items, goods }) do
+    if fr.UpdateDeposit then hooksecurefunc(fr, "UpdateDeposit", function(self) pcall(blizzardDepositLine, self) end) end
+    if fr.UpdateTotalPrice then hooksecurefunc(fr, "UpdateTotalPrice", function(self) pcall(blizzardDepositLine, self) end) end
+  end
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -241,7 +329,7 @@ local function collect()
             g = {
               key = key, id = info.itemID, link = info.hyperlink, icon = info.iconFileID, quality = info.quality,
               name = info.hyperlink and info.hyperlink:match("%[(.-)%]") or ("item " .. info.itemID),
-              count = 0, slots = {}, scan = row and (row.med or row.low),
+              count = 0, slots = {}, scan = row and (row.med or row.low), scanAt = row and row.at,
             }
             byKey[key] = g
             groups[#groups + 1] = g
@@ -293,7 +381,10 @@ local function prepare(g)
   if status == 2 then g.commodity = true
   elseif status == 1 then g.commodity = false
   else g.commodity = g.maxStack > 1 end       -- not known yet: stackable things are commodities on this auction house
-  g.itemKey = (g.loc and try(AH.GetItemKeyFromItem, g.loc)) or try(AH.MakeItemKey, g.id, 0, 0, 0)
+  -- the key from the item itself; a hand-made one (suffix 0) finds nothing for random-stat gear, so only plain items
+  -- get one
+  g.itemKey = (g.loc and try(AH.GetItemKeyFromItem, g.loc))
+    or (g.key == g.id .. ":0" and try(AH.MakeItemKey, g.id, 0, 0, 0)) or nil
   g.ckey = ckey(g.itemKey)
   local info = ns.itemInfo and ns.itemInfo(g.id)
   g.vendor = info and info[9] or 0
@@ -306,10 +397,12 @@ local function available(g)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
--- Live auctions, one item at a time (the server answers one search at a time)
--- cache[ckey] = { rows = { { unit, qty, others (not yours), mine, left, band } }, lowestOther, lowestMine, at }
+-- Live auctions, one item at a time, through the addon's one search queue (AHQuery.lua): it waits for Blizzard's own
+-- searches, asks again when no answer comes, fetches every page, and says "no answer" instead of "nobody".
+-- cache[ckey] = { rows = { { unit, qty, others (not yours), mine, left, band } }, full, lowestOther, lowestMine, at }
+-- jobs[ckey] = the search out for it; failed[ckey] = when the auction house last gave no answer for it.
 
-local Live = { cache = {}, byId = {}, queue = {}, busy = nil }
+local Live = { cache = {}, byId = {}, jobs = {}, failed = {} }
 local onLive          -- runs when an item's results came in (set further down)
 
 local function summarize(e)
@@ -336,6 +429,19 @@ local function summarize(e)
   end
   e.lone = first ~= nil and others >= 5 and first.others == 1 and e.usual ~= nil and first.unit < e.usual * 0.6
 end
+ns.sellSummarize = summarize
+
+-- An answer we can go by: complete, or (sorted by price) at least showing a priced auction. A part answer with no
+-- price in it says nothing about who is selling.
+local function usable(e)
+  return e ~= nil and (e.full or e.lowestOther ~= nil or e.lowestMine ~= nil)
+end
+ns.sellUsable = usable
+
+local function liveFor(c, itemID, commodity)
+  local e = (c and Live.cache[c]) or (commodity and itemID and Live.byId[itemID])
+  return usable(e) and e or nil
+end
 
 local function readCommodity(id)
   local rows = {}
@@ -347,7 +453,7 @@ local function readCommodity(id)
       rows[#rows + 1] = { unit = okv(r.unitPrice), qty = q, others = q - mine, mine = mine > 0, left = okv(r.timeLeftSeconds) }
     end
   end
-  return rows, try(AH.HasFullCommoditySearchResults, id)
+  return rows, try(AH.HasFullCommoditySearchResults, id) == true
 end
 
 local function readItems(k)
@@ -364,7 +470,7 @@ local function readItems(k)
       }
     end
   end
-  return rows, try(AH.HasFullItemSearchResults, k)
+  return rows, try(AH.HasFullItemSearchResults, k) == true
 end
 
 local function store(k, c, commodity)
@@ -377,74 +483,37 @@ local function store(k, c, commodity)
   return e
 end
 
-local pump
-
-ns.sellBusy = function() return Live.busy ~= nil end   -- the shared queue waits for these too
-
-local function finish()
-  Live.busy = nil
-  C_Timer.After(0.1, pump)
-end
-
-function pump()
-  if Live.busy or #Live.queue == 0 then return end
-  local ah = ns.ahFrame()
-  if not ah or not ah:IsShown() then wipe(Live.queue); return end
-  -- one search at a time across the addon: wait while the shared queue (AHQuery.lua) has one out
-  if (AH.IsThrottledMessageSystemReady and not AH.IsThrottledMessageSystemReady()) or (ns.ahq and ns.ahq.busy) then
-    C_Timer.After(0.3, pump)
-    return
-  end
-  local job = table.remove(Live.queue, 1)
-  local send = AH.SendSellSearchQuery or AH.SendSearchQuery
-  Live.busy = job
-  if not send or not pcall(send, job.key, SORTS, true) then
-    Live.busy = nil
-    C_Timer.After(0.1, pump)
-    return
-  end
-  -- no answer in time: move on
-  C_Timer.After(5, function() if Live.busy == job then finish() end end)
-end
-
--- Looks up an item's live auctions (searches only: nothing is bought or posted); `front` puts it first.
+-- Looks up an item's live auctions (searches only: nothing is bought or posted). `front` puts it ahead of the
+-- background checks of your other auctions.
 local function request(k, commodity, front)
   local c = ckey(k)
-  if not c then return end
-  if Live.busy and Live.busy.c == c then return end
-  for i, j in ipairs(Live.queue) do
-    if j.c == c then
-      if not front then return end
-      table.remove(Live.queue, i)
-      break
+  local Q = ns.ahq
+  if not c or not Q or not Q.items then return end
+  local j = Live.jobs[c]
+  if j and not j.cancelled then
+    -- already asked: a waiting background one moves to the front
+    if front and not j.front then
+      for i, x in ipairs(Q.list) do
+        if x == j then table.remove(Q.list, i); j.background = nil; Q.add(j, true); break end
+      end
     end
+    return
   end
-  local job = { key = k, c = c, commodity = commodity }
-  if front then table.insert(Live.queue, 1, job) else Live.queue[#Live.queue + 1] = job end
-  pump()
-end
-
-local function onCommodityResults(itemID)
-  local b = Live.busy
-  local k, c
-  if b and b.commodity and b.key.itemID == itemID then k, c = b.key, b.c
-  elseif S.sel and S.sel.commodity and S.sel.id == itemID and S.sel.itemKey then k, c = S.sel.itemKey, S.sel.ckey end
-  if not k then return end
-  store(k, c, true)
-  if b and b.c == c then finish() end
-  if onLive then onLive(c) end
-end
-
-local function onItemResults(itemKey)
-  if type(itemKey) ~= "table" then return end
-  local b = Live.busy
-  local k, c
-  if b and not b.commodity and b.key.itemID == itemKey.itemID then k, c = itemKey, b.c
-  elseif S.sel and not S.sel.commodity and S.sel.ckey == ckey(itemKey) then k, c = itemKey, S.sel.ckey end
-  if not k then return end
-  store(k, c, false)
-  if b and b.c == c then finish() end
-  if onLive then onLive(c) end
+  Live.failed[c] = nil
+  local job
+  job = Q.items(k, {
+    owner = "sell", front = front, background = not front, commodity = commodity,
+    onFail = function()
+      if Live.jobs[c] == job then Live.jobs[c] = nil end
+      Live.failed[c] = time()
+      if onLive then onLive(c) end
+    end,
+  }, function(_, _, final)
+    store(k, c, commodity)
+    if final and Live.jobs[c] == job then Live.jobs[c] = nil end
+    if onLive then onLive(c) end
+  end)
+  Live.jobs[c] = job   -- answers only come with events, never inside Q.items itself
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -504,16 +573,18 @@ local function readOwned()
   S.owned = list
 end
 
--- "Undercut" (someone else is cheaper now), "Lowest", "Sold", or from the scan only "Maybe".
+-- "Undercut" (someone else is cheaper now), "Lowest", "Sold", "No answer" (the live check got none), or from saved
+-- prices only "Maybe". The fourth value is where the third (a cheaper price) comes from: "live" or "saved".
 local function ownedState(a)
   if a.sold then return "Sold", T.good end
-  local e = (a.ckey and Live.cache[a.ckey]) or (a.commodity and Live.byId[a.itemID])
+  local e = liveFor(a.ckey, a.itemID, a.commodity)
   if e then
-    if e.lowestOther and a.unit and e.lowestOther < a.unit then return "Undercut", T.bad, e.lowestOther end
+    if e.lowestOther and a.unit and e.lowestOther < a.unit then return "Undercut", T.bad, e.lowestOther, "live" end
     return "Lowest", T.good
   end
-  local it = ns.houseItem(a.itemID)
-  if it and it[1] and a.unit and it[1] < a.unit then return "Maybe", T.accent, it[1] end
+  local it = ns.houseItem and ns.houseItem(a.itemID)
+  if it and it[1] and a.unit and it[1] < a.unit then return "Maybe", T.accent, it[1], "saved" end
+  if a.ckey and Live.failed[a.ckey] and not Live.jobs[a.ckey] then return "No answer", T.mute end
   return "Checking", T.mute
 end
 ns.ownedState = ownedState
@@ -525,13 +596,15 @@ local function checkOwned()
     if not a.sold and a.ckey and not seen[a.ckey] then
       seen[a.ckey] = true
       local e = Live.cache[a.ckey]
-      if not e or now - e.at > CHECK_AGAIN then request(a.key, a.commodity, false) end
+      if (not e or now - e.at > CHECK_AGAIN) and not (Live.failed[a.ckey] and now - Live.failed[a.ckey] < CHECK_AGAIN) then
+        request(a.key, a.commodity, false)
+      end
     end
   end
 end
 
 ---------------------------------------------------------------------------------------------------------------------
--- The Selling tab
+-- The Quick sell tab
 
 local BANDS = { [0] = "< 30m", [1] = "30m - 2h", [2] = "2 - 12h", [3] = "12 - 48h" }
 local function fmtLeft(secs, band)
@@ -560,10 +633,21 @@ local function writePrice(unit)
   if not unit or unit <= 0 then
     f.gold:SetText("")
     f.silver:SetText("")
+    f.copper:SetText("")
     return
   end
   f.gold:SetText(tostring(math.floor(unit / 10000)))
   f.silver:SetText(tostring(math.floor(unit / 100) % 100))
+  f.copper:SetText(tostring(unit % 100))
+end
+
+-- The copper box shows only where the auction house takes copper.
+local function showCopper(on)
+  local f = S.frame
+  f.copper:SetShown(on)
+  f.copperIcon:SetShown(on)
+  f.suggest:ClearAllPoints()
+  f.suggest:SetPoint("LEFT", on and f.copperIcon or f.silverIcon, "RIGHT", 8, 0)
 end
 
 -- Total, deposit, the price's source and the Post button.
@@ -575,25 +659,29 @@ local function updateTotals()
     f.total:SetText("-")
     f.deposit:SetText("-")
     f.source:SetText("")
+    f.qtyNote:SetText("")
     f.post:Disable()
     f.post:SetText("Post")
     return
   end
   f.total:SetText((unit > 0 and qty > 0) and money(unit * qty) or "-")
+  f.qtyNote:SetText(qtyNote(g.commodity, qty, unit))
   local dep
   if g.commodity then dep = try(AH.CalculateCommodityDeposit, g.id, S.dur, qty)
   elseif g.loc then dep = try(AH.CalculateItemDeposit, g.loc, S.dur, qty) end
   f.deposit:SetText(dep and money(dep) or "-")
   -- the auction house keeps 5% of a sale (more at a neutral house): say so when a vendor or disenchanting pays more
   local net = math.floor(unit * 0.95)
-  local warn
-  if unit > 0 and (g.vendor or 0) > net then
+  local warn = (unit > 0 and qty > 0) and depositWarning(dep, unit * qty, (g.vendor or 0) * qty) or nil
+  if warn then
+    -- said first: the deposit is lost when it doesn't sell
+  elseif unit > 0 and (g.vendor or 0) > net then
     warn = ("A vendor pays %s each, more than this nets after the 5%% cut."):format(money(g.vendor))
   elseif unit > 0 and g.de and g.de > net then
     warn = ("Disenchanting is worth about %s, more than this nets after the 5%% cut."):format(money(g.de))
   end
   f.source:SetText(warn and (UI.hex(T.bad) .. warn .. "|r") or S.source or "")
-  f.post:SetEnabled(not S.posting and not S.warned and qty >= 1 and qty <= (S.avail or 0) and unit >= 100)
+  f.post:SetEnabled(not S.posting and not S.warned and qty >= 1 and qty <= (S.avail or 0) and unit >= priceStep())
   local m = S.posting and S.posting.multi
   f.post:SetText(m and ("Posting %d / %d"):format(m[1], m[2]) or S.posting and "Posting..."
     or (qty > 1 and ("Post " .. num(qty)) or "Post"))
@@ -617,21 +705,28 @@ local function suggest()
   if not g then return nil end
   local s = sdb()
   local mem = s and s.memory[g.key]
-  local e = g.ckey and Live.cache[g.ckey]
+  local e = liveFor(g.ckey)
+  -- live auctions older than a minute and a half say when they were checked
+  local age = (e and time() - e.at >= 90) and (" Checked " .. ns.ago(e.at) .. ".") or ""
   if e and e.lowestOther and (not e.lowestMine or e.lowestOther < e.lowestMine) then
-    local why = ("Undercuts the cheapest auction (%s) by %s."):format(money(e.lowestOther), undercutText())
+    local why = underText(e.lowestOther)
     local usual = e.lone and e.usual
-    if usual then why = why .. (" The cheapest is a lone one far under the usual %s."):format(money(usual)) end
-    return undercutPrice(e.lowestOther), why
+    if usual then why = why .. (" It's a lone one far under the usual %s."):format(money(usual)) end
+    return undercutPrice(e.lowestOther), why .. age
   end
   if e and e.lowestMine then
-    return e.lowestMine, ("Matches your own cheapest auction (%s)."):format(money(e.lowestMine))
+    return e.lowestMine, ("Matches your own cheapest auction, %s."):format(money(e.lowestMine)) .. age
   end
-  local lead = e and "Nobody else is selling this. " or ""
-  local tail = e and "" or " Checking live auctions..."
+  local failed = not e and g.ckey and Live.failed[g.ckey] and not Live.jobs[g.ckey]
+  local lead = e and "Nobody else is selling this." .. age .. " " or ""
+  local tail = e and "" or failed and " The auction house didn't answer; Refresh asks again." or " Checking live auctions..."
   if mem and mem.p then return mem.p, lead .. "Your last price (" .. ns.ago(mem.at) .. ")." .. tail end
-  if g.scan then return roundPrice(g.scan), lead .. "Typical price from the last full scan." .. tail end
-  return nil, e and "Nobody is selling this. Set a price." or "Checking live auctions..."
+  if g.scan then
+    local when = g.scanAt and (", " .. ns.ago(g.scanAt)) or ""
+    return roundPrice(g.scan), lead .. "Typical price from the last full scan" .. when .. "." .. tail
+  end
+  if e then return nil, "Nobody is selling this." .. age .. " Set a price." end
+  return nil, failed and "The auction house didn't answer. Click Refresh to ask again, or set a price." or "Checking live auctions..."
 end
 
 local function applySuggestion()
@@ -668,19 +763,21 @@ local function renderCurrent()
   local f = S.frame
   if not f then return end
   local g = S.sel
-  local e = g and g.ckey and Live.cache[g.ckey]
+  local raw = g and g.ckey and Live.cache[g.ckey]
+  local e = g and liveFor(g.ckey)
   if not g then
     f.cur.empty:SetText("Pick an item from your bags to see its auctions.")
   elseif not e then
-    f.cur.empty:SetText("Checking live auctions...")
+    local failed = Live.failed[g.ckey] and not Live.jobs[g.ckey]
+    f.cur.empty:SetText(failed and "The auction house didn't answer. Click Refresh to ask again." or "Checking live auctions...")
   else
     f.cur.empty:SetText("Nobody is selling this right now.")
   end
-  f.cur:SetItems(e and e.rows or {})
+  f.cur:SetItems(raw and raw.rows or {})
   if S.view == "cur" then
     local up = 0
-    for _, r in ipairs(e and e.rows or {}) do up = up + r.qty end
-    f.info:SetText(e and ("%s auctions, %s up"):format(num(#e.rows), num(up)) or "")
+    for _, r in ipairs(raw and raw.rows or {}) do up = up + r.qty end
+    f.info:SetText(raw and ("%s auctions, %s up%s"):format(num(#raw.rows), num(up), raw.full and "" or " so far") or "")
   end
 end
 
@@ -705,7 +802,7 @@ local function renderOwned()
       end
     end
     f.info:SetText(("%s up"):format(num(n)))
-    f.cutNext:SetText(under > 0 and ("Undercut: cancel (%d)"):format(under) or "None undercut")
+    f.cutNext:SetText(under > 0 and ("Cancel undercut (%d)"):format(under) or "None undercut")
     f.cutNext:SetEnabled(under > 0 and not S.cancelPending and nextUndercut() ~= nil)
   end
   f.cutNext:SetShown(S.view == "own")
@@ -773,6 +870,7 @@ local function updatePost()
     f.sub:SetText("Its live auctions show below, with a price just under the cheapest.")
     S.unit, S.qty = 0, 0
     writePrice(0)
+    showCopper(false)
     f.qty:SetText("")
     drawHistory()
     updateTotals()
@@ -782,17 +880,14 @@ local function updatePost()
   f.name:SetText(qualityHex(g.quality) .. g.name .. "|r")
   f.name:SetTextColor(unpack(T.text))
   local bits = { num(g.count) .. " in your bags" }
-  if g.maxStack > 1 then bits[#bits + 1] = "stacks of " .. g.maxStack end
-  bits[#bits + 1] = g.commodity and "commodity" or "item"
   local s = sdb()
   local mem = s and s.memory[g.key]
   if mem and mem.p then bits[#bits + 1] = "last posted at " .. money(mem.p) end
   if g.de then bits[#bits + 1] = "disenchant ~" .. money(g.de) end
   f.sub:SetText(table.concat(bits, "   "))
   f.qty:SetText(tostring(S.qty or 1))
-  f.stack:SetShown(g.maxStack > 1)
-  if g.maxStack > 1 then f.stack:SetText("Stack " .. math.min(g.maxStack, S.avail or g.maxStack)) end
-  f.all:SetText("All " .. num(S.avail or g.count))
+  f.all:SetText(("All (%s in bags)"):format(num(S.avail or g.count)))
+  showCopper(priceStep() == 1)
   for _, b in ipairs(f.durs) do b:EdbActive(b.dur == S.dur) end
   drawHistory()
   applySuggestion()
@@ -891,7 +986,7 @@ local function post()
     return
   end
   local qty, unit, dur = S.qty or 0, S.unit or 0, S.dur or 2
-  if qty < 1 or unit < 100 or qty > (S.avail or 0) then return end
+  if qty < 1 or unit < priceStep() or qty > (S.avail or 0) then return end
   local okCall, needsConfirm
   if g.commodity then
     if not AH.PostCommodity then setStatus("This client can't post commodities.", T.bad); return end
@@ -1037,10 +1132,10 @@ local function buildCurRow(L)
     S.userPrice = true
     if r.others == 0 then
       S.unit = roundPrice(r.unit)
-      S.source = ("Matches your auction at %s."):format(money(r.unit))
+      S.source = ("Matches your auction, %s."):format(money(r.unit))
     else
       S.unit = undercutPrice(r.unit)
-      S.source = ("Undercuts the auction you picked (%s) by %s."):format(money(r.unit), undercutText())
+      S.source = underText(r.unit, "the auction you picked")
     end
     writePrice(S.unit)
     updateTotals()
@@ -1070,11 +1165,11 @@ local function buildOwnRow(L)
   b.state:SetPoint("RIGHT", b.cancel, "LEFT", -6, 0)
   b.price = UI.text(b, "body")
   b.price:SetPoint("RIGHT", b.state, "LEFT", -8, 0)
-  b.price:SetWidth(100)
+  b.price:SetWidth(130)   -- room for thousands of gold with silver and copper
   b.price:SetJustifyH("RIGHT")
   b.qty = UI.text(b, "dim")
   b.qty:SetPoint("RIGHT", b.price, "LEFT", -8, 0)
-  b.qty:SetWidth(36)
+  b.qty:SetWidth(44)
   b.qty:SetJustifyH("RIGHT")
   b.name = UI.text(b, "body")
   b.name:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
@@ -1092,8 +1187,18 @@ local function buildOwnRow(L)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     if a.link then pcall(GameTooltip.SetHyperlink, GameTooltip, a.link)
     elseif a.itemID then pcall(GameTooltip.SetItemByID, GameTooltip, a.itemID) end
-    local state, _, lower = ownedState(a)
-    if lower then GameTooltip:AddLine(("Cheapest other auction: %s"):format(money(lower)), T.bad[1], T.bad[2], T.bad[3]) end
+    local state, _, lower, from = ownedState(a)
+    local e = liveFor(a.ckey, a.itemID, a.commodity)
+    if lower and from == "live" then
+      GameTooltip:AddLine(("Cheapest other auction: %s"):format(money(lower)), T.bad[1], T.bad[2], T.bad[3])
+    elseif lower then
+      local it = ns.houseItem and ns.houseItem(a.itemID)
+      GameTooltip:AddLine(("Your last scan or search saw one at %s (%s), maybe yours. Not checked live yet."):format(
+        money(lower), ns.ago(it and it[4])), T.accent[1], T.accent[2], T.accent[3], true)
+    elseif state == "No answer" then
+      GameTooltip:AddLine("The auction house didn't answer the live check.", T.mute[1], T.mute[2], T.mute[3], true)
+    end
+    if e then GameTooltip:AddLine("Live auctions checked " .. ns.ago(e.at) .. ".", T.mute[1], T.mute[2], T.mute[3]) end
     if state ~= "Sold" then
       GameTooltip:AddLine(("Time left: %s"):format(fmtLeft(a.left, a.band)), T.dim[1], T.dim[2], T.dim[3])
       if a.hasBid then GameTooltip:AddLine("Has a bid", T.accent[1], T.accent[2], T.accent[3]) end
@@ -1147,9 +1252,18 @@ local function makeFrame()
   f:Hide()
   S.frame = f
 
+  -- a title strip, so this is never mistaken for Blizzard's own Sell tab
+  local head = UI.text(f, "title")
+  head:SetPoint("TOPLEFT", 12, -8)
+  head:SetText(UI.hex(T.accent) .. "Quick sell|r")
+  local headNote = UI.text(f, "mute")
+  headNote:SetPoint("LEFT", head, "RIGHT", 10, 0)
+  headNote:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+  headNote:SetText("EverlookDB's selling: everything in your bags, priced from the live auctions. Blizzard's Sell tab is separate.")
+
   ------------------------------------------------------------------------------------------------ bags (left)
   local left = UI.panel(CreateFrame("Frame", nil, f))
-  left:SetPoint("TOPLEFT", 8, -8)
+  left:SetPoint("TOPLEFT", 8, -28)
   left:SetPoint("BOTTOMLEFT", 8, 30)
   left:SetWidth(256)
   local title = UI.text(left, "title")
@@ -1189,8 +1303,8 @@ local function makeFrame()
   ------------------------------------------------------------------------------------------------ post panel
   local P = UI.panel(CreateFrame("Frame", nil, f))
   P:SetPoint("TOPLEFT", left, "TOPRIGHT", 8, 0)
-  P:SetPoint("TOPRIGHT", -8, -8)
-  P:SetHeight(226)
+  P:SetPoint("TOPRIGHT", -8, -28)
+  P:SetHeight(256)
   f.needItem = {}
   local function needs(w) f.needItem[#f.needItem + 1] = w; return w end
 
@@ -1202,6 +1316,8 @@ local function makeFrame()
   f.sub = UI.text(P, "dim")
   f.sub:SetPoint("TOPLEFT", f.name, "BOTTOMLEFT", 0, -7)
   f.sub:SetPoint("RIGHT", P, "RIGHT", -180, 0)
+  f.sub:SetWordWrap(true)
+  if f.sub.SetMaxLines then f.sub:SetMaxLines(2) end
 
   -- 30-day price chart
   local sp = needs(CreateFrame("Frame", nil, P))
@@ -1273,9 +1389,9 @@ local function makeFrame()
   div:SetPoint("TOPRIGHT", -1, -66)
 
   -- quantity
-  needs(label(P, "QUANTITY", 12, -78))
+  needs(label(P, "HOW MANY TO SELL", 12, -72))
   local minus = needs(UI.button(P, "-", 24, 24))
-  minus:SetPoint("TOPLEFT", 12, -92)
+  minus:SetPoint("TOPLEFT", 12, -86)
   minus:SetScript("OnClick", function() setQty((S.qty or 1) - 1) end)
   f.qty = needs(UI.input(P, 56, 24, { numeric = true, right = true, max = 6 }))
   f.qty:SetPoint("LEFT", minus, "RIGHT", 4, 0)
@@ -1291,48 +1407,58 @@ local function makeFrame()
   local plus = needs(UI.button(P, "+", 24, 24))
   plus:SetPoint("LEFT", f.qty, "RIGHT", 4, 0)
   plus:SetScript("OnClick", function() setQty((S.qty or 0) + 1) end)
-  f.stack = needs(UI.button(P, "Stack", 70, 24, "small"))
-  f.stack:SetPoint("LEFT", plus, "RIGHT", 8, 0)
-  f.stack:SetScript("OnClick", function() if S.sel then setQty(S.sel.maxStack) end end)
-  UI.tip(f.stack, "One full stack")
-  f.all = needs(UI.button(P, "All", 70, 24, "small"))
-  f.all:SetPoint("LEFT", f.stack, "RIGHT", 4, 0)
+  -- no Stack button: stackable goods go up as one listing that buyers take any amount of (the line below says so)
+  f.all = needs(UI.button(P, "All", 150, 24, "small"))
+  f.all:SetPoint("LEFT", plus, "RIGHT", 8, 0)
   f.all:SetScript("OnClick", function() setQty(S.avail or 1) end)
-  UI.tip(f.all, "Everything of this in your bags")
+  UI.tip(f.all, "Sell everything of this in your bags")
+  -- what the quantity means: one listing of that many, or that many auctions of one
+  f.qtyNote = needs(UI.text(P, "mute"))
+  f.qtyNote:SetPoint("TOPLEFT", 12, -114)
+  f.qtyNote:SetPoint("RIGHT", P, "RIGHT", -12, 0)
+  f.qtyNote:SetWordWrap(true)
 
   -- duration
-  needs(label(P, "DURATION", 330, -78))
+  needs(label(P, "DURATION", 330, -72))
   f.durs = {}
   for k, d in ipairs(DURATIONS) do
     local b = needs(UI.button(P, d[2], 52, 24, "small"))
-    b:SetPoint("TOPLEFT", 330 + (k - 1) * 56, -92)
+    b:SetPoint("TOPLEFT", 330 + (k - 1) * 56, -86)
     b.dur = d[1]
     b:SetScript("OnClick", function() setDur(d[1]) end)
     f.durs[k] = b
   end
 
   -- unit price
-  needs(label(P, "PRICE EACH", 12, -126))
+  needs(label(P, "PRICE EACH", 12, -144))
   f.gold = needs(UI.input(P, 76, 24, { numeric = true, right = true, max = 7 }))
-  f.gold:SetPoint("TOPLEFT", 12, -140)
+  f.gold:SetPoint("TOPLEFT", 12, -158)
   local gi = needs(coin(P, f.gold, "Interface\\MoneyFrame\\UI-GoldIcon"))
   f.silver = needs(UI.input(P, 40, 24, { numeric = true, right = true, max = 2 }))
   f.silver:SetPoint("LEFT", gi, "RIGHT", 6, 0)
-  needs(coin(P, f.silver, "Interface\\MoneyFrame\\UI-SilverIcon"))
+  f.silverIcon = needs(coin(P, f.silver, "Interface\\MoneyFrame\\UI-SilverIcon"))
+  -- copper: shown only where the auction house takes copper (showCopper)
+  f.copper = UI.input(P, 40, 24, { numeric = true, right = true, max = 2 })
+  f.copper:SetPoint("LEFT", f.silverIcon, "RIGHT", 6, 0)
+  f.copperIcon = coin(P, f.copper, "Interface\\MoneyFrame\\UI-CopperIcon")
   local function typed(_, user)
     if not user then return end
     S.userPrice = true
     S.unit = (tonumber(f.gold:GetText()) or 0) * 10000 + math.min(99, tonumber(f.silver:GetText()) or 0) * 100
+      + (f.copper:IsShown() and math.min(99, tonumber(f.copper:GetText()) or 0) or 0)
     S.source = "Your price."
     updateTotals()
   end
   f.gold:HookScript("OnTextChanged", typed)
   f.silver:HookScript("OnTextChanged", typed)
+  f.copper:HookScript("OnTextChanged", typed)
   f.gold:SetScript("OnTabPressed", function() f.silver:SetFocus() end)
-  f.silver:SetScript("OnTabPressed", function() f.gold:SetFocus() end)
+  f.silver:SetScript("OnTabPressed", function() if f.copper:IsShown() then f.copper:SetFocus() else f.gold:SetFocus() end end)
+  f.copper:SetScript("OnTabPressed", function() f.gold:SetFocus() end)
 
   local reset = needs(UI.button(P, "Suggest", 70, 24, "small"))
-  reset:SetPoint("TOPLEFT", 196, -140)
+  reset:SetPoint("LEFT", f.copperIcon, "RIGHT", 8, 0)
+  f.suggest = reset
   reset:SetScript("OnClick", function()
     S.userPrice = false
     applySuggestion()
@@ -1340,9 +1466,9 @@ local function makeFrame()
   UI.tip(reset, "Back to the suggested price", "Just under the cheapest auction someone else has up.")
 
   -- undercut
-  needs(label(P, "UNDERCUT BY", 330, -126))
+  needs(label(P, "UNDERCUT BY", 330, -144))
   f.cut = needs(UI.input(P, 76, 24, { hint = "1s or 5%", max = 10 }))
-  f.cut:SetPoint("TOPLEFT", 330, -140)
+  f.cut:SetPoint("TOPLEFT", 330, -158)
   f.cut:SetText(undercutShort())
   f.cut:SetScript("OnEnterPressed", function(self)
     local okSet, why = setUndercut(self:GetText())
@@ -1362,15 +1488,18 @@ local function makeFrame()
   end)
 
   -- where the price comes from, then total and deposit
-  f.source = needs(UI.text(P, "mute"))
-  f.source:SetPoint("TOPLEFT", 12, -170)
+  f.source = needs(UI.text(P, "mute"))   -- two lines at most: the lone-auction note or a warning can be long
+  f.source:SetPoint("TOPLEFT", 12, -188)
   f.source:SetPoint("RIGHT", P, "RIGHT", -12, 0)
-  needs(label(P, "TOTAL", 12, -188))
+  f.source:SetWordWrap(true)
+  if f.source.SetMaxLines then f.source:SetMaxLines(2) end
+  needs(label(P, "TOTAL", 12, -218))
   f.total = needs(UI.text(P, "big"))
-  f.total:SetPoint("TOPLEFT", 12, -202)
-  needs(label(P, "DEPOSIT", 150, -188))
+  f.total:SetPoint("TOPLEFT", 12, -232)
+  -- far enough right for a total in thousands of gold
+  needs(label(P, "DEPOSIT", 230, -218))
   f.deposit = needs(UI.text(P, "body"))
-  f.deposit:SetPoint("TOPLEFT", 150, -202)
+  f.deposit:SetPoint("TOPLEFT", 230, -232)
 
   f.post = UI.button(P, "Post", 150, 30, "primary")
   f.post:SetPoint("BOTTOMRIGHT", -12, 12)
@@ -1416,14 +1545,16 @@ local function makeFrame()
     if S.view == "own" then
       wipe(Live.cache)
       wipe(Live.byId)
+      wipe(Live.failed)
       queryOwned()
     elseif S.sel then
       Live.cache[S.sel.ckey or ""] = nil
+      Live.failed[S.sel.ckey or ""] = nil
       renderCurrent()
       request(S.sel.itemKey, S.sel.commodity, true)
     end
   end)
-  f.cutNext = UI.button(Lw, "Cancel undercut", 120, 22, "small danger")
+  f.cutNext = UI.button(Lw, "Cancel undercut", 140, 22, "small danger")
   f.cutNext:SetPoint("LEFT", f.ownBtn, "RIGHT", 12, 0)
   f.cutNext:SetScript("OnClick", function() cancelAuction(nextUndercut()) end)
   UI.tip(f.cutNext, "Cancel your next undercut auction", function()
@@ -1457,7 +1588,8 @@ local function makeFrame()
   f.cur = UI.list(Lw, LIST_ROW, buildCurRow, fillCurRow)
   f.cur:SetPoint("TOPLEFT", 1, -58)
   f.cur:SetPoint("BOTTOMRIGHT", -3, 4)
-  f.ownBand = band({ { "ITEM", 30 }, { "QTY", -270, true }, { "PRICE EACH", -150, true }, { "STATUS", -76, true } })
+  -- rows stop 18 px short of the band (the scroll bar): the labels sit over the columns' right edges
+  f.ownBand = band({ { "ITEM", 30 }, { "QTY", -300, true }, { "PRICE EACH", -180, true }, { "STATUS", -98, true } })
   f.own = UI.list(Lw, LIST_ROW, buildOwnRow, fillOwnRow)
   f.own:SetPoint("TOPLEFT", 1, -58)
   f.own:SetPoint("BOTTOMRIGHT", -3, 4)
@@ -1565,7 +1697,7 @@ end
 
 local function makeTab()
   if S.tab then return end
-  S.tab = ns.makeTab("EverlookAuctionsSellingTab", "Selling", openSelling, closeSelling)
+  S.tab = ns.makeTab("EverlookAuctionsSellingTab", "Quick sell", openSelling, closeSelling)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -1585,17 +1717,17 @@ end
 function events.AUCTION_HOUSE_CLOSED()
   if S.frame then S.frame:Hide() end
   if S.tab then pcall(PanelTemplates_DeselectTab, S.tab) end
-  wipe(Live.queue)
-  Live.busy, S.posting, S.warned, S.sel = nil, nil, nil, nil
+  -- live prices are only shown while fresh: the next visit asks again
+  wipe(Live.cache)
+  wipe(Live.byId)
+  wipe(Live.jobs)
+  wipe(Live.failed)
+  S.posting, S.warned, S.sel, S.cancelPending, S.advance = nil, nil, nil, nil, nil
   if S.frame then S.frame.confirm:Hide() end
 end
 
 function events.BAG_UPDATE_DELAYED() refreshBags() end
 
-function events.COMMODITY_SEARCH_RESULTS_UPDATED(itemID) onCommodityResults(itemID) end
-function events.COMMODITY_SEARCH_RESULTS_ADDED(itemID) onCommodityResults(itemID) end
-function events.ITEM_SEARCH_RESULTS_UPDATED(itemKey) onItemResults(itemKey) end
-function events.ITEM_SEARCH_RESULTS_ADDED(itemKey) onItemResults(itemKey) end
 
 function events.OWNED_AUCTIONS_UPDATED()
   if not S.frame or not S.frame:IsShown() then return end
@@ -1654,10 +1786,14 @@ function events.AUCTION_MULTISELL_FAILURE()
 end
 
 function events.AUCTION_HOUSE_POST_WARNING()
-  local job = S.posting
-  if not job or not S.frame or not S.frame:IsShown() then return end
-  -- Blizzard's own confirm would act on its own sell frame; ours posts what you set here
-  askConfirm(job)
+  if S.posting and S.frame and S.frame:IsShown() then askConfirm(S.posting) end
+  if not S.warned then return end
+  -- Blizzard shows its own confirm for this warning too (now or a moment later), and its Accept would act on its own,
+  -- empty sell frame: only ours stays
+  local function hide() if S.warned and StaticPopup_Hide then pcall(StaticPopup_Hide, "AUCTION_HOUSE_POST_WARNING") end end
+  hide()
+  C_Timer.After(0, hide)
+  C_Timer.After(0.2, hide)
 end
 
 function events.AUCTION_HOUSE_POST_ERROR()
@@ -1680,7 +1816,7 @@ ev:SetScript("OnEvent", function(_, e, ...) events[e](...) end)
 
 local prevSlash, prevHelp = ns.slash, ns.help
 function ns.slash(msg)
-  if msg == "sell" or msg == "selling" then
+  if msg == "sell" or msg == "selling" or msg == "quicksell" or msg == "quick sell" then
     if _G.AuctionHouseFrame and AuctionHouseFrame:IsShown() then
       makeTab()
       openSelling()
@@ -1707,6 +1843,6 @@ end
 
 function ns.help()
   if prevHelp then prevHelp() end
-  print("  /eah sell  open the Selling tab (auction house open)")
+  print("  /eah sell  open the Quick sell tab (auction house open)")
   print(("  /eah undercut 1s, 50c, 5%% or 0  how far under the cheapest auction to price (now %s)"):format(undercutText()))
 end
