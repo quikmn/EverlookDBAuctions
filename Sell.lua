@@ -353,6 +353,8 @@ end
 
 local pump
 
+ns.sellBusy = function() return Live.busy ~= nil end   -- the shared queue waits for these too
+
 local function finish()
   Live.busy = nil
   C_Timer.After(0.1, pump)
@@ -362,7 +364,8 @@ function pump()
   if Live.busy or #Live.queue == 0 then return end
   local ah = ns.ahFrame()
   if not ah or not ah:IsShown() then wipe(Live.queue); return end
-  if AH.IsThrottledMessageSystemReady and not AH.IsThrottledMessageSystemReady() then
+  -- one search at a time across the addon: wait while the shared queue (AHQuery.lua) has one out
+  if (AH.IsThrottledMessageSystemReady and not AH.IsThrottledMessageSystemReady()) or (ns.ahq and ns.ahq.busy) then
     C_Timer.After(0.3, pump)
     return
   end

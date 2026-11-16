@@ -859,6 +859,7 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
           f:GetFrameLevel(), f:GetEffectiveAlpha(), tostring(f:GetParent() and f:GetParent():GetName())))
       end
     end
+    if ns.ahq then for _, line in ipairs(ns.ahq.debugLines()) do print("  " .. line) end end
     if ns.craftDebug and ns.craftDebug() then
       print(("  crafting box: %d px right of the profession window (clear of its tab buttons)"):format(ns.craftDebug()))
     end

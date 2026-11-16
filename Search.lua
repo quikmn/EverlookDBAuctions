@@ -21,6 +21,7 @@ local ROW_H = 22
 
 local Q = { results = {}, offset = 0 }
 local liveStep   -- the live check (defined further down; the panel's scroll uses it)
+local live = { tried = {}, busy = nil }   -- the live check: items tried, the one being looked up
 
 ---------------------------------------------------------------------------------------------------------------------
 -- Columns
@@ -444,7 +445,8 @@ local function get(row, col)
   local l = (col == "price" or col == "qty" or col == "auctions") and liveOf(row)
   if l then
     if l.gone then return col ~= "price" and 0 or nil end
-    return l[col == "auctions" and "n" or col]
+    local v = l[col == "auctions" and "n" or col]
+    if v ~= nil then return v end
   end
   if col == "stats" then return statsOf(row).stats end
   return row[col]
@@ -774,6 +776,8 @@ end
 
 local function hideResults()
   if Q.frame then Q.frame:Hide() end
+  if ns.ahq then ns.ahq.cancel("live") end
+  live.busy = nil
 end
 ns.closeSearch = hideResults
 
@@ -976,10 +980,9 @@ local function makeRow(f, k)
   b:SetScript("OnClick", function(self)
     if not self.row or self.row.header then return end
     if ns.openBuy and ns.openBuy(self.row) then return end
-    -- a normal Blizzard search for the name shows its live auctions; buy from there as usual
-    local bar = AuctionHouseFrame.SearchBar
-    bar:SetSearchText(self.row.name)
-    bar:StartSearch()
+    -- Blizzard's own search for the name shows its live auctions; buy from there as usual
+    local c = itemInfo(self.row.id)
+    if ns.ahq then ns.ahq.showInBlizzard(c and c[1] or self.row.name) end
   end)
   return b
 end
@@ -1154,8 +1157,6 @@ ns.warming = warming
 -- Live check: ask the server for each result item's current auctions (a few per second, the rows on screen first),
 -- then show live lowest price and quantity, or "sold out".
 local LIVE_MAX = 150
-local SORTS = { { sortOrder = 0, reverseSort = false } }   -- Enum.AuctionHouseSortOrder.Price
-local live = { tried = {}, busy = nil }
 
 local function liveHead()
   if not Q.frame or not Q.headBase then return end
@@ -1174,20 +1175,6 @@ local function liveHead()
   Q.frame.head:SetText(Q.headBase .. tail)
 end
 
-local function applyLive(id, groups, complete)
-  local now = time()
-  for _, r in ipairs(Q.results) do
-    if r.id == id then
-      local g = groups[r.key]
-      if g then
-        Q.live[r.key] = { price = g.price, qty = g.qty, n = g.n, at = now }
-      elseif complete then
-        Q.live[r.key] = { at = now, gone = true }
-      end
-    end
-  end
-end
-
 local function liveDone()
   live.busy = nil
   render()
@@ -1195,19 +1182,11 @@ local function liveDone()
   C_Timer.After(0.1, liveStep)
 end
 
-local function liveSend()
-  local b = live.busy
-  b.key = C_AuctionHouse.MakeItemKey(b.id, b.levels[b.at], 0, 0)
-  local mine, attempt = b, b.at
-  local okSend = pcall(C_AuctionHouse.SendSearchQuery, b.key, SORTS, true)
-  if not okSend then liveDone(); return end
-  -- no answer in time: leave the row as it was and move on
-  C_Timer.After(4, function() if live.busy == mine and mine.at == attempt then liveDone() end end)
-end
-
+-- One browse by the item's name (what Blizzard's Search button sends) gives the lowest price and how many are up
+-- for every version of it at once. A row is only called sold out from a complete answer (AHQuery.lua).
 function liveStep()
-  if ns.buyOpen then return end   -- the buy panel is using the search results
-  if live.busy or not Q.frame or not Q.frame:IsShown() or not C_AuctionHouse.SendSearchQuery then return end
+  if ns.buyOpen then return end   -- the buy panel goes first
+  if live.busy or not Q.frame or not Q.frame:IsShown() or not ns.ahq then return end
   local function pick(from, to)
     for k = from, to do
       local r = Q.results[k]
@@ -1216,64 +1195,23 @@ function liveStep()
   end
   local r = pick(Q.offset + 1, Q.offset + #Q.rows) or pick(1, math.min(#Q.results, LIVE_MAX))
   if not r then liveHead(); return end
-  if C_AuctionHouse.IsThrottledMessageSystemReady and not C_AuctionHouse.IsThrottledMessageSystemReady() then
-    C_Timer.After(0.3, liveStep)
-    return
-  end
   live.tried[r.id] = true
-  -- gear is listed under its item level; everything else under 0
-  local levels = (r.slot ~= "none" and (r.ilvl or 0) > 0) and { r.ilvl, 0 } or { 0 }
-  live.busy = { id = r.id, levels = levels, at = 1 }
-  liveSend()
-end
-
-local function liveItemResults(itemKey)
-  local b = live.busy
-  if not b or type(itemKey) ~= "table" or itemKey.itemID ~= b.id then return end
-  local groups, unknown = {}, false
-  local n = C_AuctionHouse.GetNumItemSearchResults(itemKey) or 0
-  for i = 1, n do
-    local info = C_AuctionHouse.GetItemSearchResultInfo(itemKey, i)
-    if info then
-      local vkey = info.itemLink and ns.variantOf(b.id, info.itemLink)
-      if not vkey then unknown, vkey = true, b.id .. ":0" end
-      local g = groups[vkey]
-      if not g then g = { qty = 0, n = 0 }; groups[vkey] = g end
-      local q = info.quantity or 1
-      g.qty, g.n = g.qty + q, g.n + 1
-      if info.buyoutAmount and info.buyoutAmount > 0 then
-        local unit = math.floor(info.buyoutAmount / q)
-        if not g.price or unit < g.price then g.price = unit end
-      end
+  local id = r.id
+  local c = itemInfo(id)
+  live.busy = id
+  ns.ahq.browse(c and c[1] or r.name, id, { owner = "live", background = true, confirmEmpty = true }, function(answer)
+    if live.busy ~= id then return end
+    local rows = {}
+    for _, x in ipairs(Q.results) do if x.id == id and not x.header then rows[#rows + 1] = x end end
+    local got = ns.ahq.liveFromBrowse(rows, answer, ns.ahq.nameOf)
+    local t = time()
+    for i, x in ipairs(rows) do
+      local g = got[i]
+      if g and g.gone then Q.live[x.key] = { at = t, gone = true }
+      elseif g then Q.live[x.key] = { price = g.price, qty = g.qty, at = t } end
     end
-  end
-  local full = C_AuctionHouse.HasFullItemSearchResults(itemKey)
-  if n == 0 and b.at < #b.levels then
-    b.at = b.at + 1
-    liveSend()
-    return
-  end
-  -- only call something sold out when the whole list came back and every auction could be told apart
-  applyLive(b.id, groups, full and not unknown)
-  liveDone()
-end
-
-local function liveCommodityResults(itemID)
-  local b = live.busy
-  if not b or itemID ~= b.id then return end
-  local n = C_AuctionHouse.GetNumCommoditySearchResults(itemID) or 0
-  local g = { qty = 0, n = 0 }
-  for i = 1, n do
-    local info = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, i)
-    if info then
-      g.qty, g.n = g.qty + (info.quantity or 0), g.n + 1
-      if info.unitPrice and (not g.price or info.unitPrice < g.price) then g.price = info.unitPrice end
-    end
-  end
-  local total = C_AuctionHouse.GetCommoditySearchResultsQuantity and C_AuctionHouse.GetCommoditySearchResultsQuantity(itemID)
-  if total and total > g.qty then g.qty = total end
-  applyLive(itemID, n > 0 and { [itemID .. ":0"] = g } or {}, C_AuctionHouse.HasFullCommoditySearchResults(itemID))
-  liveDone()
+    liveDone()
+  end)
 end
 
 local rerunToken = 0
@@ -1419,16 +1357,12 @@ end
 
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("AUCTION_HOUSE_SHOW")
-ev:RegisterEvent("ITEM_SEARCH_RESULTS_UPDATED")
-ev:RegisterEvent("COMMODITY_SEARCH_RESULTS_UPDATED")
 ev:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 ev:SetScript("OnEvent", function(_, e, arg)
   if e == "GET_ITEM_INFO_RECEIVED" then
     if warming.ids and arg then itemInfo(arg) end
     return
   end
-  if e == "ITEM_SEARCH_RESULTS_UPDATED" then liveItemResults(arg); return end
-  if e == "COMMODITY_SEARCH_RESULTS_UPDATED" then liveCommodityResults(arg); return end
   C_Timer.After(0.2, function()
     hook()
     makeButton()

@@ -11,11 +11,11 @@ local AH = C_AuctionHouse or {}
 local money, num = ns.money, ns.num
 local C_MUTE = UI.hex(T.mute)
 
-local SORTS = { { sortOrder = 0, reverseSort = false } }   -- by price
 local ROW = 22
 local CONFIRM_FOR = 6     -- seconds the Confirm button stays armed
 
 local B = {}
+local render, send   -- defined further down
 
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
@@ -47,22 +47,97 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- Searching
 
-local function send()
-  local key
-  if B.commodity then
-    key = try(AH.MakeItemKey, B.id, 0, 0, 0)
-  else
-    key = try(AH.MakeItemKey, B.id, B.levels[B.level] or 0, 0, 0)
+local function itemRows(itemKey)
+  local rows = {}
+  for i = 1, (try(AH.GetNumItemSearchResults, itemKey) or 0) do
+    local r = try(AH.GetItemSearchResultInfo, itemKey, i)
+    if r then
+      local link = okv(r.itemLink)
+      local q = okv(r.quantity) or 1
+      local buy = okv(r.buyoutAmount)
+      local vname
+      if link then vname = select(3, ns.variantOf(B.id, link)) end
+      rows[#rows + 1] = {
+        auctionID = okv(r.auctionID), buyout = buy, unit = buy and math.floor(buy / math.max(1, q)), qty = q,
+        mine = okv(r.containsOwnerItem) == true, left = okv(r.timeLeftSeconds), band = okv(r.timeLeft), link = link,
+        vname = vname,
+      }
+    end
   end
-  if not key or not AH.SendSearchQuery then setStatus("This client can't search the auction house.", T.bad); return end
-  B.key = key
-  B.rows, B.loaded = {}, false
-  if AH.IsThrottledMessageSystemReady and not AH.IsThrottledMessageSystemReady() then
-    C_Timer.After(0.3, function() if B.frame and B.frame:IsShown() then send() end end)
-    return
-  end
-  if not pcall(AH.SendSearchQuery, key, SORTS, true) then setStatus("The search failed.", T.bad) end
+  return rows
 end
+
+local function commodityRows()
+  local rows = {}
+  for i = 1, (try(AH.GetNumCommoditySearchResults, B.id) or 0) do
+    local r = try(AH.GetCommoditySearchResultInfo, B.id, i)
+    if r then
+      local q = okv(r.quantity) or 0
+      local mine = okv(r.numOwnerItems) or 0
+      rows[#rows + 1] = { unit = okv(r.unitPrice), qty = q, others = q - mine, mine = mine > 0, left = okv(r.timeLeftSeconds) }
+    end
+  end
+  return rows
+end
+
+local function byPrice(a, b)
+  if a.unit and b.unit then return a.unit < b.unit end
+  return a.unit ~= nil and b.unit == nil
+end
+
+-- The base name ("Dwarven Magestaff"): what Blizzard's search box takes; a browse by it lists every version.
+local function baseName()
+  local c = ns.itemInfo and ns.itemInfo(B.id)
+  return c and c[1] or B.name
+end
+
+-- Looks up the live auctions the way Blizzard's Search button does: a browse by name gives the item's real
+-- ItemKeys (one per random-stat version), then each key's auctions. "Nobody is selling" only comes from a complete
+-- answer; no answer says so and is asked again.
+function send()
+  if not ns.ahq then setStatus("This client can't search the auction house.", T.bad); return end
+  B.gen = (B.gen or 0) + 1
+  local gen = B.gen
+  ns.ahq.cancel("buy")
+  B.rows, B.loaded, B.state = {}, false, "waiting"
+  local function retrying() if gen == B.gen then B.state = "retry"; render() end end
+  local function noAnswer() if gen == B.gen then B.state = "noanswer"; render() end end
+  local function queryKeys()
+    if gen ~= B.gen then return end
+    local got, left = {}, #B.keys
+    for _, key in ipairs(B.keys) do
+      ns.ahq.items(key, { owner = "buy", front = true, commodity = B.commodity, onRetry = retrying, onFail = noAnswer },
+        function(k, _, final)
+          if gen ~= B.gen then return end
+          got[ns.ahq.keyText(k)] = B.commodity and commodityRows() or itemRows(k)
+          if final then left = left - 1 end
+          local rows = {}
+          for _, list in pairs(got) do for _, r in ipairs(list) do rows[#rows + 1] = r end end
+          table.sort(rows, byPrice)
+          B.rows = rows
+          if left <= 0 then B.loaded, B.state = true, nil end
+          render()
+        end)
+    end
+  end
+  if B.keys then queryKeys(); render(); return end
+  ns.ahq.browse(baseName(), B.id, { owner = "buy", front = true, confirmEmpty = true, onRetry = retrying },
+    function(answer)
+      if gen ~= B.gen then return end
+      if not answer.ok then noAnswer(); return end
+      if #answer.entries == 0 then
+        if answer.full then B.rows, B.loaded, B.state = {}, true, nil else B.state = "partial" end
+        render()
+        return
+      end
+      B.keys, B.showAll = ns.ahq.pickKeys(answer.entries, B.name, ns.ahq.nameOf)
+      local info = try(AH.GetItemKeyInfo, B.keys[1])
+      if info and okv(info.isCommodity) ~= nil then B.commodity = okv(info.isCommodity) and true or false end
+      queryKeys()
+    end)
+  render()
+end
+ns.buyKeys = function() return B.keys, B.showAll end
 
 -- The quantity you'd get and what it would cost, cheapest first, from other sellers' commodities.
 local function estimate(qty)
@@ -76,55 +151,6 @@ local function estimate(qty)
     end
   end
   return qty - left, cost
-end
-
-local render
-
-local function readCommodity()
-  local rows = {}
-  for i = 1, (try(AH.GetNumCommoditySearchResults, B.id) or 0) do
-    local r = try(AH.GetCommoditySearchResultInfo, B.id, i)
-    if r then
-      local q = okv(r.quantity) or 0
-      local mine = okv(r.numOwnerItems) or 0
-      rows[#rows + 1] = { unit = okv(r.unitPrice), qty = q, others = q - mine, mine = mine > 0, left = okv(r.timeLeftSeconds) }
-    end
-  end
-  B.rows, B.loaded = rows, true
-  render()
-end
-
-local function readItems(itemKey)
-  local rows = {}
-  local n = try(AH.GetNumItemSearchResults, itemKey) or 0
-  for i = 1, n do
-    local r = try(AH.GetItemSearchResultInfo, itemKey, i)
-    if r then
-      local link = okv(r.itemLink)
-      local vkey = link and ns.variantOf(B.id, link)
-      -- random-stat items: only the version you clicked
-      if not (B.suffix ~= 0 and vkey and vkey ~= B.vkey) then
-        local q = okv(r.quantity) or 1
-        local buy = okv(r.buyoutAmount)
-        rows[#rows + 1] = {
-          auctionID = okv(r.auctionID), buyout = buy, unit = buy and math.floor(buy / math.max(1, q)), qty = q,
-          mine = okv(r.containsOwnerItem) == true, left = okv(r.timeLeftSeconds), band = okv(r.timeLeft), link = link,
-        }
-      end
-    end
-  end
-  table.sort(rows, function(a, b)
-    if a.unit and b.unit then return a.unit < b.unit end
-    return a.unit ~= nil and b.unit == nil
-  end)
-  -- gear is listed under its item level; try 0 next when nothing came back
-  if n == 0 and B.level < #B.levels then
-    B.level = B.level + 1
-    send()
-    return
-  end
-  B.rows, B.loaded = rows, true
-  render()
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -157,7 +183,7 @@ local function buyItem()
     -- no word back in time: look again
     C_Timer.After(5, function()
       if B.pending == id then
-        B.pending, B.sel, B.level = nil, nil, 1
+        B.pending, B.sel = nil, nil
         if ns.buyOpen then send() end
         render()
       end
@@ -182,7 +208,7 @@ local function buyCommodity()
       B.pending = "commodity"
       C_Timer.After(8, function()
         if B.pending == "commodity" then
-          B.pending, B.level = nil, 1
+          B.pending = nil
           if ns.buyOpen then send() end
           render()
         end
@@ -262,7 +288,9 @@ end
 
 local function fillRow(b, r)
   b.price:SetText(r.unit and money(r.unit) or (C_MUTE .. "bids only|r"))
-  b.tag:SetText(r.mine and "yours" or "")
+  local tag = r.mine and "yours" or ""
+  if B.showAll and r.vname then tag = (r.mine and "yours, " or "") .. r.vname end
+  b.tag:SetText(tag)
   -- below vendor price: a green tag with what buying and vendoring makes, each
   local p = not r.mine and ns.vendor and r.unit and ns.vendor.flip(B.id, r.unit)
   if p then
@@ -291,7 +319,12 @@ function render()
       end
     end
   end
-  f.list.empty:SetText(B.loaded and "Nobody is selling this right now." or "Looking up the live auctions...")
+  local empty = "Waiting for the auction house..."
+  if B.loaded then empty = "Nobody is selling this right now."
+  elseif B.state == "retry" then empty = "The auction house didn't answer. Retrying..."
+  elseif B.state == "noanswer" then empty = "The auction house didn't answer. Press Refresh to try again."
+  elseif B.state == "partial" then empty = "The auction house didn't send its whole list for this name. Try Blizzard's list." end
+  f.list.empty:SetText(empty)
   f.list:SetItems(B.rows or {})
   f.qtyLabel:SetShown(B.commodity)
   f.qty:SetShown(B.commodity)
@@ -326,6 +359,8 @@ end
 
 local function close()
   B.pending = nil
+  B.gen = (B.gen or 0) + 1   -- answers still on their way are dropped
+  if ns.ahq then ns.ahq.cancel("buy") end
   if B.frame then B.frame:Hide() end
 end
 ns.closeBuy = close
@@ -366,21 +401,15 @@ local function makeFrame()
   local blizz = UI.button(f, "Blizzard's list", 104, 22, "small")
   blizz:SetPoint("RIGHT", back, "LEFT", -4, 0)
   blizz:SetScript("OnClick", function()
-    local name = B.name
-    close()
-    if ns.closeSearch then ns.closeSearch() end
-    local bar = _G.AuctionHouseFrame and AuctionHouseFrame.SearchBar
-    if bar and name then
-      bar:SetSearchText(name)
-      bar:StartSearch()
-    end
+    local name = baseName()
+    if ns.ahq then ns.ahq.showInBlizzard(name) end
   end)
   UI.tip(blizz, "Show it in Blizzard's own list", "Buy, bid and see every version there.")
   local refresh = UI.button(f, "Refresh", 64, 22, "small")
   refresh:SetPoint("RIGHT", blizz, "LEFT", -4, 0)
   refresh:SetScript("OnClick", function()
     cancelQuote()
-    B.sel, B.armed, B.level = nil, nil, 1
+    B.sel, B.armed, B.keys = nil, nil, nil   -- look for the item's versions again too
     send()
     render()
   end)
@@ -446,15 +475,10 @@ function ns.openBuy(row)
   if not f or not row or not row.id then return false end
   cancelQuote()
   B.id, B.suffix, B.vkey, B.name = row.id, row.suffix or 0, row.key, row.name
-  local info = try(AH.GetItemKeyInfo, try(AH.MakeItemKey, row.id, 0, 0, 0))
-  if info and info.isCommodity ~= nil then
-    B.commodity = info.isCommodity
-  else
-    local stack = ns.itemInfo and ns.itemInfo(row.id)
-    B.commodity = (stack and (stack[10] or 1) or 1) > 1
-  end
-  B.levels = (not B.commodity and row.slot ~= "none" and (row.ilvl or 0) > 0) and { row.ilvl, 0 } or { 0 }
-  B.level, B.sel, B.armed, B.pending, B.rows, B.loaded = 1, nil, nil, nil, {}, false
+  local stack = ns.itemInfo and ns.itemInfo(row.id)
+  B.commodity = (stack and (stack[10] or 1) or 1) > 1   -- until the auction house's own key says
+  B.keys, B.showAll, B.state = nil, false, nil
+  B.sel, B.armed, B.pending, B.rows, B.loaded = nil, nil, nil, {}, false
   B.qty = 1
   f.qty:SetText("1")
   local quality = ITEM_QUALITY_COLORS and row.quality and ({ poor = 0, common = 1, uncommon = 2, rare = 3, epic = 4, legendary = 5 })[row.quality]
@@ -479,16 +503,6 @@ end
 
 local events = {}
 
-function events.COMMODITY_SEARCH_RESULTS_UPDATED(itemID)
-  if ns.buyOpen and B.commodity and itemID == B.id then readCommodity() end
-end
-events.COMMODITY_SEARCH_RESULTS_ADDED = events.COMMODITY_SEARCH_RESULTS_UPDATED
-
-function events.ITEM_SEARCH_RESULTS_UPDATED(itemKey)
-  if ns.buyOpen and not B.commodity and type(itemKey) == "table" and itemKey.itemID == B.id then readItems(itemKey) end
-end
-events.ITEM_SEARCH_RESULTS_ADDED = events.ITEM_SEARCH_RESULTS_UPDATED
-
 function events.COMMODITY_PRICE_UPDATED(unit, total)
   if not ns.buyOpen or not B.starting then return end
   B.quote = { qty = B.starting, unit = okv(unit), total = okv(total) or 0 }
@@ -507,7 +521,7 @@ end
 local function bought(text)
   B.pending, B.sel, B.armed = nil, nil, nil
   setStatus(text, T.good)
-  C_Timer.After(0.5, function() if ns.buyOpen then B.level = 1; send() end end)
+  C_Timer.After(0.5, function() if ns.buyOpen then send() end end)
   render()
 end
 

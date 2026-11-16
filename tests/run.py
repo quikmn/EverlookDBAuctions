@@ -90,6 +90,7 @@ def main() -> int:
     failures += scroll_bars()
     failures += below_vendor()
     failures += query_language()
+    failures += search_queue()
 
     if failures:
         for f in failures:
@@ -494,6 +495,219 @@ def query_language():
     check(box.edbWell is not None and not same(box.edbWell, box), "a two-line box has its own well to anchor")
     single = ns.UI.input(lua.globals().UIParent, 100, 24)
     check(same(single.edbWell, single), "a one-line box is its own well")
+    return failures
+
+
+QUEUE_SETUP = """
+NOW = 0
+TIMERS = {}
+C_Timer = { After = function(s, fn) TIMERS[#TIMERS + 1] = { at = NOW + s, fn = fn } end }
+function GetTime() return NOW end
+function advance(s)
+  local stop = NOW + s
+  while true do
+    local best
+    for i, t in ipairs(TIMERS) do if t.at <= stop and (not best or t.at < TIMERS[best].at) then best = i end end
+    if not best then break end
+    local t = table.remove(TIMERS, best)
+    if t.at > NOW then NOW = t.at end
+    t.fn()
+  end
+  NOW = stop
+end
+SENT = {}
+READY = true
+BROWSE = { results = {}, full = true }
+KEYNAMES = {}
+ITEMFULL = true
+local function key(id, suffix) return { itemID = id, itemLevel = 22, itemSuffix = suffix or 0, battlePetSpeciesID = 0 } end
+KEY = key
+C_AuctionHouse = {
+  IsThrottledMessageSystemReady = function() return READY end,
+  SendBrowseQuery = function(q) SENT[#SENT + 1] = { kind = "browse", text = q.searchString } end,
+  SendSearchQuery = function(k) SENT[#SENT + 1] = { kind = "items", key = k } end,
+  GetBrowseResults = function() return BROWSE.results end,
+  HasFullBrowseResults = function() return BROWSE.full end,
+  RequestMoreBrowseResults = function() SENT[#SENT + 1] = { kind = "more" } end,
+  HasFullItemSearchResults = function() return ITEMFULL end,
+  RequestMoreItemSearchResults = function() SENT[#SENT + 1] = { kind = "moreitems" } end,
+  GetItemKeyInfo = function(k) local n = KEYNAMES[k.itemSuffix or 0]; return n and { itemName = n } or nil end,
+}
+"""
+
+
+def search_queue():
+    """The shared search queue (AHQuery.lua): one at a time, answers matched to the search, no answer is never zero,
+    nobody selling only from a complete answer, and the right ItemKeys for random-stat versions."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(QUEUE_SETUP)
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run((ROOT / "AHQuery.lua").read_text(encoding="utf-8"), "AHQuery.lua", "EverlookDBAuctions", ns)
+    Q = ns.ahq
+    G = lua.globals()
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("queue: " + what)
+
+    def sent():
+        return [(G.SENT[i].kind, G.SENT[i].text) for i in range(1, len(G.SENT) + 1)]
+
+    def reset():
+        G.advance(0.5)   # let the queue settle
+        G.SENT = lua.table()
+
+    key = G.KEY
+    results = lua.eval("function(...) return { ... } end")
+    entry = lua.eval("function(k, p, q) return { itemKey = k, minPrice = p, totalQuantity = q } end")
+    answers = []
+
+    def cb(a):
+        answers.append(a)
+
+    # order: a front search goes before waiting background ones; one at a time
+    reset()
+    G.READY = False
+    Q.browse("Background", 1, lua.table(owner="live", background=True), cb)
+    Q.browse("Front", 2, lua.table(owner="buy", front=True), cb)
+    check(sent() == [], "nothing sent while the auction house isn't ready")
+    G.READY = True
+    G.advance(0.5)
+    check(sent() == [("browse", "Front")], f"front first, one at a time: {sent()}")
+    G.BROWSE = lua.eval("{ results = {}, full = true }")
+    G.BROWSE.results = results(entry(key(2), 100, 3))
+    Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    check(len(answers) == 1 and answers[0].ok and len(answers[0].entries) == 1, "front answered")
+    G.advance(0.2)
+    check(sent()[-1] == ("browse", "Background"), f"then the background one: {sent()}")
+    G.BROWSE.results = results(entry(key(1), 50, 1))
+    Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    check(len(answers) == 2, "background answered")
+
+    # background searches wait while the buy panel is open
+    reset()
+    answers.clear()
+    ns.buyOpen = True
+    Q.browse("Bg", 3, lua.table(owner="live", background=True), cb)
+    G.advance(2)
+    check(sent() == [], "no background search while buying")
+    ns.buyOpen = False
+    G.advance(1)
+    check(sent() == [("browse", "Bg")], f"sent once the buy panel closes: {sent()}")
+    G.BROWSE.results = results()
+    Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    G.advance(1)
+
+    # an answer for another ItemKey is ignored, not read as empty
+    reset()
+    got = []
+    k1, k2 = key(10, 5), key(10, 6)
+    Q["items"](k1, lua.table(owner="buy", front=True), lambda k, full, final: got.append((k.itemSuffix, full, final)))
+    G.advance(0.1)
+    check(sent() == [("items", None)] and G.SENT[1].key.itemSuffix == 5, "item search sent for its key")
+    Q.onEvent("ITEM_SEARCH_RESULTS_UPDATED", k2)
+    check(got == [] and Q.busy is not None, "results for another key ignored, still waiting")
+    Q.onEvent("ITEM_SEARCH_RESULTS_UPDATED", key(10, 5))
+    check(got == [(5, True, True)] and Q.busy is None, f"its own key's results taken: {got}")
+
+    # no answer: asked again with a pause, and in the end "no answer", never an empty list
+    reset()
+    answers.clear()
+    retries = []
+    Q.browse("Silent", 4, lua.table(owner="buy", front=True, onRetry=lambda n: retries.append(n)), cb)
+    G.advance(0.1)
+    G.advance(5.1)
+    check(retries == [1] and answers == [], f"first timeout: retry, no answer yet: {retries}")
+    G.advance(30)
+    check(len([x for x in sent() if x[0] == "browse"]) == 3, f"asked three times: {sent()}")
+    check(len(answers) == 1 and answers[0].ok is False, "then told no answer")
+    check(not any(a.ok for a in answers), "never an empty answer from a timeout")
+
+    # nobody selling only from a complete answer; an empty one is asked once more first
+    reset()
+    answers.clear()
+    G.BROWSE.results = results(entry(key(99), 5, 1))   # other items only
+    G.BROWSE.full = False
+    Q.browse("Partial", 5, lua.table(owner="buy", front=True, confirmEmpty=True), cb)
+    G.advance(0.1)
+    for _ in range(9):
+        Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    check(len(answers) == 1 and answers[0].full is False and len(answers[0].entries) == 0, "incomplete: not full")
+    check(len([x for x in sent() if x[0] == "more"]) == 8, f"asked for more pages: {sent()}")
+    live = Q.liveFromBrowse(results(lua.table(name="Partial", suffix=0)), answers[0], Q.nameOf)
+    check(live[1] is None, "incomplete and empty: not sold out")
+    reset()
+    answers.clear()
+    G.BROWSE.full = True
+    Q.browse("Gone", 6, lua.table(owner="buy", front=True, confirmEmpty=True), cb)
+    G.advance(0.1)
+    Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    check(answers == [], "complete and empty: asked once more first")
+    G.advance(0.2)
+    Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    check(len(answers) == 1 and answers[0].full is True and len(answers[0].entries) == 0, "then believed")
+    live = Q.liveFromBrowse(results(lua.table(name="Gone", suffix=0)), answers[0], Q.nameOf)
+    check(live[1].gone is True, "complete and empty: sold out")
+    fail = Q.liveFromBrowse(results(lua.table(name="X", suffix=0)), lua.table(ok=False), Q.nameOf)
+    check(fail[1] is None, "no answer: not sold out")
+
+    # Blizzard's own search: our browse goes back in the queue, their answer isn't read as ours
+    reset()
+    answers.clear()
+    G.BROWSE.results = results()
+    Q.browse("Ours", 7, lua.table(owner="buy", front=True), cb)
+    G.advance(0.1)
+    Q.blizzardSearch(True)
+    Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")   # Blizzard's answer
+    check(answers == [], "Blizzard's answer not taken as ours")
+    G.advance(1)
+    check([x for x in sent() if x[0] == "browse"] == [("browse", "Ours"), ("browse", "Ours")], f"ours sent again: {sent()}")
+    G.BROWSE.results = results(entry(key(7), 10, 2))
+    Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    check(len(answers) == 1 and len(answers[0].entries) == 1, "then ours answered")
+
+    # waiting for idle (Blizzard's list): runs once nothing is out
+    reset()
+    ran = []
+    Q["items"](key(20), lua.table(owner="buy", front=True), lambda *a: None)
+    G.advance(0.1)
+    Q.whenIdle(lambda: ran.append(G.NOW))
+    G.advance(0.5)
+    check(ran == [], "not while a search is out")
+    Q.onEvent("ITEM_SEARCH_RESULTS_UPDATED", key(20))
+    G.advance(0.5)
+    check(len(ran) == 1, "runs when idle")
+
+    # which ItemKeys to open: the version named like the result, else all of them
+    G.KEYNAMES = lua.eval('{ [5] = "Dwarven Magestaff of the Bear", [6] = "Dwarven Magestaff of the Eagle" }')
+    es = results(entry(key(30, 5), 4400, 7), entry(key(30, 6), 4400, 5))
+    keys, all_ = Q.pickKeys(es, "Dwarven Magestaff of the Bear", Q.nameOf)
+    check(len(keys) == 1 and keys[1].itemSuffix == 5 and all_ is False, "the Bear version's key")
+    keys, all_ = Q.pickKeys(es, "Dwarven Magestaff of the Owl", Q.nameOf)
+    check(len(keys) == 2 and all_ is True, "no match: every version, shown with names")
+    G.KEYNAMES = lua.eval('{ [0] = "Linen Cloth" }')
+    keys, all_ = Q.pickKeys(results(entry(key(2589), 10, 20)), "Linen Cloth", Q.nameOf)
+    check(len(keys) == 1 and all_ is False, "a plain item: its one key")
+
+    # live prices for random-stat versions: by name; a version not in a complete answer is sold out, an unnamed
+    # key makes it unknown
+    G.KEYNAMES = lua.eval('{ [5] = "Dwarven Magestaff of the Bear", [6] = "Dwarven Magestaff of the Eagle" }')
+    rows = results(lua.table(name="Dwarven Magestaff of the Bear", suffix=5),
+                   lua.table(name="Dwarven Magestaff of the Owl", suffix=9))
+    ans = lua.table(ok=True, full=True, entries=es)
+    out = Q.liveFromBrowse(rows, ans, Q.nameOf)
+    check(out[1].price == 4400 and out[1].qty == 7, "Bear: its own price and count")
+    check(out[2].gone is True, "Owl: not in a complete answer, sold out")
+    ans.full = False
+    out = Q.liveFromBrowse(rows, ans, Q.nameOf)
+    check(out[2] is None, "Owl with an incomplete answer: unknown")
+    G.KEYNAMES = lua.eval('{ [5] = "Dwarven Magestaff of the Bear" }')
+    ans.full = True
+    out = Q.liveFromBrowse(rows, ans, Q.nameOf)
+    check(out[1].price == 4400 and out[2] is None, "a key without a name yet: no sold out")
     return failures
 
 
