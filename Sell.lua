@@ -1111,7 +1111,7 @@ local function makeFrame()
   if S.frame or not ah then return S.frame end
   local f = UI.own(CreateFrame("Frame", "EverlookAuctionsSelling", ah))
   f:SetPoint("TOPLEFT", ah, "TOPLEFT", 2, -24)
-  f:SetPoint("BOTTOMRIGHT", ah, "BOTTOMRIGHT", -2, 2)
+  f:SetPoint("BOTTOMRIGHT", ah, "BOTTOMRIGHT", -2, (ns.BAR_H or 0) + 2)   -- the bar along the bottom stays visible
   f:SetFrameLevel(ah:GetFrameLevel() + 150)
   f:EnableMouse(true)
   UI.panel(f, T.bg, T.bg)
@@ -1433,13 +1433,9 @@ local function makeFrame()
   ------------------------------------------------------------------------------------------------ footer
   f.status = UI.text(f, "dim")
   f.status:SetPoint("BOTTOMLEFT", 12, 9)
-  f.status:SetPoint("RIGHT", f, "RIGHT", -220, 0)
-  f.money = UI.text(f, "body")
-  f.money:SetPoint("BOTTOMRIGHT", -12, 9)
-  f.money:SetJustifyH("RIGHT")
+  f.status:SetPoint("RIGHT", f, "RIGHT", -12, 0)
 
   f:SetScript("OnShow", function()
-    f.money:SetText(money(GetMoney()))
     f.cut:SetText(undercutShort())
     collect()
     renderBags()
@@ -1538,10 +1534,6 @@ function events.AUCTION_HOUSE_CLOSED()
 end
 
 function events.BAG_UPDATE_DELAYED() refreshBags() end
-
-function events.PLAYER_MONEY()
-  if S.frame then S.frame.money:SetText(money(GetMoney())) end
-end
 
 function events.COMMODITY_SEARCH_RESULTS_UPDATED(itemID) onCommodityResults(itemID) end
 function events.COMMODITY_SEARCH_RESULTS_ADDED(itemID) onCommodityResults(itemID) end

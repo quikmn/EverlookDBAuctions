@@ -1,6 +1,6 @@
 -- EverlookDB Auctions: query search over the last full scan, in the same language as EverlookDB.com.
 --   items | where slot is trinket and price lt 5g | sort by price
--- The Advanced search button on the EverlookDB panel opens it over the auction list: type a query, press Enter.
+-- The Advanced search button on Buy's search row opens it over the auction list: type a query, press Enter.
 -- Click a result to find it on the auction house and buy as usual.
 -- Columns: name, quality, ilvl, reqlevel, slot, category, type, sell, stack, price (lowest buyout), median, qty,
 -- auctions, stats str, agi, sta, int, spi, armor, ap, sp, healing, mp5, defense, dps, hit, crit, spellhit,
@@ -1209,14 +1209,16 @@ function ns.openSearch()
   f.box:SetFocus()
 end
 
--- The Advanced search button on the EverlookDB panel.
+-- The Advanced search button: on Buy's search row, above the categories (Blizzard's row has no room between its
+-- search box and Filter). It belongs to the search row, so it shows on Buy only.
 local function makeButton()
-  local panel = _G.EverlookAuctionsPanel
-  if Q.button or not panel or not panel.button then return end
-  local b = UI.button(panel, "Advanced search", 196, 26, "primary")
-  b:SetPoint("BOTTOMLEFT", panel.button, "TOPLEFT", 0, 6)
+  local ah = _G.AuctionHouseFrame
+  local row = ah and ah.SearchBar
+  if Q.button or not row then return end
+  local b = UI.button(row, "Advanced search", 150, 22, "primary")
+  b:SetPoint("RIGHT", row, "LEFT", -8, 0)
   b:SetScript("OnClick", ns.openSearch)
-  panel:SetHeight(panel:GetHeight() + 32)
+  UI.tip(b, "Advanced search", "Search everything in the last price update with the same query language as EverlookDB.com: stats, slot, item and required level, price. For example: slot is trinket and price lt 5g")
   Q.button = b
 end
 

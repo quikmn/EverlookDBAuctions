@@ -101,7 +101,7 @@ local function build()
 
   -- general
   section(p, "General", -374)
-  p.auto = UI.check(p, "Full scan when you open the auction house (at most every 15 minutes)", function(_, on)
+  p.auto = UI.check(p, "Update prices by themselves while the auction house is open (every 15 minutes)", function(_, on)
     ns.db().auto = on
   end)
   p.auto:SetPoint("TOPLEFT", 16, -406)

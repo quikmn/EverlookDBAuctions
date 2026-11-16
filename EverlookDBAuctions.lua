@@ -1,5 +1,6 @@
 -- EverlookDB Auctions: auction house prices for WoW Forever.
---   Full scan   one button on the auction house reads every auction at once (allowed about every 15 minutes)
+--   Full scan   Update prices on the bar along the auction house's bottom reads every auction at once (about
+--               30 seconds, allowed about every 15 minutes, and automatic by default)
 --   Searches    prices from the normal Blizzard search results are kept too, no scan needed
 --   Tooltips    lowest buyout per item, how many are up, how old the price is, and the 30-day low
 -- Prices are kept per realm and auction house (Alliance, Horde, or the neutral houses in Booty Bay, Gadgetzan and
@@ -25,7 +26,7 @@ local NEUTRAL_ZONES = { [1434] = true, [1446] = true, [1452] = true }
 local db
 local house          -- the house key while an auction house is open, e.g. "Everlook-Alliance"
 local houseSide      -- "Alliance", "Horde" or "Neutral" while an auction house is open
-local panel          -- the small frame beside the auction house
+local panel          -- the bar along the bottom of the auction house
 local scan = nil     -- { started = time, mode = "replicate"|"getall" } while a full scan runs
 
 -- The player always goes first: while one of their auction house actions waits for the server, or for a few seconds
@@ -138,109 +139,192 @@ local function pruneDays(h)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
--- Panel beside the auction house
+-- The bar along the bottom of the auction house, beside the money: which house, how many items are priced, how old
+-- the prices are, and the Update prices button (a gold progress bar while an update runs). Blizzard's window grows
+-- by BAR_H to make room, so its lists keep their height; the addon's own tabs stop above the bar (ns.BAR_H).
 
-local function setStatus(text)
-  if panel then panel.status:SetText(text or "") end
+local BAR_H = 28
+ns.BAR_H = BAR_H
+local FLASH_FOR = 6             -- seconds a message ("Prices updated", an error) stays on the bar
+local flash                     -- { text, color, till }
+
+local function setStatus(text, color)
+  flash = text and text ~= "" and { text = text, color = color, till = GetTime() + FLASH_FOR } or nil
 end
 
-local RETRY_AFTER = 60          -- a scan that didn't finish can be tried again by hand after a minute
+local RETRY_AFTER = 60          -- an update that didn't finish can be tried again by hand after a minute
 
--- A scan was started but never finished (UI reloaded, auction house closed, or no answer from the server).
+-- An update was started but never finished (UI reloaded, auction house closed, or no answer from the server).
 local function unfinished(h)
   return not scan and h.tried ~= nil and (not h.scanned or h.scanned < h.tried)
 end
 
--- Seconds until the Full scan button may be used again.
+-- Seconds until Update prices may be used again.
 local function scanWait(h)
   if not h.tried then return 0 end
   return h.tried + (unfinished(h) and RETRY_AFTER or SCAN_COOLDOWN) - time()
 end
 
+-- How long an update should take: as long as the last one on this house, else about 30 seconds.
+local function expected(h)
+  return math.min(math.max(h.took or 30, 10), 120)
+end
+
 local function refreshPanel()
   if not panel or not house then return end
+  local T = ns.T
   local h = getHouse(house)
-  local n = 0
-  for _ in pairs(h.items) do n = n + 1 end
-  panel.values[1]:SetText(house:match("%-(%a+)$") or "?")
-  panel.values[2]:SetText(num(n))
-  panel.values[3]:SetText(h.scanned and ago(h.scanned) or "never")
-  panel.warn:SetText(unfinished(h) and "The last scan didn't finish." or "")
-  local wait = scanWait(h)
   if scan then
+    local took = time() - scan.started
+    local est = expected(h)
+    local pct = math.min(0.95, took / est)
+    local text
+    if yielding() then
+      text = "Updating prices… waiting for your purchase"
+    elseif est - took >= 2 then
+      text = ("Updating prices… about %d s left · keep browsing"):format(est - took)
+    else
+      text = "Updating prices… almost done · keep browsing"
+    end
+    panel.text:SetText(text)
+    panel.text:SetTextColor(unpack(T.text))
+    panel.button:Hide()
+    local bar = panel.bar
+    bar:Show()
+    bar.fill:SetWidth(math.max(1, (bar:GetWidth() - 2) * pct))
+    bar.label:SetText(("%d%%"):format(pct * 100))
+    bar.label:SetTextColor(unpack(pct >= 0.5 and T.onAccent or T.text))
+    return
+  end
+  panel.bar:Hide()
+  panel.button:Show()
+  local bad = unfinished(h)
+  if flash and GetTime() < flash.till then
+    panel.text:SetText(flash.text)
+    panel.text:SetTextColor(unpack(flash.color or T.text))
+  elseif bad then
+    panel.text:SetText("The last price update didn't finish.")
+    panel.text:SetTextColor(unpack(T.bad))
+  else
+    flash = nil
+    local n = 0
+    for _ in pairs(h.items) do n = n + 1 end
+    panel.text:SetText(("%s%s|r · %s items priced · %s"):format(ns.UI.hex(T.accent), house:match("%-(%a+)$") or "?",
+      num(n), h.scanned and ("updated " .. ago(h.scanned)) or "no update yet"))
+    panel.text:SetTextColor(unpack(T.text))
+  end
+  local wait = scanWait(h)
+  if wait > 0 then
     panel.button:Disable()
-    panel.button:SetText("Scanning...")
-  elseif wait > 0 then
-    panel.button:Disable()
-    panel.button:SetText(("Scan in %d:%02d"):format(math.floor(wait / 60), wait % 60))
+    panel.button:SetText(("%s %d:%02d"):format(bad and "Try again in" or "Next update", math.floor(wait / 60), wait % 60))
   else
     panel.button:Enable()
-    panel.button:SetText("Full scan")
+    panel.button:SetText(bad and "Try again" or "Update prices")
   end
 end
 
 local startScan
 
--- The panel: a header with the addon's mark, what is saved for this auction house, and the Full scan button
--- (Search.lua adds Advanced search above it).
+-- Once: Blizzard's window and its category list grow by BAR_H (Buy's results and the commodity view follow the list),
+-- and the item view, which reaches the window's bottom, stops above the bar.
+local grown = false
+local function grow(ah)
+  if grown then return end
+  grown = true
+  pcall(function()
+    ah:SetHeight(ah:GetHeight() + BAR_H)
+    if ah.CategoriesList then ah.CategoriesList:SetHeight(ah.CategoriesList:GetHeight() + BAR_H) end
+    local f = ah.ItemBuyFrame
+    if f then
+      local points = {}
+      for i = 1, f:GetNumPoints() do points[i] = { f:GetPoint(i) } end
+      f:ClearAllPoints()
+      for _, p in ipairs(points) do
+        if p[1] == "BOTTOM" and p[2] == ah then p[5] = (p[5] or 0) + BAR_H end
+        f:SetPoint(unpack(p))
+      end
+    end
+  end)
+end
+
+local function tipText()
+  local h = house and getHouse(house)
+  local secs = h and expected(h) or 30
+  if db.auto == false then
+    return ("Automatic updates are off: press Update prices, or type /eah auto on. An update reads every auction on this auction house in about %d seconds, and you can keep buying and selling meanwhile. The server allows one about every 15 minutes."):format(secs)
+  end
+  return ("Prices update by themselves when you open the auction house and every 15 minutes while it is open. An update reads every auction in about %d seconds, and you can keep buying and selling meanwhile."):format(secs)
+end
+
 local function makePanel(parent)
   local UI, T = ns.UI, ns.T
-  local f = UI.own(CreateFrame("Frame", "EverlookAuctionsPanel", parent))
-  f:SetSize(220, 176)
-  f:SetPoint("TOPLEFT", parent, "TOPRIGHT", 6, -24)
-  f:SetFrameStrata(parent:GetFrameStrata())
+  local modern = parent == _G.AuctionHouseFrame
+  local f = UI.own(CreateFrame("Frame", "EverlookAuctionsBar", parent))
+  f:SetHeight(BAR_H)
+  if modern then
+    grow(parent)
+    -- a raised band across the window's bottom with a gold line on top; the money display sits on it, the bar's
+    -- content to its right
+    local band = parent:CreateTexture(nil, "BACKGROUND", nil, -6)
+    band:SetPoint("BOTTOMLEFT", 1, 1)
+    band:SetPoint("BOTTOMRIGHT", -1, 1)
+    band:SetHeight(BAR_H + 2)
+    UI.shade(band, T.raised, UI.LIFT)
+    local line = UI.line(parent, true, T.accent, "BORDER")
+    line:SetPoint("BOTTOMLEFT", band, "TOPLEFT")
+    line:SetPoint("BOTTOMRIGHT", band, "TOPRIGHT")
+    f:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 182, 2)
+    f:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -6, 2)
+  else
+    -- the old auction house window: the bar hangs under it
+    f:SetPoint("TOPLEFT", parent, "BOTTOMLEFT", 14, -4)
+    f:SetPoint("TOPRIGHT", parent, "BOTTOMRIGHT", -40, -4)
+    UI.panel(f, T.bg, T.edge)
+  end
+  f:SetFrameLevel(parent:GetFrameLevel() + 200)
   f:EnableMouse(true)
-  UI.panel(f, T.bg, T.edge)
-  UI.shadow(f, 5)
 
-  local band = f:CreateTexture(nil, "BACKGROUND", nil, -7)
-  band:SetPoint("TOPLEFT", 1, -1)
-  band:SetPoint("TOPRIGHT", -1, -1)
-  band:SetHeight(28)
-  UI.shade(band, T.raised, UI.LIFT)
-  local line = UI.line(f, true)
-  line:SetPoint("TOPLEFT", band, "BOTTOMLEFT")
-  line:SetPoint("TOPRIGHT", band, "BOTTOMRIGHT")
   local mark = f:CreateTexture(nil, "ARTWORK")
   mark:SetSize(16, 16)
-  mark:SetPoint("LEFT", band, "LEFT", 9, 0)
+  mark:SetPoint("LEFT", 4, 0)
   mark:SetTexture("Interface\\AddOns\\" .. ADDON .. "\\Media\\icon")
-  local title = UI.text(f, "title")
-  title:SetPoint("LEFT", mark, "RIGHT", 7, 0)
-  title:SetText("EverlookDB Auctions")
 
-  -- label / value pairs
-  f.values = {}
-  for k, label in ipairs({ "Auction house", "Items priced", "Last full scan" }) do
-    local l = UI.text(f, "mute")
-    l:SetPoint("TOPLEFT", 12, -40 - (k - 1) * 18)
-    l:SetText(label)
-    local v = UI.text(f, "small")
-    v:SetPoint("TOPRIGHT", -12, -40 - (k - 1) * 18)
-    v:SetJustifyH("RIGHT")
-    f.values[k] = v
-  end
-  f.warn = UI.text(f, "small")
-  f.warn:SetPoint("TOPLEFT", 12, -40 - 3 * 18)
-  f.warn:SetTextColor(unpack(T.bad))
-
-  f.button = UI.button(f, "Full scan", 196, 26)
-  f.button:SetPoint("BOTTOMLEFT", 12, 40)
+  f.button = UI.button(f, "Update prices", 150, 22, "primary")
+  f.button:SetPoint("RIGHT", -2, 0)
   f.button:SetScript("OnClick", function() startScan() end)
+  UI.tip(f.button, "Update prices", tipText)
 
-  f.status = UI.text(f, "mute")
-  f.status:SetPoint("TOPLEFT", f.button, "BOTTOMLEFT", 0, -8)
-  f.status:SetWidth(196)
-  f.status:SetWordWrap(true)
+  local bar = CreateFrame("Frame", nil, f)
+  bar:SetAllPoints(f.button)
+  UI.panel(bar, T.input, T.edge)
+  bar.fill = bar:CreateTexture(nil, "ARTWORK")
+  bar.fill:SetPoint("TOPLEFT", 1, -1)
+  bar.fill:SetPoint("BOTTOMLEFT", 1, 1)
+  bar.fill:SetWidth(1)
+  bar.fill:SetColorTexture(unpack(T.accent))
+  bar.label = UI.text(bar, "small", "OVERLAY")
+  bar.label:SetPoint("CENTER")
+  bar.label:SetShadowOffset(0, 0)
+  bar:EnableMouse(true)
+  UI.tip(bar, "Updating prices", tipText)
+  bar:Hide()
+  f.bar = bar
 
-  -- the cooldown countdown on the button, and a fresh full scan every 15 minutes while the auction house is open
+  f.text = UI.text(f, "body")
+  f.text:SetPoint("LEFT", mark, "RIGHT", 8, 0)
+  f.text:SetPoint("RIGHT", f.button, "LEFT", -12, 0)
+  f.text:SetJustifyH("LEFT")
+  f.text:SetWordWrap(false)
+  UI.tip(f, "Auction prices", tipText)
+
+  -- the countdown on the button and the progress bar, and a fresh update every 15 minutes while the auction house
+  -- is open (this only runs while the bar, and so the auction house, is shown)
   local acc = 0
   f:SetScript("OnUpdate", function(_, dt)
     acc = acc + dt
-    if acc < 1 then return end
+    if acc < (scan and 0.2 or 1) then return end
     acc = 0
     refreshPanel()
-    -- this only runs while the panel (and so the auction house) is shown
     if db.auto ~= false and not scan and house then
       local h = getHouse(house)
       if h.tried and time() - h.tried >= SCAN_COOLDOWN then startScan(true) end
@@ -404,8 +488,9 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       say("test mode: reloading in 3 seconds so the scan is saved.")
       C_Timer.After(3, function() if not scan then ReloadUI() end end)
     end
+    h.took = time() - scan.started
     scan = nil
-    setStatus(("Done: %s auctions, %s items."):format(num(total), num(#list)))
+    setStatus(("Prices updated · %s auctions, %s items"):format(num(total), num(#list)), ns.T.good)
     say(("full scan done: %s auctions, %s item versions."):format(num(total), num(#list)))
     refreshPanel()
   end
@@ -447,7 +532,7 @@ local function processList(total, first, read)
   if total <= 0 then
     -- an empty answer (refused or not loaded): never let it wipe the saved prices
     scan = nil
-    setStatus("The server sent an empty list. Try again later.")
+    setStatus("The server sent an empty list. Prices were left as they were.", ns.T.bad)
     say("the server sent an empty auction list; prices were left as they were.")
     refreshPanel()
     return
@@ -482,7 +567,6 @@ local function processList(total, first, read)
     local function step()
       if stopped() then return end
       if yielding() then
-        setStatus("Paused while the auction house answers you...")
         C_Timer.After(0.25, step)
         return
       end
@@ -505,11 +589,6 @@ local function processList(total, first, read)
         end
       end
       i = stop + 1
-      if list then
-        setStatus(("Loading item details: %s left..."):format(num(n - math.min(i - 1, n))))
-      else
-        setStatus(("Reading %s / %s..."):format(num(math.min(i - 1, n)), num(n)))
-      end
       if i > n then done(missing) else C_Timer.After(0, step) end
     end
     step()
@@ -520,19 +599,16 @@ local function processList(total, first, read)
     rounds[#rounds + 1] = #missing
     if #missing == 0 or round >= #RETRY_WAITS then
       if #missing == 0 then
-        setStatus("Saving...")
         finishScan(h, vars, total, 0, rounds, unlinked)
       else
         -- last try: whatever still has no link counts under suffix 0
         pass(missing, true, function(still)
-          setStatus("Saving...")
           finishScan(h, vars, total, #still, rounds, unlinked)
         end)
       end
       return
     end
     round = round + 1
-    setStatus(("Loading item details for %s auctions..."):format(num(#missing)))
     local function drain()
       if stopped() then return end
       if load and qi <= #queue then
@@ -556,14 +632,14 @@ function startScan(auto)
   if not house or not ahFrame() or not ahFrame():IsShown() then say("open the auction house first."); return end
   local h = getHouse(house)
   local wait = scanWait(h)
-  if wait > 0 then say(("the server allows one full scan about every 15 minutes; try again in %d:%02d."):format(math.floor(wait / 60), wait % 60)); return end
+  if wait > 0 then say(("the server allows one price update about every 15 minutes; try again in %d:%02d."):format(math.floor(wait / 60), wait % 60)); return end
   local kind = apiKind()
   if kind == "modern" then
     scan = { started = time(), mode = "replicate", side = houseSide, at = GetServerTime() }
     C_AuctionHouse.ReplicateItems()
   elseif kind == "classic" then
     local canQuery, canAll = CanSendAuctionQuery()
-    if not canAll then say("the server doesn't allow a full scan right now; try again later."); return end
+    if not canAll then say("the server doesn't allow a price update right now; try again later."); return end
     scan = { started = time(), mode = "getall", side = houseSide, at = GetServerTime() }
     QueryAuctionItems("", nil, nil, 0, nil, nil, true, false, nil)
   else
@@ -571,13 +647,13 @@ function startScan(auto)
     return
   end
   h.tried = time()
-  setStatus(auto and "Gathering auction prices (about 30 seconds)..." or "Asked the server for every auction...")
+  setStatus(nil)
   refreshPanel()
   local mine = scan
   C_Timer.After(SCAN_TIMEOUT, function()
     if scan == mine and not mine.reading then
       scan = nil
-      setStatus("No answer from the server. Try again later.")
+      setStatus("No answer from the server. Prices were left as they were.", ns.T.bad)
       say("the server didn't send the auction list (it may limit full scans). Try again later.")
       refreshPanel()
     end
@@ -698,14 +774,13 @@ local function onShow(retried)
   -- Blizzard loads the auction house UI on this same event; if it isn't there yet, look again next frame
   if not parent and not retried then C_Timer.After(0, function() if house then onShow(true) end end); return end
   if parent and not panel then panel = makePanel(parent) end
-  setStatus("")
+  setStatus(nil)
   refreshPanel()
   -- Automatic full scan when the last one is 15+ minutes old (db.auto, on by default; /eah auto off).
   -- A short wait first, so the auction house window finishes opening before the list comes in.
   if db.auto ~= false and not scan then
     local h = getHouse(house)
     if not h.tried or time() - h.tried >= SCAN_COOLDOWN then
-      setStatus("Gathering auction prices (about 30 seconds)...")
       C_Timer.After(1.5, function()
         if house and not scan and ahFrame() and ahFrame():IsShown() then startScan(true) end
       end)
@@ -772,7 +847,7 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
     local ah = _G.AuctionHouseFrame
     say(("debug: AuctionHouseFrame %s, mode %s, tab %s"):format(ah and (ah:IsShown() and "shown" or "hidden") or "missing",
       tostring(ah and ah.GetDisplayMode and select(2, pcall(ah.GetDisplayMode, ah))), tostring(ah and ah.selectedTab)))
-    for _, name in ipairs({ "EverlookAuctionsSelling", "EverlookAuctionsShopping", "EverlookAuctionsQueryResults",
+    for _, name in ipairs({ "EverlookAuctionsBar", "EverlookAuctionsSelling", "EverlookAuctionsShopping", "EverlookAuctionsQueryResults",
         "EverlookAuctionsSellingTab", "EverlookAuctionsShoppingTab" }) do
       local f = _G[name]
       if not f then
@@ -797,8 +872,8 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   end
   if msg == "auto off" or msg == "auto on" then
     db.auto = msg == "auto on"
-    say(db.auto and "automatic full scans are on (when you open the auction house, then every 15 minutes while it is open)."
-      or "automatic full scans are off. Press Full scan or type /eah scan when you want one.")
+    say(db.auto and "prices update by themselves (when you open the auction house, then every 15 minutes while it is open)."
+      or "automatic price updates are off. Press Update prices or type /eah scan when you want one.")
     return
   end
   say("status")
@@ -812,11 +887,11 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
     print(("  %s: %s items priced, %s"):format(key, num(n), h.scanned and ("last full scan " .. ago(h.scanned)) or "no full scan yet"))
     any = true
   end
-  if not any then print("  no prices yet: open the auction house and press Full scan, or just search.") end
-  print("  /eah scan  start a full scan (auction house open)")
+  if not any then print("  no prices yet: open the auction house and let it update prices, or just search.") end
+  print("  /eah scan  update prices now (auction house open)")
   if ns.help then ns.help() end
   print(("  /eah test  reload after every full scan so it is saved at once (now %s)"):format(db.reloadAfterScan and "on" or "off"))
-  print(("  /eah auto on|off  automatic full scan when you open the auction house (now %s)"):format(db.auto == false and "off" or "on"))
+  print(("  /eah auto on|off  update prices by themselves while the auction house is open (now %s)"):format(db.auto == false and "off" or "on"))
 end
 
 -- Shared with Sell.lua, Search.lua and Skin.lua

@@ -192,7 +192,7 @@ local function makeFrame()
   if SH.frame or not ah then return SH.frame end
   local f = UI.own(CreateFrame("Frame", "EverlookAuctionsShopping", ah))
   f:SetPoint("TOPLEFT", ah, "TOPLEFT", 2, -24)
-  f:SetPoint("BOTTOMRIGHT", ah, "BOTTOMRIGHT", -2, 2)
+  f:SetPoint("BOTTOMRIGHT", ah, "BOTTOMRIGHT", -2, (ns.BAR_H or 0) + 2)   -- the bar along the bottom stays visible
   f:SetFrameLevel(ah:GetFrameLevel() + 150)
   f:EnableMouse(true)
   UI.panel(f, T.bg, T.bg)

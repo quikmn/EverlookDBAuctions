@@ -1,5 +1,13 @@
 # EverlookDB Auctions
 
+## Unreleased
+
+- The box beside the auction house is gone. Its contents are on a bar along the bottom of the auction house window instead, beside your money: which house, how many items have prices, and how old they are. The window is a little taller to make room, so the lists keep their size.
+- Price updates show a progress bar with the time left, worked out from how long your last update took. The bar says when an update waits for your purchase, and shows "Prices updated" when it's done. Hover it to see how updates work.
+- Update prices sits on the bar and is always there. During the 15-minute wait it shows when the next update is.
+- Advanced search is a gold button on the Buy tab's search row.
+- The Selling tab no longer shows a second copy of your money.
+
 ## v0.6.0 (2026-11-14)
 
 - Crafting cost beside the profession window, for the recipe you pick. It shows each material with its lowest auction price, what all the materials cost, what the result sells for (and what disenchanting it is worth, for gear), and your profit after the 5% auction house cut. It uses your saved prices, so it works anywhere. Materials without a price are counted and shown. You can turn it off in the options.
