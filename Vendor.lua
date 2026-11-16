@@ -85,6 +85,95 @@ function V.flip(id, unit)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
+-- Deals from the full scan: every single auction under vendor price, worked out once when the scan finishes, so the
+-- Below vendor list opens at once and needs no live check per row. Saved per item version as "unit:count,..."; for
+-- an item whose details (vendor price) aren't loaded yet, "?" and its cheapest few auctions, checked when the list
+-- is built.
+
+V.MIN_DEAL = 1000          -- an auction must make at least 10s (for the whole auction) to be listed
+local PENDING_KEEP = 10
+
+function V.scanDeals(id, units, counts)
+  if not units or #units == 0 then return nil end
+  local c = ns.itemInfo and ns.itemInfo(id)   -- no load request here: Search.lua loads missing items in batches
+  local sell = c and (c[9] or 0)
+  if sell then
+    if sell <= 0 or V.isQuest(id, c and c[5]) then return nil end
+    local out = {}
+    for k, u in ipairs(units) do
+      if u < sell then out[#out + 1] = u .. ":" .. (counts[k] or 1) end
+    end
+    return #out > 0 and table.concat(out, ",") or nil
+  end
+  local idx = {}
+  for k = 1, #units do idx[k] = k end
+  table.sort(idx, function(a, b) return units[a] < units[b] end)
+  local out = {}
+  for k = 1, math.min(PENDING_KEEP, #idx) do out[k] = units[idx[k]] .. ":" .. (counts[idx[k]] or 1) end
+  return "?" .. table.concat(out, ",")
+end
+
+-- The auctions under vendor price `sell` in a saved deals text, each { unit, count, profit } (profit for the whole
+-- auction), keeping those that make at least `minProfit`; biggest profit first.
+function V.dealsOf(text, sell, minProfit)
+  local out = {}
+  if type(text) ~= "string" or not sell or sell <= 0 then return out end
+  for u, n in text:gmatch("(%d+):(%d+)") do
+    u, n = tonumber(u), tonumber(n)
+    if u < sell then
+      local profit = (sell - u) * n
+      if profit >= (minProfit or 0) then out[#out + 1] = { unit = u, count = n, profit = profit } end
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.profit ~= b.profit then return a.profit > b.profit end
+    return a.unit < b.unit
+  end)
+  return out
+end
+
+-- How many, the total profit and the cheapest unit price of a deals list.
+function V.dealSummary(list)
+  local n, total, best, units = 0, 0, nil, 0
+  for _, d in ipairs(list or {}) do
+    n, total, units = n + 1, total + d.profit, units + d.count
+    if not best or d.unit < best then best = d.unit end
+  end
+  return n, total, best, units
+end
+
+-- Start buying (Buy.lua): what to buy next of an item from its live auctions (sorted cheapest first). Items: the
+-- cheapest auction under vendor price that isn't yours. Stackable goods: how many are up under vendor price from
+-- other sellers, and what they cost. nil when nothing is under vendor price any more.
+function V.nextDeal(rows, sell, commodity)
+  if not sell or sell <= 0 then return nil end
+  if commodity then
+    local qty, cost = 0, 0
+    for _, r in ipairs(rows or {}) do
+      local n = r.others or r.qty or 0
+      if r.unit and r.unit < sell and n > 0 then qty, cost = qty + n, cost + n * r.unit end
+    end
+    return qty > 0 and { qty = qty, cost = cost } or nil
+  end
+  for _, r in ipairs(rows or {}) do
+    if not r.mine and r.unit and r.buyout and r.unit < sell then return r end
+  end
+  return nil
+end
+
+-- The running total of a buying run.
+function V.tally(t, qty, cost, sell)
+  t = t or { n = 0, cost = 0, value = 0 }
+  t.n, t.cost, t.value = t.n + qty, t.cost + cost, t.value + qty * (sell or 0)
+  return t
+end
+
+function V.tallyText(t, money)
+  if not t or t.n == 0 then return "Nothing bought yet." end
+  return ("Bought %d for %s, vendor value %s, profit %s."):format(t.n, money(t.cost), money(t.value), money(t.value - t.cost))
+end
+
+---------------------------------------------------------------------------------------------------------------------
 -- Blizzard's own lists (browse results, an item's auctions, a commodity's prices): a faint green tint and a green
 -- edge on rows below vendor price. Only colors are added; the rows keep working as before.
 

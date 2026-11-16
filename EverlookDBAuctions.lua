@@ -431,6 +431,7 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
   local list = {}
   for key in pairs(vars) do list[#list + 1] = key end
   local rows, items = {}, {}
+  local deals = {}   -- below vendor price: "unit:count,..." per item version (Vendor.lua), worked out once here
   local i = 1
   local function step()
     local stop = math.min(i + 499, #list)
@@ -443,6 +444,10 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
         v.tl[1], v.tl[2], v.tl[3], v.tl[4], v.minBid or "" }, ",")
       if v.suffix ~= 0 and v.name then row = row .. "," .. v.name end
       rows[key] = row
+      if ns.vendor and ns.vendor.scanDeals then
+        local d = ns.vendor.scanDeals(v.id, v.units, v.counts)
+        if d then deals[key] = d end
+      end
       local it = items[v.id]
       if not it then it = { nil, 0, 0 }; items[v.id] = it end
       if low and (not it[1] or low < it[1]) then it[1] = low end
@@ -478,6 +483,7 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       noLinkItems = topUnlinked(unlinked), -- the 50 items with the most auctions that never got a link: "ID:auctions"
       linkSamples = linkSamples,          -- up to 30 links of random-stat items (unique ID, level and spec blanked)
       rows = rows,
+      deals = deals,                      -- auctions under vendor price, or the cheapest ones of items not loaded
     })
     while #db.scans > MAX_SCANS do table.remove(db.scans, 1) end
     linkSamples = nil
@@ -924,6 +930,16 @@ function showStatus()
   if not any then print("  no prices yet: open the auction house and let it update prices, or just search.") end
   print("  /eah help lists the commands.")
 end
+
+-- The full scan, for Advanced search's Below vendor: how old the last one is, whether one can start now (else in how
+-- many seconds), and starting one.
+ns.scanAge = function()
+  local h = house and db.houses[house]
+  return h and h.scanned and (time() - h.scanned) or nil
+end
+ns.scanWaitLeft = function() return house and math.max(0, scanWait(getHouse(house))) or nil end
+ns.scanning = function() return scan ~= nil end
+ns.startScan = function() startScan() end
 
 -- Shared with Sell.lua, Search.lua and Skin.lua
 ns.db = function() return db end

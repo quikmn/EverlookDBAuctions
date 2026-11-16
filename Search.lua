@@ -10,6 +10,8 @@
 -- Steps: sort by <col> [asc|desc] (no column: price), top <n> [by <col>], count; a | between steps is optional.
 -- Below vendor price (Vendor.lua): `belowvendor` on its own, or a money column compared with another column
 -- (`price lt vendor`). profit is the vendor price minus the lowest buyout, each; stackprofit is that for a full stack.
+-- belowvendor works from the scan's single auctions (Vendor.lua): deals is how many auctions are under vendor price
+-- and make at least 10s each (any amount when the search names profit), dealprofit what they make together.
 
 local ADDON, ns = ...
 local UI, T = ns.UI, ns.T
@@ -22,6 +24,7 @@ local ROW_H = 22
 local Q = { results = {}, offset = 0 }
 local liveStep   -- the live check (defined further down; the panel's scroll uses it)
 local blizzardSearch, modeButton   -- Blizzard's search row on or off, the Advanced search button's look (further down)
+local belowVendor   -- the Below vendor button (further down)
 local live = { tried = {}, busy = nil }   -- the live check: items tried, the one being looked up
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -64,6 +67,7 @@ local KIND = {   -- text, number, enum or money
   sell = "money", price = "money", median = "money",
   slots = "number", skill = "number", profession = "text", source = "text", droprate = "number",
   profit = "money", stackprofit = "money",
+  deals = "number", dealprofit = "money",   -- below vendor: auctions under vendor price, and what they all make
 }
 for k in pairs(STATS) do KIND[k] = "number" end
 KIND.stats = "text"   -- every stat on the item as text, e.g. "Stamina 5, Agility 3": `stats has agility`
@@ -74,7 +78,7 @@ local ALIAS = {
   strength = "str", agility = "agi", stamina = "sta", stam = "sta", intellect = "int", intel = "int", spirit = "spi",
   ac = "armor", armour = "armor", firres = "fire_res", fireres = "fire_res", frostres = "frost_res",
   drop = "droprate", dropchance = "droprate", chance = "droprate", bagslots = "slots", size = "slots", prof = "profession", craftedby = "profession", from = "source",
-  vendorprofit = "profit", flip = "profit", stack_profit = "stackprofit", perstack = "stackprofit",
+  vendorprofit = "profit", flip = "profit", totalprofit = "dealprofit", dealsprofit = "dealprofit", stack_profit = "stackprofit", perstack = "stackprofit",
   natureres = "nature_res", shadowres = "shadow_res", arcaneres = "arcane_res", blockvalue = "block", attackpower = "ap", spellpower = "sp", heal = "healing", def = "defense",
 }
 local function column(word)
@@ -435,6 +439,8 @@ ns.liveFresh = liveFresh
 
 local function get(row, col)
   if STATS[col] then return statsOf(row)[col] or 0 end
+  if col == "deals" then return row.dealN end
+  if col == "dealprofit" then return row.dealProfit end
   -- what buying at the lowest price and selling to a vendor makes (vendors take no cut); none for quest items
   if col == "profit" or col == "stackprofit" then
     if row.quest then return nil end
@@ -505,6 +511,7 @@ end
 
 local function test(row, e)
   if e.k == "below" then
+    if row.dealN ~= nil then return row.dealN > 0 end
     local p = get(row, "profit")
     return p ~= nil and p > 0
   end
@@ -584,6 +591,7 @@ local function dataset()
         quest = V.isQuest(id, c[5]),
         source = sourceText(d[1]), profession = ns.PROFESSIONS and ns.PROFESSIONS[d[2] or 0] or "",
         skill = d[3] or 0, slots = d[4] or 0, droprate = d[5] or 0,
+        dealText = scanned.deals and scanned.deals[key] or nil,
       }
     end
   end
@@ -626,11 +634,27 @@ local function run(text)
   end
   local rows, scanned, missing = dataset()
   if not rows then return nil, "No full scan of this auction house yet: open it and let the scan finish first." end
-  -- a below-vendor search with no order of its own: biggest profit first
+  -- a below-vendor search: each item's auctions under vendor price from the scan, those making at least 10s (any
+  -- amount when the search says how much profit it wants); biggest total first unless it orders itself
+  local deals = steps.vendor and scanned.deals ~= nil
   if steps.vendor then
+    local minProfit = lower:find("profit") and 0 or V.MIN_DEAL
+    for _, r in ipairs(rows) do
+      if deals and not r.quest and r.dealText then
+        local list = V.dealsOf(r.dealText, r.sell, minProfit)
+        r.deals = list
+        r.dealN, r.dealProfit = V.dealSummary(list)
+      elseif deals then
+        r.deals, r.dealN, r.dealProfit = nil, 0, nil
+      else
+        r.deals, r.dealN, r.dealProfit = nil, nil, nil   -- a scan from before deals were saved: the old way
+      end
+    end
     local ordered = false
     for _, st in ipairs(steps) do if st.k == "sort" or st.keys then ordered = true end end
-    if not ordered then steps[#steps + 1] = { k = "sort", keys = { { col = "profit", desc = true } } } end
+    if not ordered then
+      steps[#steps + 1] = { k = "sort", keys = { { col = deals and "dealprofit" or "profit", desc = true } } }
+    end
   end
   local out = {}
   for _, r in ipairs(rows) do out[#out + 1] = r end
@@ -654,6 +678,7 @@ local function run(text)
   local head = counted and ("%s matching item versions"):format(ns.num(counted))
     or ("%s results"):format(ns.num(#out))
   head = head .. (" in the full scan %s"):format(ns.ago(scanned.at))
+  Q.deals = deals
   return counted and {} or out, head, missing, steps.vendor and true or false
 end
 
@@ -701,9 +726,17 @@ local COLS = {
   { "iLvl", "ilvl", -276, 30, function(r) return r.ilvl or "" end },
 }
 -- A below-vendor search shows the profit instead of the typical price and the levels.
+local function dealsCell(r)
+  if r.dealN == nil then return upCell(r) end
+  return ns.num(r.dealN)
+end
+local function dealProfitCell(r)
+  if r.dealN == nil then return profitCell("stackprofit")(r) end
+  return r.dealProfit and (C_GOOD .. "+" .. ns.money(r.dealProfit) .. "|r") or ""
+end
 local VCOLS = {
-  { "Up", "qty", -10, 40, upCell },
-  { "Per stack", "stackprofit", -56, 96, profitCell("stackprofit") },
+  { "Deals", "deals", -10, 40, dealsCell },
+  { "Total", "dealprofit", -56, 96, dealProfitCell },
   { "Profit each", "profit", -158, 86, profitCell("profit") },
   { "Lowest", "price", -250, 86, lowestCell },
 }
@@ -836,6 +869,16 @@ function ns.searchCrumb(item)
   Q.frame.crumb:SetText(C_ACCENT .. "Advanced search|r" .. (item and (C_MUTE .. "  >  |r" .. item) or ""))
 end
 
+-- The Below vendor button: Start buying on a below-vendor list, else Below vendor.
+local function vendorButton()
+  local b = Q.frame and Q.frame.vendor
+  if not b then return end
+  local buying = Q.vendor and Q.deals and #Q.results > 0
+  b:SetText(buying and "Start buying" or "Below vendor")
+  b:EdbActive(buying and true or false)
+end
+ns.vendorButton = vendorButton
+
 local function setStatus(text, isError)
   if not Q.frame then return end
   Q.headBase = not isError and text or nil
@@ -879,7 +922,7 @@ local GUIDE = table.concat({
   "Money: 5g, 50s, 1g50s, 20c. Or another column: " .. C_GOOD .. "price lt vendor|r",
   "",
   C_ACCENT .. "Below vendor price|r",
-  C_GOOD .. "belowvendor|r finds auctions cheaper than a vendor pays (the same as " .. C_GOOD .. "price lt vendor|r), biggest profit first. Buy them and sell them to any vendor: vendors take no cut. Quest items and items vendors don't buy never count.",
+  C_GOOD .. "belowvendor|r lists every auction in the last full scan that is cheaper than a vendor pays and makes at least 10s, biggest total first. Buy them and sell them to any vendor: vendors take no cut. Quest items and items vendors don't buy never count. " .. C_INFO .. "deals|r is how many such auctions, " .. C_INFO .. "dealprofit|r what they make together. Start buying opens them one after another.",
   C_INFO .. "profit|r (vendor price minus the lowest buyout, each) and " .. C_INFO .. "stackprofit|r (for a full stack):  " .. C_GOOD .. "belowvendor and profit ge 10s|r",
   "Elsewhere, a green " .. C_GOOD .. "Below vendor|r tag marks such results.",
   "",
@@ -1081,8 +1124,21 @@ local function makeResults()
 
   local vendor = UI.button(f, "Below vendor", 92, 24)
   vendor:SetPoint("RIGHT", save, "LEFT", -6, 0)
-  vendor:SetScript("OnClick", function() ns.query("belowvendor") end)
-  UI.tip(vendor, "Below vendor price", "Auctions cheaper than what a vendor pays for the item: buy them and sell them to any vendor. Biggest profit first. The same as the search: belowvendor")
+  vendor:SetScript("OnClick", function()
+    if Q.vendor and Q.deals and #Q.results > 0 then
+      if ns.startDeals then ns.startDeals(Q.results) end
+      return
+    end
+    belowVendor()
+  end)
+  UI.tip(vendor, function() return (Q.vendor and Q.deals and #Q.results > 0) and "Start buying" or "Below vendor price" end,
+    function()
+      if Q.vendor and Q.deals and #Q.results > 0 then
+        return "Opens the top item with its cheapest auction under vendor price picked. Buy buys it, then the next one comes up. Every purchase is your own click."
+      end
+      return "Auctions cheaper than what a vendor pays for the item: buy them and sell them to any vendor. Biggest profit first, from the last full scan (a new one starts first when it is over 5 minutes old and the server allows one). The same as the search: belowvendor"
+    end)
+  f.vendor = vendor
 
   function search()
     box:ClearFocus()
@@ -1213,6 +1269,7 @@ local LIVE_MAX = 150
 
 local function liveHead()
   if not Q.frame or not Q.headBase then return end
+  if Q.vendor and Q.deals then Q.frame.head:SetText(Q.headBase); return end
   local total, done = 0, 0
   for k = 1, math.min(#Q.results, LIVE_MAX) do
     local r = Q.results[k]
@@ -1239,6 +1296,7 @@ end
 -- for every version of it at once. A row is only called sold out from a complete answer (AHQuery.lua).
 function liveStep()
   if ns.buyOpen then return end   -- the buy panel goes first
+  if Q.vendor and Q.deals then return end   -- below vendor: scan prices; the row you open is checked live
   if live.busy or not Q.frame or not Q.frame:IsShown() or not ns.ahq then return end
   local function pick(from, to)
     for k = from, to do
@@ -1267,6 +1325,29 @@ function liveStep()
   end)
 end
 
+-- Below vendor: the list from the last full scan, with a new scan first when that one is over 5 minutes old and the
+-- server allows one (the list fills when it is done), else when the next one is possible.
+local FRESH = 300
+function belowVendor()
+  local age = ns.scanAge and ns.scanAge()
+  local wait = ns.scanWaitLeft and ns.scanWaitLeft()
+  if (not age or age > FRESH) and wait == 0 and ns.startScan and not (ns.scanning and ns.scanning()) then
+    ns.startScan()
+    ns.query("belowvendor")
+    if Q.frame then
+      Q.headBase = nil
+      Q.frame.head:SetText((Q.frame.head:GetText() or "") .. "  " .. C_INFO .. "Updating prices first (see the bar below); the list fills when it's done.|r")
+    end
+    return
+  end
+  ns.query("belowvendor")
+  if Q.frame and ns.scanning and ns.scanning() then
+    Q.frame.head:SetText((Q.frame.head:GetText() or "") .. "  " .. C_INFO .. "Prices are updating; the list fills when it's done.|r")
+  elseif Q.frame and age and age > FRESH and wait and wait > 0 then
+    Q.frame.head:SetText((Q.frame.head:GetText() or "") .. "  " .. C_DIM .. ("next price update possible in %d:%02d|r"):format(math.floor(wait / 60), wait % 60))
+  end
+end
+
 local rerunToken = 0
 local function show(text)
   local results, head, missing, vendor = run(text)
@@ -1276,9 +1357,13 @@ local function show(text)
     setStatus(head, true)
   else
     Q.results = results
-    if vendor then head = head .. "  " .. C_DIM .. "profit = vendor price minus the lowest buyout|r" end
+    if vendor and Q.deals then
+      head = head .. "  " .. C_DIM .. "prices from that scan; open one for its live auctions|r"
+    elseif vendor then
+      head = head .. "  " .. C_DIM .. "profit = vendor price minus the lowest buyout|r"
+    end
     local own = text:lower():find("sort") or text:lower():find("top")
-    if vendor and not own and not Q.sortCol then Q.sortCol, Q.sortDesc = "profit", true end
+    if vendor and not own and not Q.sortCol then Q.sortCol, Q.sortDesc = Q.deals and "dealprofit" or "profit", true end
     -- a click-sort stays when the query has no sort of its own
     if Q.sortCol and not text:lower():find("sort") and not text:lower():find("top") then
       sortRows(Q.results, { { col = Q.sortCol, desc = Q.sortDesc } })
@@ -1290,6 +1375,7 @@ local function show(text)
     end
   end
   render()
+  vendorButton()
   liveHead()
   liveStep()
   -- while items are still loading, run the query again a few times as they arrive
@@ -1321,6 +1407,14 @@ function ns.query(text)
   show(plain)
 end
 ns.lastQuery = function() return Q.last end
+
+-- A row whose deals are bought or gone leaves the list.
+function ns.dropResult(row)
+  for k, r in ipairs(Q.results) do
+    if r == row then table.remove(Q.results, k); break end
+  end
+  if Q.frame then render(); vendorButton() end
+end
 ns.liveStep = function() liveStep() end
 
 -- Runs every search of a shopping list over the last full scan and shows the results one search after another,

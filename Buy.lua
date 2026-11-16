@@ -3,6 +3,9 @@
 --   Items       pick an auction, press Buy, then press Confirm (the price is on the button): PlaceBid with its buyout.
 --   Commodities type how many, press Buy: the server quotes the total; press Confirm to pay it.
 -- Every purchase takes your two clicks (Buy, then Confirm) and buys once; nothing is bought on its own.
+-- Start buying (below vendor price): the panel opens each item of the list in turn with its cheapest auction under
+-- vendor price picked; one click on Buy buys it (stackable goods: Buy, then Confirm the quoted price), then the next
+-- comes up. Every purchase is still your own click.
 -- Sellers are never shown or kept. Auctions cheaper than a vendor pays get a green tag with the profit (Vendor.lua).
 
 local _, ns = ...
@@ -16,6 +19,7 @@ local CONFIRM_FOR = 6     -- seconds the Confirm button stays armed
 
 local B = {}
 local render, send   -- defined further down
+local dealPick, nextDeal   -- Start buying (further down)
 
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
@@ -117,6 +121,7 @@ function send()
           B.rows = rows
           if left <= 0 then B.loaded, B.state = true, nil end
           render()
+          if left <= 0 and B.deal then dealPick() end
         end)
     end
   end
@@ -128,6 +133,7 @@ function send()
       if #answer.entries == 0 then
         if answer.full then B.rows, B.loaded, B.state = {}, true, nil else B.state = "partial" end
         render()
+        if answer.full and B.deal then dealPick() end
         return
       end
       B.keys, B.showAll = ns.ahq.pickKeys(answer.entries, B.name, ns.ahq.nameOf)
@@ -171,7 +177,7 @@ end
 local function buyItem()
   local r = B.sel
   if not r or not r.buyout or not r.auctionID or r.mine then return end
-  if not B.armed then arm(); return end
+  if not B.armed and not B.deal then arm(); return end
   B.armed = nil
   if GetMoney() < r.buyout then setStatus("Not enough money.", T.bad); render(); return end
   if not AH.PlaceBid then setStatus("This client can't buy auctions.", T.bad); return end
@@ -179,6 +185,7 @@ local function buyItem()
   if okCall then
     local id = r.auctionID
     B.pending = id
+    B.buying = { qty = r.qty, cost = r.buyout }
     setStatus(("Buying for %s..."):format(money(r.buyout)), T.dim)
     -- no word back in time: look again
     C_Timer.After(5, function()
@@ -201,6 +208,7 @@ local function buyCommodity()
     -- second click: pay the quoted price
     local quote = B.quote
     B.quote = nil
+    B.buying = { qty = quote.qty, cost = quote.total }
     if GetMoney() < quote.total then setStatus("Not enough money.", T.bad); render(); return end
     if not AH.ConfirmCommoditiesPurchase then setStatus("This client can't buy commodities.", T.bad); return end
     local okCall, err = pcall(AH.ConfirmCommoditiesPurchase, B.id, quote.qty)
@@ -359,6 +367,7 @@ end
 
 local function close()
   B.pending = nil
+  B.deal = nil
   B.gen = (B.gen or 0) + 1   -- answers still on their way are dropped
   if ns.ahq then ns.ahq.cancel("buy") end
   if B.frame then B.frame:Hide() end
@@ -474,10 +483,11 @@ local function makeFrame()
 end
 
 -- Opens the live auctions of a search result (row from Search.lua: id, suffix, key, name, icon, quality, ilvl, slot).
-function ns.openBuy(row)
+local function open(row, deal)
   local f = makeFrame()
   if not f or not row or not row.id then return false end
   cancelQuote()
+  B.deal, B.row, B.buying = deal, row, nil
   B.id, B.suffix, B.vkey, B.name = row.id, row.suffix or 0, row.key, row.name
   local stack = ns.itemInfo and ns.itemInfo(row.id)
   B.commodity = (stack and (stack[10] or 1) or 1) > 1   -- until the auction house's own key says
@@ -494,13 +504,68 @@ function ns.openBuy(row)
   B.bits = bits
   f.sub:SetText(table.concat(bits, "   "))
   B.subVendor = false
-  setStatus("Buy, then Confirm: two clicks for each purchase.", T.mute)
+  if deal then
+    setStatus("Start buying: looking for its auctions under vendor price.  " .. ns.vendor.tallyText(deal.tally, money), T.mute)
+  else
+    setStatus("Buy, then Confirm: two clicks for each purchase.", T.mute)
+  end
   ns.buyOpen = true
   f:Show()
-  if ns.searchCrumb then ns.searchCrumb(row.name) end
+  if ns.searchCrumb then ns.searchCrumb(deal and ("Below vendor  >  " .. row.name) or row.name) end
   render()
   send()
   return true
+end
+
+function ns.openBuy(row) return open(row, nil) end
+
+-- Start buying: the first item of the below-vendor list (the list shrinks as items are bought out or gone).
+function nextDeal()
+  local deal = B.deal
+  if not deal then return end
+  local row = deal.list[1]
+  if not row then
+    B.deal = nil
+    close()
+    if ns.say then ns.say("nothing under vendor price is left in the list. " .. ns.vendor.tallyText(deal.tally, money)) end
+    return
+  end
+  open(row, deal)
+end
+
+-- The live auctions are in: pick the cheapest one under vendor price, or, when there is none any more, drop the item
+-- from the list and go on with the next.
+function dealPick()
+  local deal = B.deal
+  if not deal then return end
+  local sell = ns.vendor.sellOf(B.id)
+  local pick = ns.vendor.nextDeal(B.rows, sell, B.commodity)
+  if not pick then
+    if ns.dropResult and B.row then ns.dropResult(B.row) end
+    for k, r in ipairs(deal.list) do
+      if r == B.row then table.remove(deal.list, k); break end   -- when the list was a copy
+    end
+    C_Timer.After(0.2, function() if B.deal == deal then nextDeal() end end)
+    return
+  end
+  local tally = ns.vendor.tallyText(deal.tally, money)
+  if B.commodity then
+    B.qty = pick.qty
+    B.frame.qty:SetText(tostring(pick.qty))
+    setStatus(("%d under vendor price for %s (vendor pays %s). Buy, then Confirm.  %s"):format(
+      pick.qty, money(pick.cost), money(sell * pick.qty), tally), T.accent)
+  else
+    B.sel = pick
+    setStatus(("Picked: %s, vendor pays %s. One click on Buy buys it.  %s"):format(
+      money(pick.buyout), money(sell * pick.qty), tally), T.accent)
+  end
+  render()
+end
+
+function ns.startDeals(list)
+  if not list or #list == 0 then return end
+  B.deal = { list = list, tally = nil }
+  nextDeal()
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -512,6 +577,14 @@ function events.COMMODITY_PRICE_UPDATED(unit, total)
   if not ns.buyOpen or not B.starting then return end
   B.quote = { qty = B.starting, unit = okv(unit), total = okv(total) or 0 }
   B.starting = nil
+  local sell = B.deal and ns.vendor.sellOf(B.id)
+  if sell and B.quote.total > sell * B.quote.qty then
+    setStatus(("The auction house quotes %s, more than a vendor pays (%s). Not bought; Refresh to look again."):format(
+      money(B.quote.total), money(sell * B.quote.qty)), T.bad)
+    cancelQuote()
+    render()
+    return
+  end
   setStatus(("The auction house quotes %s (%s each). Confirm to pay."):format(money(B.quote.total), money(B.quote.unit or 0)), T.accent)
   render()
 end
@@ -525,6 +598,12 @@ end
 
 local function bought(text)
   B.pending, B.sel, B.armed = nil, nil, nil
+  if B.deal and B.buying then
+    local sell = ns.vendor.sellOf(B.id) or 0
+    B.deal.tally = ns.vendor.tally(B.deal.tally, B.buying.qty, B.buying.cost, sell)
+    text = text .. "  " .. ns.vendor.tallyText(B.deal.tally, money)
+  end
+  B.buying = nil
   setStatus(text, T.good)
   C_Timer.After(0.5, function() if ns.buyOpen then send() end end)
   render()

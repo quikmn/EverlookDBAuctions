@@ -92,6 +92,7 @@ def main() -> int:
     failures += query_language()
     failures += search_queue()
     failures += undercut()
+    failures += deals()
 
     if failures:
         for f in failures:
@@ -759,6 +760,74 @@ def undercut():
         for line in printed:
             bad = [i for i, ch in enumerate(line) if ch == "|" and not line[i + 1:i + 2] in ("c", "r", "|")]
             check(not bad, f"help line without a stray |: {line}")
+    return failures
+
+
+def deals():
+    """Below vendor from the scan's single auctions: the list built when the scan finishes, the 10s threshold, and
+    Start buying's order and running total."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    V = ns.vendor
+    tbl = lua.eval("function(...) return { ... } end")
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("deals: " + what)
+
+    # built at scan time: each auction under vendor price, kept per item version
+    check(V.scanDeals(2589, tbl(10, 12, 13, 20), tbl(20, 5, 1, 1)) == "10:20,12:5", "Linen Cloth: the two under 13c")
+    check(V.scanDeals(2592, tbl(50), tbl(1)) is None, "nothing under vendor price: nothing saved")
+    check(V.scanDeals(5000, tbl(1), tbl(1)) is None, "quest items never count")
+    check(V.scanDeals(1000, tbl(1), tbl(1)) is None, "sell price 0 never counts")
+    pend = V.scanDeals(424242, tbl(9, 3, 7), tbl(1, 2, 3))
+    check(pend == "?3:2,7:3,9:1", f"details not loaded: the cheapest kept to check later: {pend}")
+
+    # the threshold: at least 10s for the whole auction, unless the search names profit
+    lst = V.dealsOf("100:1,4000:2,9500:1", 10000, V.MIN_DEAL)
+    got = [(lst[i].unit, lst[i].count, lst[i].profit) for i in range(1, len(lst) + 1)]
+    check(got == [(4000, 2, 12000), (100, 1, 9900)], f"9500 makes 5s: dropped; biggest profit first: {got}")
+    lst = V.dealsOf("100:1,4000:2,9500:1", 10000, 0)
+    check(len(lst) == 3, "threshold 0 keeps every deal")
+    check(len(V.dealsOf("?3:2,7:3", 10, 0)) == 2, "a pending list counts once the vendor price is known")
+    n, total, best, _units = V.dealSummary(V.dealsOf("100:1,4000:2", 10000, 0))
+    check(n == 2 and total == 9900 + 12000 and best == 100, "summary: count, total, cheapest")
+
+    # the list over a scan with deals: no live check, biggest total first, threshold
+    db = ns.db()
+    sc = db.scans[1]
+    sc.deals = lua.eval('{ ["3000:0"] = "100:3", ["2589:0"] = "10:20,12:5" }')
+    # Old Sword 1s each vs 5s vendor, a stack of 3 in one auction: 12s; Linen 3c*20 + 1c*5 = 65c
+    rows, head, _m, vendor = ns.queryRun("belowvendor")
+    got = [rows[i].name for i in range(1, len(rows) + 1)]
+    check(got == ["Old Sword"], f"only deals making 10s or more: {got}")
+    check(vendor is True and "full scan" in head, "a below-vendor list from the scan")
+    rows, *_ = ns.queryRun("belowvendor and profit ge 1c")
+    got = [rows[i].name for i in range(1, len(rows) + 1)]
+    check(got == ["Old Sword", "Linen Cloth"], f"with profit named: every deal, biggest total first: {got}")
+    check(len(rows) == 2 and rows[1].dealN == 1 and rows[1].dealProfit == 1200, "Old Sword: one auction, 12s")
+    check(len(rows) == 2 and rows[2].dealN == 2 and rows[2].dealProfit == 65, "Linen: two auctions, 65c")
+
+    # Start buying: the next auction to buy, and the running total
+    live = tbl(lua.table(unit=5, buyout=5, qty=1, mine=True), lua.table(unit=8, buyout=80, qty=10),
+               lua.table(unit=9, buyout=9, qty=1), lua.table(unit=20, buyout=20, qty=1))
+    pick = V.nextDeal(live, 13, False)
+    check(pick is not None and pick.unit == 8, "the cheapest under vendor price that isn't yours")
+    check(V.nextDeal(tbl(lua.table(unit=20, buyout=20, qty=1)), 13, False) is None, "none under vendor price: nothing")
+    goods = tbl(lua.table(unit=10, qty=20, others=15), lua.table(unit=12, qty=5, others=5), lua.table(unit=30, qty=9, others=9))
+    pick = V.nextDeal(goods, 13, True)
+    check(pick.qty == 20 and pick.cost == 15 * 10 + 5 * 12, "stackable goods: how many under vendor price and the cost")
+    t = V.tally(None, 10, 80, 13)
+    t = V.tally(t, 1, 9, 13)
+    check(t.n == 11 and t.cost == 89 and t.value == 143, "running total")
+    txt = V.tallyText(t, ns.money)
+    check(txt == "Bought 11 for 89c, vendor value 143c, profit 54c.", txt)
     return failures
 
 
