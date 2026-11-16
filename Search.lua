@@ -576,6 +576,7 @@ local function render()
       b.icon:SetTexture(nil)
       b.name:SetPoint("RIGHT", f, "RIGHT", -12, 0)
       local tail = r.err or (ns.num(r.count) .. " found" .. (r.sum and r.count > 1 and (", one of each " .. ns.money(r.sum)) or ""))
+      if r.want then tail = "buy " .. ns.num(r.want) .. "   " .. tail end
       b.name:SetText(C_ACCENT .. r.name .. "|r   " .. C_MUTE .. tail .. "|r")
       for c in ipairs(COLS) do b.cells[c]:SetText("") end
       b:Show()
@@ -1156,7 +1157,7 @@ function ns.queryList(list)
       if r.price then sum, priced = sum + r.price, priced + 1 end
     end
     out[#out + 1] = { header = true, name = q, count = results and #results or 0, err = not results and head or nil,
-      sum = priced > 0 and sum or nil }
+      sum = priced > 0 and sum or nil, want = list.want and list.want[q] }
     for _, r in ipairs(results or {}) do out[#out + 1] = r end
     total = total + (results and #results or 0)
   end

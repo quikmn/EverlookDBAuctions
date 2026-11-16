@@ -5,7 +5,8 @@
 --   Save in Advanced search adds the search you just ran to the picked list.
 --   Lists go in and out as plain text (Import / Export), one list per "# name" line and one search per line, so
 --   they can be shared in chat or on a forum.
--- db.lists = { { name = "...", queries = { "...", ... } }, ... }, db.listSel = index of the picked list.
+-- db.lists = { { name = "...", queries = { "...", ... }, want = { [query] = how many to buy } }, ... },
+-- db.listSel = index of the picked list. want is there for lists made from a recipe (Crafting.lua, RecipeList.lua).
 -- Searching never buys anything: buy from the results as usual.
 
 local _, ns = ...
@@ -132,14 +133,18 @@ local function buildQueryRow(L)
   b.remove:SetPoint("RIGHT", -2, 0)
   b.run = UI.button(b, "Run", 44, 18, "small")
   b.run:SetPoint("RIGHT", b.remove, "LEFT", -4, 0)
+  b.want = UI.text(b, "mute")
+  b.want:SetPoint("RIGHT", b.run, "LEFT", -10, 0)
+  b.want:SetJustifyH("RIGHT")
   b.text = UI.text(b, "body")
   b.text:SetPoint("LEFT", 10, 0)
-  b.text:SetPoint("RIGHT", b.run, "LEFT", -8, 0)
+  b.text:SetPoint("RIGHT", b.want, "LEFT", -8, 0)
   b.run:SetScript("OnClick", function() if b.item then runOne(b.item) end end)
   b.remove:SetScript("OnClick", function()
     local l = picked()
     if l and b.index then
-      table.remove(l.queries, b.index)
+      local q = table.remove(l.queries, b.index)
+      if l.want and q then l.want[q] = nil end
       render()
     end
   end)
@@ -155,6 +160,9 @@ end
 
 local function fillQueryRow(b, q)
   b.text:SetText(C_GOOD .. q .. "|r")
+  local l = picked()
+  local n = l and l.want and l.want[q]
+  b.want:SetText(n and ("buy " .. num(n)) or "")
 end
 
 function render()
@@ -424,6 +432,9 @@ ev:SetScript("OnEvent", function(_, e)
     makeFrame()
   end)
 end)
+
+-- A list made elsewhere (the profession window's Shopping list) shows at once if the tab is open.
+function ns.shoppingRefresh() render() end
 
 local prevSlash, prevHelp = ns.slash, ns.help
 function ns.slash(msg)

@@ -848,7 +848,7 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
     say(("debug: AuctionHouseFrame %s, mode %s, tab %s"):format(ah and (ah:IsShown() and "shown" or "hidden") or "missing",
       tostring(ah and ah.GetDisplayMode and select(2, pcall(ah.GetDisplayMode, ah))), tostring(ah and ah.selectedTab)))
     for _, name in ipairs({ "EverlookAuctionsBar", "EverlookAuctionsSelling", "EverlookAuctionsShopping", "EverlookAuctionsQueryResults",
-        "EverlookAuctionsSellingTab", "EverlookAuctionsShoppingTab" }) do
+        "EverlookAuctionsSellingTab", "EverlookAuctionsShoppingTab", "EverlookAuctionsCrafting", "EverlookAuctionsRecipeList" }) do
       local f = _G[name]
       if not f then
         print(("  %s: not made"):format(name))
@@ -858,6 +858,9 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
           f:IsShown() and "shown" or "hidden", tostring(f:IsVisible()), w or 0, h or 0, f:GetFrameStrata(),
           f:GetFrameLevel(), f:GetEffectiveAlpha(), tostring(f:GetParent() and f:GetParent():GetName())))
       end
+    end
+    if ns.craftDebug and ns.craftDebug() then
+      print(("  crafting box: %d px right of the profession window (clear of its tab buttons)"):format(ns.craftDebug()))
     end
     for i, t in ipairs(ah and ah.Tabs or {}) do
       print(("  Blizzard tab %d: %s, id %s"):format(i, tostring(t:GetText()), tostring(t:GetID())))
