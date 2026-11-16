@@ -719,11 +719,11 @@ local COLS = {
   { "Up", "qty", -10, 40, upCell },
   { "Usual", "median", -56, 112, function(r) return r.median and (GREY .. ns.money(r.median) .. "|r") or "" end },
   { "Cheapest", "price", -174, 112, lowestCell },
-  { "Req", "reqlevel", -292, 30, function(r)
+  { "Req lvl", "reqlevel", -292, 50, function(r)
     local v = r[Q.extra or "reqlevel"] or 0
     return v > 0 and v or ""
   end },
-  { "iLvl", "ilvl", -328, 30, function(r) return r.ilvl or "" end },
+  { "iLvl", "ilvl", -348, 30, function(r) return r.ilvl or "" end },
 }
 -- A below-vendor search shows the profit instead of the typical price and the levels.
 local function dealsCell(r)
@@ -741,7 +741,7 @@ local VCOLS = {
   { "Cheapest", "price", -284, 112, lowestCell },
 }
 local BAR_SHIFT = 16        -- room for the scroll bar on the right: every column moves left by this much
-local NAME_RIGHT = -364 - BAR_SHIFT   -- the item name stops here
+local NAME_RIGHT = -384 - BAR_SHIFT   -- the item name stops here
 local VNAME_RIGHT = -402 - BAR_SHIFT  -- ... and here in a below-vendor search
 
 local function rowsFit(f)
@@ -1019,6 +1019,8 @@ local function makeHeader(f, label, col, right, width, mode)
     price = "The cheapest buyout for one, right now: what you pay for the cheapest one.",
     median = "The usual price: half of the auctions for one are cheaper, half dearer. Shows if the cheapest is a bargain.",
     qty = "How many are up for sale.",
+    reqlevel = "The level you need to use it.",
+    ilvl = "Item level: how strong the item is.",
     profit = "What one makes: what a vendor pays minus the cheapest buyout.",
     dealprofit = "What buying every auction under vendor price and selling it to a vendor makes.",
     deals = "How many auctions are under vendor price.",
