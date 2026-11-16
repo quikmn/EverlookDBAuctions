@@ -93,6 +93,7 @@ def main() -> int:
     failures += search_queue()
     failures += undercut()
     failures += deals()
+    failures += buy_panel()
 
     if failures:
         for f in failures:
@@ -828,6 +829,216 @@ def deals():
     check(t.n == 11 and t.cost == 89 and t.value == 143, "running total")
     txt = V.tallyText(t, ns.money)
     check(txt == "Bought 11 for 89c, vendor value 143c, profit 54c.", txt)
+    return failures
+
+
+BUY_SETUP = """
+-- fields the code sets itself (lower case) read as nil until set; only methods (capitalized) fall back to a no-op
+local plainCreate = CreateFrame
+local function plain(f)
+  local mt = getmetatable(f)
+  local old = mt.__index
+  mt.__index = function(t, k)
+    if type(k) == "string" and k:match("^%l") then return nil end
+    return old(t, k)
+  end
+  local tex, fs = f.CreateTexture, f.CreateFontString
+  f.CreateTexture = function(self, ...) return plain(tex(self, ...)) end
+  f.CreateFontString = function(self, ...) return plain(fs(self, ...)) end
+  return f
+end
+function CreateFrame(...) return plain(plainCreate(...)) end
+MOCK_TIMERS = {}
+C_Timer = { After = function(secs, fn) MOCK_TIMERS[#MOCK_TIMERS + 1] = { at = MOCK_NOW + secs, fn = fn } end }
+function advance(secs)
+  MOCK_NOW = MOCK_NOW + secs
+  local i = 1
+  while i <= #MOCK_TIMERS do
+    local t = MOCK_TIMERS[i]
+    if t.at <= MOCK_NOW then table.remove(MOCK_TIMERS, i); t.fn() else i = i + 1 end
+  end
+end
+MONEY = 100000
+function GetMoney() return MONEY end
+ITEMS, COMMS, CALLS = {}, {}, {}
+IS_COMMODITY = false
+local function log(name) return function(...) CALLS[#CALLS + 1] = { name, ... } end end
+C_AuctionHouse = {
+  GetNumItemSearchResults = function() return #ITEMS end,
+  GetItemSearchResultInfo = function(_, i) return ITEMS[i] end,
+  GetNumCommoditySearchResults = function() return #COMMS end,
+  GetCommoditySearchResultInfo = function(_, i) return COMMS[i] end,
+  GetItemKeyInfo = function() return { isCommodity = IS_COMMODITY } end,
+  GetQuoteDurationRemaining = function() return 20 end,
+  PlaceBid = log("PlaceBid"),
+  StartCommoditiesPurchase = log("Start"),
+  ConfirmCommoditiesPurchase = log("Confirm"),
+  CancelCommoditiesPurchase = log("Cancel"),
+}
+EverlookAuctionsQueryResults = CreateFrame("Frame", "EverlookAuctionsQueryResults")
+"""
+
+AHQ_FAKE = """
+local ns = ...
+AHQ = {}
+ns.ahq = {
+  cancel = function() end,
+  keyText = function(k) return tostring(k.itemID) .. ":" .. tostring(k.itemSuffix or 0) end,
+  nameOf = function() return nil end,
+  pickKeys = function(entries)
+    local keys = {}
+    for _, e in ipairs(entries) do keys[#keys + 1] = e.itemKey end
+    return keys, AHQ.showAll or false
+  end,
+  browse = function(_, _, _, cb) AHQ.browse = cb end,
+  items = function(key, _, cb) AHQ.items = cb; AHQ.key = key end,
+}
+ns.itemInfo = function(id) return ns.db().itemInfo[id] end
+DROPPED = {}
+ns.dropResult = function(row) DROPPED[#DROPPED + 1] = row end
+"""
+
+
+def buy_panel():
+    """The buy panel (Buy.lua) against a fake auction house: Start buying buys only its own pick in one click, an
+    unknown vendor price never drops an item, a quote that can't be read or has run out can't be paid, purchase
+    errors and late answers are reported, the panel shuts when hidden, and versions are named by their own part."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    lua.execute(BUY_SETUP)
+    run(AHQ_FAKE, "ahq", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Buy.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    G = lua.globals()
+    ev = G.MOCK_FRAMES[len(G.MOCK_FRAMES)]   # Buy.lua's event frame, made last
+    tbl = lua.eval("function(...) return { ... } end")
+    browse_answer = lua.eval("function(id) return { ok = true, full = true, entries = { { itemKey = { itemID = id } } } } end")
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("buy: " + what)
+
+    def fire(e, *args):
+        ev.scripts.OnEvent(ev, e, *args)
+
+    def calls(name):
+        return [G.CALLS[i] for i in range(1, len(G.CALLS) + 1) if G.CALLS[i][1] == name]
+
+    def answer(item_id):
+        G.AHQ.browse(browse_answer(item_id))
+        G.AHQ["items"](G.AHQ.key, True, True)
+
+    def click(button):
+        button.scripts.OnClick(button)
+
+    def auction(aid, buyout, qty=1):
+        return lua.table(auctionID=aid, buyoutAmount=buyout, quantity=qty, containsOwnerItem=False, timeLeft=3)
+
+    # Start buying on Old Sword (vendor 500c): its cheapest auction under vendor price is picked, one click buys it
+    G.ITEMS = tbl(auction(1, 100), auction(2, 600))
+    deal_list = tbl(lua.table(header=True), lua.table(id=3000, name="Old Sword", quality="uncommon"))
+    ns.startDeals(deal_list)
+    f = G.EverlookAuctionsQueryResults.children[1]
+    check(ns.buyOpen is True and f.shown, "a header row is skipped and the item opens")
+    answer(3000)
+    click(f.buy)
+    bids = calls("PlaceBid")
+    check(len(bids) == 1 and bids[0][2] == 1 and bids[0][3] == 100, f"one click buys the picked deal: {len(bids)}")
+    # an error from the auction house: said, and nothing left waiting
+    fire("AUCTION_HOUSE_SHOW_ERROR", 1)
+    check("refused" in f.status.text and "Nothing was paid" in f.status.text, f"refusal reported: {f.status.text}")
+
+    # an auction you pick yourself during Start buying still takes Buy, then Confirm
+    G.CALLS = lua.table()
+    G.advance(1)          # the panel looks again
+    answer(3000)
+    row = f.list.build(f.list, 1)
+    row.item = f.list["items"][2]
+    click(row)
+    click(f.buy)
+    check(len(calls("PlaceBid")) == 0 and f.buy.text.startswith("Confirm"), "a manual pick is armed, not bought")
+    click(f.buy)
+    bids = calls("PlaceBid")
+    check(len(bids) == 1 and bids[0][2] == 2, "Confirm buys the manual pick")
+    # no answer in time: the status says so instead of "Buying..." forever, and a late answer still counts
+    G.advance(6)
+    check("No word" in f.status.text, f"no answer said: {f.status.text}")
+    fire("AUCTION_HOUSE_PURCHASE_COMPLETED", 2)
+    check(f.status.text.startswith("Bought."), f"a late answer still counts: {f.status.text}")
+
+    # vendor price not loaded yet: the item waits instead of being dropped as having no deals
+    G.advance(1)          # its look-again goes out first
+    G.CALLS = lua.table()
+    unknown = lua.table(id=424242, name="Mystery", quality="common")
+    ns.startDeals(tbl(unknown))
+    answer(424242)
+    check(len(G.DROPPED) == 0, "not dropped while its vendor price is unknown")
+    check("vendor price" in f.status.text, f"says it waits: {f.status.text}")
+    ns.db().itemInfo[424242] = lua.eval('{ "Mystery", 1, 1, 0, "Trade Goods", "Cloth", "", 1, 1000, 1 }')
+    G.advance(1)
+    check(f.status.text.startswith("Picked"), f"picked once the price came: {f.status.text}")
+
+    # the version's own part of its name in the row
+    G.AHQ.showAll = True
+    ns.variantOf = lua.eval('function() return nil, nil, "Old Sword of the Bear" end')
+    ns.openBuy(lua.table(id=3000, name="Old Sword", quality="uncommon"))
+    G.ITEMS = tbl(lua.table(auctionID=5, buyoutAmount=900, quantity=1, timeLeft=3, itemLink="x"))
+    answer(3000)
+    row = f.list.build(f.list, 1)
+    f.list.fill(row, f.list["items"][1])
+    check(row.tag.text == "of the Bear", f"version tag: {row.tag.text}")
+    G.AHQ.showAll = False
+
+    # stackable goods: an unreadable quote can't be paid; a good one runs out
+    G.IS_COMMODITY = True
+    G.ITEMS = tbl()
+    G.COMMS = tbl(lua.table(unitPrice=10, quantity=20, numOwnerItems=0))
+    G.CALLS = lua.table()
+    ns.openBuy(lua.table(id=2589, name="Linen Cloth", quality="common"))
+    answer(2589)
+
+    def amount(text):
+        f.qty.text = text
+        f.qty.scripts.OnTextChanged(f.qty, True)
+
+    amount("")
+    check(f.summary.text == "Type how many to buy.", f"no amount: {f.summary.text}")
+    amount("50")
+    check(f.summary.text.startswith("Only 20"), f"more than are up: {f.summary.text}")
+    amount("5")
+    click(f.buy)
+    check(len(calls("Start")) == 1, "Buy asks for the price")
+    fire("COMMODITY_PRICE_UPDATED", 10, None)
+    check(not f.buy.text.startswith("Confirm") and len(calls("Cancel")) == 1, "no readable price: nothing to confirm")
+    click(f.buy)
+    fire("COMMODITY_PRICE_UPDATED", 10, 50)
+    check(f.buy.text == "Confirm 50c", f"quote: {f.buy.text}")
+    G.advance(21)
+    check(f.buy.text == "Buy" and "ran out" in f.status.text, f"the quote runs out: {f.buy.text} / {f.status.text}")
+    click(f.buy)
+    G.advance(9)
+    check(f.buy.text == "Buy" and "didn't send a price" in f.status.text, f"no price in time: {f.status.text}")
+
+    # hidden with Advanced search: it shuts, so it can't come back later with old auctions
+    f.scripts.OnHide(f)
+    check(not f.shown and ns.buyOpen is False, "hidden by its parent: closed")
+
+    # Blizzard's lists: your own auctions are not marked
+    V = ns.vendor
+    check(V.rowPrice(lua.table(itemID=3000, auctionID=1, containsOwnerItem=True, buyoutAmount=100, quantity=1)) is None,
+          "your own item auction: no mark")
+    _id, unit = V.rowPrice(lua.table(itemID=2589, auctionID=1, unitPrice=5, quantity=10, numOwnerItems=3,
+                                     containsOwnerItem=True))
+    check(unit == 5, "a commodity price partly yours still counts")
+    check(V.rowPrice(lua.table(itemID=2589, auctionID=1, unitPrice=5, quantity=3, numOwnerItems=3)) is None,
+          "a commodity price all yours: no mark")
+    G.C_Item.GetItemInfoInstant = lua.eval("function() return nil end")
+    check(V.isQuest(999999, None) is False and V.isQuest(999999, "Quest") is True,
+          "an item not known yet isn't remembered as no quest item")
     return failures
 
 
