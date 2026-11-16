@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- `/eah feedback` and a Feedback button in the options show a link for reporting bugs and ideas.
 - The box beside the auction house is gone. Its contents are on a bar along the bottom of the auction house window instead, beside your money: which house, how many items have prices, and how old they are. The window is a little taller to make room, so the lists keep their size.
 - Price updates show a progress bar with the time left, worked out from how long your last update took. The bar says when an update waits for your purchase, and shows "Prices updated" when it's done. Hover it to see how updates work.
 - Update prices sits on the bar and is always there. During the 15-minute wait it shows when the next update is.

@@ -15,6 +15,37 @@ local TIP_LINES = {
   { "stack", "Hold Shift for the price of a full stack" },
 }
 
+-- Feedback link. Addons can't open a browser, so show the link selected in a box to copy.
+local FEEDBACK_URL = "https://everlookdb.com/auctions-addon.html#feedback"
+StaticPopupDialogs["EVERLOOKDBAUCTIONS_FEEDBACK"] = {
+  text = "Report a bug or suggest an idea.\nPress Ctrl+C to copy the link, then paste it in your browser.",
+  button1 = CLOSE or "Close",
+  hasEditBox = true,
+  editBoxWidth = 320,
+  OnShow = function(self)
+    local eb = self.EditBox or self.editBox
+    if not eb then return end
+    eb:SetText(FEEDBACK_URL)
+    eb:SetFocus()
+    eb:HighlightText()
+  end,
+  EditBoxOnTextChanged = function(eb)
+    if eb:GetText() ~= FEEDBACK_URL then
+      eb:SetText(FEEDBACK_URL)
+      eb:HighlightText()
+    end
+  end,
+  EditBoxOnEnterPressed = function() StaticPopup_Hide("EVERLOOKDBAUCTIONS_FEEDBACK") end,
+  EditBoxOnEscapePressed = function() StaticPopup_Hide("EVERLOOKDBAUCTIONS_FEEDBACK") end,
+  timeout = 0,
+  whileDead = true,
+  hideOnEscape = true,
+  preferredIndex = 3,
+}
+
+local function feedback() StaticPopup_Show("EVERLOOKDBAUCTIONS_FEEDBACK") end
+ns.feedback = feedback
+
 local function section(parent, text, y)
   local h = UI.text(parent, "title")
   h:SetPoint("TOPLEFT", 16, y)
@@ -47,6 +78,9 @@ local function build()
   local title = UI.text(p, "big")
   title:SetPoint("TOPLEFT", 16, -16)
   title:SetText("EverlookDB Auctions")
+  local fb = UI.button(p, "Feedback / report a bug", 170, 24, "small")
+  fb:SetPoint("TOPRIGHT", -16, -16)
+  fb:SetScript("OnClick", feedback)
   local sub = UI.text(p, "dim")
   sub:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -6)
   sub:SetText("Prices, selling and shopping lists for the auction house. Sellers and bidders are never saved.")
@@ -155,9 +189,14 @@ function ns.slash(msg)
     open()
     return true
   end
+  if msg == "feedback" or msg == "bug" then
+    feedback()
+    return true
+  end
   return prevSlash and prevSlash(msg) or false
 end
 function ns.help()
   if prevHelp then prevHelp() end
   print("  /eah options  open the options")
+  print("  /eah feedback  a link for reporting bugs and ideas")
 end
