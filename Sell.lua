@@ -1542,8 +1542,7 @@ function ns.tabProbe(name, f)
   if not f.edbProbe then
     f.edbProbe = true
     f:HookScript("OnHide", function()
-      f.edbHiddenBy = (debugstack(2, 6, 0) or ""):gsub("
-", " / "):gsub("Interface/AddOns/", ""):sub(1, 300)
+      f.edbHiddenBy = (debugstack(2, 6, 0) or ""):gsub("%c", " / "):gsub("Interface/AddOns/", ""):sub(1, 300)
     end)
   end
   f.edbHiddenBy = nil
