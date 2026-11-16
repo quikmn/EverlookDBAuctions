@@ -49,6 +49,20 @@ local function index(list)
   return t
 end
 local ENUMS = { quality = index(QUALITY), slot = index(SLOT) }
+-- Everyday words for enum values: "slot is cloak", "quality is blue"
+local ENUM_ALIAS = {
+  quality = { grey = "poor", gray = "poor", white = "common", green = "uncommon", blue = "rare", purple = "epic",
+    orange = "legendary" },
+  slot = { cloak = "back", cape = "back", ring = "finger", helm = "head", helmet = "head", shoulders = "shoulder",
+    belt = "waist", boots = "feet", bracers = "wrist", gloves = "hands", pants = "legs", ["1h"] = "onehand",
+    ["2h"] = "twohand", ["one-hand"] = "onehand", ["two-hand"] = "twohand", ["off-hand"] = "offhand",
+    ["main-hand"] = "mainhand", amulet = "neck", necklace = "neck" },
+}
+local function enumIndex(col, v)
+  v = tostring(v):lower()
+  local alias = ENUM_ALIAS[col]
+  return ENUMS[col][alias and alias[v] or v]
+end
 
 local STATS = {
   str = "ITEM_MOD_STRENGTH_SHORT", agi = "ITEM_MOD_AGILITY_SHORT", sta = "ITEM_MOD_STAMINA_SHORT",
@@ -124,17 +138,23 @@ local OPS = {
   between = "between", ["in"] = "in",
 }
 
--- "5g", "50s", "1g50s", "20c" -> copper; plain numbers stay numbers
+-- "5g", "50s", "1g50s", "20c", "1.5g", "2gold" -> copper; plain numbers stay numbers; anything else is nil
 local function moneyValue(v)
   if type(v) ~= "string" then return v end
+  local s = v:lower():gsub("gold", "g"):gsub("silver", "s"):gsub("copper", "c")
   local total, any = 0, false
-  for n, unit in v:lower():gmatch("(%d+)([gsc])") do
+  local rest = s:gsub("(%d+%.?%d*)([gsc])", function(n, unit)
     total = total + tonumber(n) * (unit == "g" and 10000 or unit == "s" and 100 or 1)
     any = true
+    return ""
+  end)
+  if any then
+    if rest:match("%S") then return nil end   -- "5gx": not money
+    return math.floor(total + 0.5)
   end
-  if any then return total end
   return tonumber(v)
 end
+local function moneyWord(v) return type(v) == "string" and v:lower():match("^%d+%.?%d*[gsc]$") ~= nil end
 
 local Parser = {}
 Parser.__index = Parser
@@ -177,6 +197,35 @@ function Parser:list(missing)
   return out
 end
 
+-- Money typed with spaces: "price lt 1g 50s" is one amount, not 1g and a name search for "50s".
+function Parser:moneyMore(col, v)
+  if KIND[col] ~= "money" or not moneyWord(v) then return v end
+  while self:peek() and self:peek().t == "word" and moneyWord(self:peek().v) do v = v .. self:next().v end
+  return v
+end
+
+-- A value that can't mean anything for its column is an error with an example, not a search that finds nothing.
+local TEXT_OPS = { has = true, starts = true, ends = true, like = true, notlike = true }
+local VALUE_EG = { quality = "quality ge rare", slot = "slot is back" }
+function Parser:check(col, word, op, v)
+  local kind = KIND[col]
+  if TEXT_OPS[op] or kind == "text" then return end
+  if kind == "enum" then
+    if enumIndex(col, v) then return end
+    local list = col == "quality" and "poor, common, uncommon, rare, epic or legendary" or "head, chest, back, finger, trinket... (the Guide lists them all)"
+    self:fail(('no %s called "%s"; try %s; e.g. %s'):format(col, v, list, VALUE_EG[col]))
+  end
+  local ref = column(v)
+  if ref and (KIND[ref] == "money" or KIND[ref] == "number") then return end   -- another column: price lt vendor
+  if kind == "money" then
+    if moneyValue(v) then return end
+    self:fail(('"%s" isn\'t an amount of money; e.g. %s lt 1g50s, or %s lt 2.5g'):format(v, word, word))
+  end
+  if not tonumber(v) then
+    self:fail(('"%s" isn\'t a number; e.g. %s %s %s'):format(v, word, exampleOp(col), example(col)))
+  end
+end
+
 -- a column, a comparison and a value: "slot is trinket", "price lt 5g", "ilvl between (20 .. 30)"
 -- word is the column as typed (an alias like lvlreq), for error messages
 function Parser:comparison(col, word)
@@ -197,10 +246,12 @@ function Parser:comparison(col, word)
     if KIND[col] == "money" then lo, hi = "1g", "5g" end
     local missing = ("%s between what? e.g. %s between (%s .. %s)"):format(word, word, lo, hi)
     if self:isOp("(") then self:next() end
-    local a = self:value(missing)
+    local a = self:moneyMore(col, self:value(missing))
     if self:isOp("..") then self:next() elseif self:isWord("and") then self:next() end
-    local b = self:value(missing)
+    local b = self:moneyMore(col, self:value(missing))
     if self:isOp(")") then self:next() end
+    self:check(col, word, op, a)
+    self:check(col, word, op, b)
     return { k = "cmp", col = col, op = op, a = a, b = b, neg = negate }
   end
   local mode
@@ -212,6 +263,10 @@ function Parser:comparison(col, word)
     values = self:list(("%s %s what? e.g. %s %s (head, chest)"):format(word, opWord, word, opWord))
   else
     values = { self:value(("%s %s what? e.g. %s %s %s"):format(word, opWord, word, opWord, example(col))) }
+  end
+  for i, v in ipairs(values) do
+    values[i] = self:moneyMore(col, v)
+    self:check(col, word, op, values[i])
   end
   if col == "price" or col == "profit" or col == "stackprofit" then
     for _, v in ipairs(values) do if column(v) == "sell" or col ~= "price" then self.vendor = true end end
@@ -346,7 +401,7 @@ local function parse(text)
         end
         if name:sub(1, 1) == "-" then desc, name = true, name:sub(2) end
         local c = column(name)
-          or p:fail(("can't sort by %s; try price, median, ilvl, reqlevel, qty, sta... %s"):format(name, SORT_EG))
+          or p:fail(("can't sort by %s; e.g. sort by price, or sort by ilvl desc"):format(name))
         if p:isWord("desc") or p:isWord("descending") then p:next(); desc = true
         elseif p:isWord("asc") or p:isWord("ascending") then p:next(); desc = false end
         keys[#keys + 1] = { col = c, desc = desc }
@@ -437,6 +492,15 @@ end
 local function liveFresh(r) return liveOf(r) ~= nil end
 ns.liveFresh = liveFresh
 
+-- Rows the live check asked about but got no price for: "noanswer" (the auction house didn't answer) or "unclear"
+-- (an incomplete answer that can't tell this version apart). Asked again after LIVE_RETRY seconds.
+local LIVE_RETRY = 60
+Q.liveMiss = {}   -- "id:suffix" -> { at, why }
+local function missOf(r)
+  local m = Q.liveMiss[r.key]
+  if m and time() - m.at < LIVE_RETRY then return m end
+end
+
 local function get(row, col)
   if STATS[col] then return statsOf(row)[col] or 0 end
   if col == "deals" then return row.dealN end
@@ -483,7 +547,7 @@ end
 
 local function numberOf(col, v)
   local kind = KIND[col]
-  if kind == "enum" then return ENUMS[col][tostring(v):lower()] end
+  if kind == "enum" then return enumIndex(col, v) end
   if kind == "money" then return moneyValue(v) end
   return tonumber(v)
 end
@@ -638,6 +702,9 @@ local function run(text)
   -- a below-vendor search: each item's auctions under vendor price from the scan, those making at least 10s (any
   -- amount when the search says how much profit it wants); biggest total first unless it orders itself
   local deals = steps.vendor and scanned.deals ~= nil
+  -- does the search order its own results (sort, or top n by a column)? Then a header click doesn't re-sort them.
+  local ordered = false
+  for _, st in ipairs(steps) do if st.k == "sort" or st.keys then ordered = true end end
   if steps.vendor then
     local minProfit = lower:find("profit") and 0 or V.MIN_DEAL
     for _, r in ipairs(rows) do
@@ -651,8 +718,6 @@ local function run(text)
         r.deals, r.dealN, r.dealProfit = nil, nil, nil   -- a scan from before deals were saved: the old way
       end
     end
-    local ordered = false
-    for _, st in ipairs(steps) do if st.k == "sort" or st.keys then ordered = true end end
     if not ordered then
       steps[#steps + 1] = { k = "sort", keys = { { col = deals and "dealprofit" or "profit", desc = true } } }
     end
@@ -680,10 +745,12 @@ local function run(text)
     or ("%s results"):format(ns.num(#out))
   head = head .. (" in the full scan %s"):format(ns.ago(scanned.at))
   Q.deals = deals
+  Q.ordered = ordered
   return counted and {} or out, head, missing, steps.vendor and true or false
 end
 
 ns.queryRun = function(text) return run(text) end
+ns.queryOrdered = function() return Q.ordered end   -- for the offline tests: did the last search order itself
 
 ---------------------------------------------------------------------------------------------------------------------
 -- The Advanced search panel, over the auction list
@@ -695,16 +762,19 @@ local ROW_TOP = 122         -- first result row, from the top of the panel (unde
 local GREY = C_DIM .. ""
 local function upCell(r)
   local l = liveOf(r)
-  if l then return l.gone and C_BAD .. "-|r" or ns.num(l.qty or 0) end
+  if l then return l.gone and C_BAD .. "0|r" or ns.num(l.qty or 0) end
   return GREY .. ns.num(r.qty or 0) .. "|r"
 end
--- Now: only what the auction house said in the last few minutes, never the scan
+-- Now: only what the auction house said in the last few minutes, never the scan. No answer is never "none up".
 local function lowestCell(r)
   local l = liveOf(r)
   if l then
     if l.gone then return C_BAD .. "none up|r" end
     return l.price and ns.money(l.price) or C_MUTE .. "bids only|r"
   end
+  local m = missOf(r)
+  if m then return C_MUTE .. (m.why == "noanswer" and "no answer yet|r" or "couldn't tell|r") end
+  if Q.vendor and Q.deals then return C_MUTE .. "click to check|r" end   -- below vendor isn't checked row by row
   return C_MUTE .. "checking...|r"
 end
 -- Last scan: the cheapest at the last full scan, always grey because it can be out of date
@@ -717,19 +787,20 @@ local function profitCell(col)
   return function(r)
     local p = get(r, col)
     if not p then return "" end
-    if p <= 0 then return C_MUTE .. "none now|r" end
+    if p <= 0 then return C_MUTE .. (liveOf(r) and "none now|r" or "none at scan|r") end
     return (liveOf(r) and C_GOOD or GREY) .. "+" .. ns.money(p) .. "|r"
   end
 end
+-- Up is wide enough for 6-digit counts ("123,456"), the money columns for 4-digit gold with silver and copper.
 local COLS = {
-  { "Up", "qty", -10, 40, upCell },
-  { "Last scan", "scanprice", -56, 112, scanCell },
-  { "Now", "price", -174, 112, lowestCell },
-  { "Req lvl", "reqlevel", -292, 50, function(r)
+  { "Up", "qty", -10, 52, upCell },
+  { "Last scan", "scanprice", -68, 112, scanCell },
+  { "Now", "price", -186, 112, lowestCell },
+  { "Req lvl", "reqlevel", -304, 50, function(r)
     local v = r[Q.extra or "reqlevel"] or 0
     return v > 0 and v or ""
   end },
-  { "iLvl", "ilvl", -348, 30, function(r) return r.ilvl or "" end },
+  { "iLvl", "ilvl", -360, 30, function(r) return r.ilvl or "" end },
 }
 -- A below-vendor search shows the profit instead of the typical price and the levels.
 local function dealsCell(r)
@@ -741,14 +812,14 @@ local function dealProfitCell(r)
   return r.dealProfit and (C_GOOD .. "+" .. ns.money(r.dealProfit) .. "|r") or ""
 end
 local VCOLS = {
-  { "Deals", "deals", -10, 40, dealsCell },
-  { "Total", "dealprofit", -56, 112, dealProfitCell },
-  { "Profit each", "profit", -174, 104, profitCell("profit") },
-  { "Now", "price", -284, 112, lowestCell },
+  { "Deals", "deals", -10, 52, dealsCell },
+  { "Total", "dealprofit", -68, 112, dealProfitCell },
+  { "Profit each", "profit", -186, 104, profitCell("profit") },
+  { "Now", "price", -296, 112, lowestCell },
 }
 local BAR_SHIFT = 16        -- room for the scroll bar on the right: every column moves left by this much
-local NAME_RIGHT = -384 - BAR_SHIFT   -- the item name stops here
-local VNAME_RIGHT = -402 - BAR_SHIFT  -- ... and here in a below-vendor search
+local NAME_RIGHT = -396 - BAR_SHIFT   -- the item name stops here
+local VNAME_RIGHT = -414 - BAR_SHIFT  -- ... and here in a below-vendor search
 
 local function rowsFit(f)
   return math.max(4, math.floor((f:GetHeight() - ROW_TOP - 22) / ROW_H))
@@ -802,7 +873,7 @@ local function render()
     if h.mode then h:SetShown(h.mode == (Q.vendor and "vendor" or "normal")) end
     if h.mode == "normal" and (h.col == "reqlevel" or h.col == "slots" or h.col == "skill" or h.col == "droprate") then
       h.col = Q.extra or "reqlevel"
-      h.label = Q.extra == "slots" and "Slots" or Q.extra == "skill" and "Skill" or Q.extra == "droprate" and "Drop%" or "Req"
+      h.label = Q.extra == "slots" and "Slots" or Q.extra == "skill" and "Skill" or Q.extra == "droprate" and "Drop %" or "Req lvl"
     end
     local mark = ""
     if Q.sortCol == h.col then mark = Q.sortDesc and " v" or " ^" end
@@ -851,7 +922,9 @@ function blizzardSearch(on)
       elseif saved[k] then
         w:SetAlpha(saved[k].alpha)
         if w.EnableMouse then w:EnableMouse(true) end
-        if saved[k].enabled then
+        if w.UpdateState then
+          w:UpdateState()   -- the favourites star: on only when there are favourites now, as Blizzard sets it
+        elseif saved[k].enabled then
           if w.Enable then w:Enable() elseif w.SetEnabled then w:SetEnabled(true) end
         end
         saved[k] = nil
@@ -908,7 +981,7 @@ local EXAMPLES = {
 
 local GUIDE = table.concat({
   C_ACCENT .. "How it works|r",
-  "Searches everything in the last full scan of this auction house (it rescans every 15 minutes while it is open), then checks each result live. White prices are live; grey ones are from the scan and still being checked; sold out means none are up now. Click a result to see its auctions and buy it.",
+  "Searches everything in the last full scan of this auction house (it rescans every 15 minutes while it is open), then asks the auction house about each result. " .. C_INFO .. "Now|r is that live price (from the last 5 minutes); " .. C_INFO .. "Last scan|r is the price at the full scan, grey because it can be out of date. " .. C_INFO .. "none up|r means nobody is selling it now; " .. C_INFO .. "no answer yet|r means the auction house didn't answer, and it is asked again in a minute. Click a result to see its auctions and buy it.",
   "",
   C_ACCENT .. "Conditions|r   join them with " .. C_INFO .. "and|r, " .. C_INFO .. "or|r, " .. C_INFO .. "not|r and ( )",
   C_INFO .. "is|r, " .. C_INFO .. "is not|r   " .. C_INFO .. "gt|r, " .. C_INFO .. "ge|r (at least), " .. C_INFO .. "lt|r, " .. C_INFO .. "le|r (at most)   " .. C_INFO .. "has|r (contains)",
@@ -922,10 +995,11 @@ local GUIDE = table.concat({
   "",
   C_ACCENT .. "Columns|r",
   "name, quality (poor, common, uncommon, rare, epic, legendary), ilvl, reqlevel, category, type (Cloth, Wand, Potion...)",
-  "slot: head, neck, shoulder, back, chest, robe, shirt, tabard, wrist, hands, waist, legs, feet, finger, trinket, onehand, twohand, mainhand, offhand, holdable, shield, ranged, wand, thrown, bag",
-  "price (lowest buyout), median (typical), qty (how many up), auctions, sell (vendor price)",
+  "slot: head, neck, shoulder, back, chest, robe, shirt, tabard, wrist, hands, waist, legs, feet, finger, trinket, onehand, twohand, mainhand, offhand, holdable, shield, ranged, wand, thrown, relic, ammo, quiver, bag",
+  "price (the cheapest buyout for one), median (the usual price: half the auctions cheaper, half dearer), qty (how many are up), auctions, sell (what a vendor pays), stack (how many fit in a stack)",
   "slots (bag size), source (vendor, crafted, drop, quest, skinning), profession, skill, droprate (best drop %)",
-  "Money: 5g, 50s, 1g50s, 20c. Or another column: " .. C_GOOD .. "price lt vendor|r",
+  "Money: 5g, 50s, 1g50s, 1g 50s, 2.5g, 20c. Or another column: " .. C_GOOD .. "price lt vendor|r",
+  "Quality also takes colours (grey, white, green, blue, purple, orange); slot takes cloak, ring, helm, gloves, boots, belt, 1h, 2h.",
   "",
   C_ACCENT .. "Below vendor price|r",
   C_GOOD .. "belowvendor|r lists every auction in the last full scan that is cheaper than a vendor pays and makes at least 10s, biggest total first. Buy them and sell them to any vendor: vendors take no cut. Quest items and items vendors don't buy never count. " .. C_INFO .. "deals|r is how many such auctions, " .. C_INFO .. "dealprofit|r what they make together. Start buying opens them one after another.",
@@ -963,16 +1037,20 @@ local function makeGuide(f)
   text:SetSpacing(4)
   text:SetText(GUIDE)
 
+  -- each example on two lines, the query over what it finds: on one line a long query ran into its description
+  local EX_H = 34
   local prev
   for _, ex in ipairs(EXAMPLES) do
-    local b = UI.row(content, 22)
+    local b = UI.row(content, EX_H)
     b:SetPoint("LEFT", content, "LEFT", 0, 0)
     b:SetPoint("RIGHT", content, "RIGHT", 0, 0)
     if prev then b:SetPoint("TOP", prev, "BOTTOM", 0, 0) else b:SetPoint("TOP", text, "BOTTOM", 0, -8) end
     local q = UI.text(b, "small")
-    q:SetPoint("LEFT", 6, 0)
+    q:SetPoint("TOPLEFT", 6, -4)
+    q:SetPoint("RIGHT", -6, 0)
     q:SetText(C_GOOD .. ex[1] .. "|r")
     local d = UI.text(b, "dim")
+    d:SetPoint("TOPLEFT", q, "BOTTOMLEFT", 0, -3)
     d:SetPoint("RIGHT", -6, 0)
     d:SetText(ex[2])
     b:SetScript("OnClick", function()
@@ -985,7 +1063,7 @@ local function makeGuide(f)
   -- size the scroll content once the text has its real height
   g:SetScript("OnShow", function()
     content:SetWidth(scroll:GetWidth())
-    content:SetHeight(text:GetStringHeight() + 12 + #EXAMPLES * 22)
+    content:SetHeight(text:GetStringHeight() + 12 + #EXAMPLES * EX_H)
     scroll:SetVerticalScroll(0)
     C_Timer.After(0, scroll.Update)
   end)
@@ -1002,7 +1080,7 @@ local function headerClick(self)
   else
     -- names A-Z first; numbers biggest first, except prices (cheapest first)
     Q.sortCol = self.col
-    Q.sortDesc = not (self.col == "name" or self.col == "price" or self.col == "median")
+    Q.sortDesc = not (self.col == "name" or self.col == "price" or self.col == "scanprice" or self.col == "median")
   end
   sortRows(Q.results, { { col = Q.sortCol, desc = Q.sortDesc } })
   Q.offset = 0
@@ -1022,10 +1100,13 @@ local function makeHeader(f, label, col, right, width, mode)
   h.label, h.col, h.mode = label, col, mode
   h:SetScript("OnClick", headerClick)
   local tips = {
-    price = "The cheapest buyout for one, checked with the auction house in the last 5 minutes: what you'd pay now. Says checking... until the check is in, none up when nobody is selling it.",
+    price = "The cheapest buyout for one, checked with the auction house in the last 5 minutes: what you'd pay now. Says checking... until the check is in, none up when nobody is selling it, and no answer yet when the auction house didn't answer (asked again in a minute).",
     scanprice = "The cheapest buyout for one at the last full scan (its age is in the line above). Can be out of date: Now is the real price.",
-    qty = "How many are up for sale.",
+    qty = "How many are up for sale: white when checked live in the last 5 minutes, grey from the last full scan.",
     reqlevel = "The level you need to use it.",
+    slots = "How many bag slots it has.",
+    skill = "The profession skill needed to make it.",
+    droprate = "Its best drop chance, in percent.",
     ilvl = "Item level: how strong the item is.",
     profit = "What one makes: what a vendor pays minus the cheapest buyout.",
     dealprofit = "What buying every auction under vendor price and selling it to a vendor makes.",
@@ -1148,7 +1229,8 @@ local function makeResults()
   local save = UI.button(f, "Save", 48, 24)
   save:SetPoint("RIGHT", go, "LEFT", -6, 0)
   save:SetScript("OnClick", function()
-    local q = Q.last or UI.oneLine(f.box:GetText()):gsub("||", "|")
+    local typed = UI.oneLine(f.box:GetText()):gsub("||", "|")
+    local q = typed:match("%S") and typed or Q.last
     if ns.saveToList and q and q:match("%S") then ns.saveToList(q) end
   end)
   UI.tip(save, "Save to a shopping list", "Adds this search to the shopping list picked in the Shopping tab.")
@@ -1187,6 +1269,17 @@ local function makeResults()
   f.head:SetWordWrap(true)
   if f.head.SetMaxLines then f.head:SetMaxLines(2) end
   f.head:SetText("Type a query and press Enter. Guide explains how.")
+  -- two lines hold most of it; when a long error or note doesn't fit, pointing at it shows all of it
+  local headHit = CreateFrame("Frame", nil, f)
+  headHit:SetAllPoints(f.head)
+  if headHit.SetMouseMotionEnabled then headHit:SetMouseMotionEnabled(true) else headHit:EnableMouse(true) end
+  headHit:SetScript("OnEnter", function(self)
+    if not (f.head.IsTruncated and f.head:IsTruncated()) then return end
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+    GameTooltip:AddLine(f.head:GetText(), 1, 1, 1, true)
+    GameTooltip:Show()
+  end)
+  headHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
   local band = UI.headerBand(f, 22)
   band:SetPoint("TOPLEFT", 1, -(ROW_TOP - 22))
@@ -1301,16 +1394,19 @@ local LIVE_MAX = 150
 local function liveHead()
   if not Q.frame or not Q.headBase then return end
   if Q.vendor and Q.deals then Q.frame.head:SetText(Q.headBase); return end
-  local total, done = 0, 0
+  local total, done, missed = 0, 0, 0
   for k = 1, math.min(#Q.results, LIVE_MAX) do
     local r = Q.results[k]
     if not r.header then
       total = total + 1
-      if liveFresh(r) then done = done + 1 end
+      if liveFresh(r) then done = done + 1
+      elseif missOf(r) then done, missed = done + 1, missed + 1 end
     end
   end
   local tail
   if total == 0 then tail = ""
+  elseif done >= total and missed > 0 then
+    tail = ("  " .. C_MUTE .. "live prices checked, %d without an answer (asked again in a minute)|r"):format(missed)
   elseif done >= total then tail = "  " .. C_GOOD .. "live prices checked|r"
   else tail = ("  " .. C_INFO .. "checking live prices %d/%d...|r"):format(done, total) end
   Q.frame.head:SetText(Q.headBase .. tail)
@@ -1325,19 +1421,32 @@ end
 
 -- One browse by the item's name (what Blizzard's Search button sends) gives the lowest price and how many are up
 -- for every version of it at once. A row is only called sold out from a complete answer (AHQuery.lua).
+-- A live price lasts LIVE_TTL and a missed one LIVE_RETRY; then the row is asked again while the panel is open, so
+-- "Now" never goes back to "checking..." for good. IsVisible, not IsShown: the panel keeps its shown flag while the
+-- auction house is closed, and nothing may be sent then.
+local function liveLater()
+  if live.timer then return end
+  live.timer = true
+  C_Timer.After(15, function() live.timer = nil; liveStep() end)
+end
+
 function liveStep()
   if ns.buyOpen then return end   -- the buy panel goes first
   if Q.vendor and Q.deals then return end   -- below vendor: scan prices; the row you open is checked live
-  if live.busy or not Q.frame or not Q.frame:IsShown() or not ns.ahq then return end
+  if live.busy or not Q.frame or not Q.frame:IsVisible() or not ns.ahq then return end
+  local t0 = time()
   local function pick(from, to)
     for k = from, to do
       local r = Q.results[k]
-      if r and not r.header and not liveFresh(r) and not live.tried[r.id] then return r end
+      if r and not r.header and not liveFresh(r) and not missOf(r)
+          and not (live.tried[r.id] and t0 - live.tried[r.id] < LIVE_RETRY) then
+        return r
+      end
     end
   end
   local r = pick(Q.offset + 1, Q.offset + #Q.rows) or pick(1, math.min(#Q.results, LIVE_MAX))
-  if not r then liveHead(); return end
-  live.tried[r.id] = true
+  if not r then liveHead(); liveLater(); return end
+  live.tried[r.id] = t0
   local id = r.id
   local c = itemInfo(id)
   live.busy = id
@@ -1349,8 +1458,9 @@ function liveStep()
     local t = time()
     for i, x in ipairs(rows) do
       local g = got[i]
-      if g and g.gone then Q.live[x.key] = { at = t, gone = true }
-      elseif g then Q.live[x.key] = { price = g.price, qty = g.qty, at = t } end
+      if g and g.gone then Q.live[x.key], Q.liveMiss[x.key] = { at = t, gone = true }, nil
+      elseif g then Q.live[x.key], Q.liveMiss[x.key] = { price = g.price, qty = g.qty, at = t }, nil
+      else Q.liveMiss[x.key] = { at = t, why = answer.ok and "unclear" or "noanswer" } end
     end
     liveDone()
   end)
@@ -1367,7 +1477,7 @@ function belowVendor()
     ns.query("belowvendor")
     if Q.frame then
       Q.headBase = nil
-      Q.frame.head:SetText((Q.frame.head:GetText() or "") .. "  " .. C_INFO .. "Updating prices first (see the bar below); the list fills when it's done.|r")
+      Q.frame.head:SetText((Q.frame.head:GetText() or "") .. "  " .. C_INFO .. "Updating prices first; the list fills when done.|r")
     end
     return
   end
@@ -1382,6 +1492,7 @@ end
 local rerunToken = 0
 local function show(text)
   local results, head, missing, vendor = run(text)
+  local ordered = results and Q.ordered
   Q.vendor = vendor or false
   if not results then
     Q.results = {}
@@ -1393,10 +1504,10 @@ local function show(text)
     elseif vendor then
       head = head .. "  " .. C_DIM .. "profit = vendor price minus the lowest buyout|r"
     end
-    local own = text:lower():find("sort") or text:lower():find("top")
-    if vendor and not own and not Q.sortCol then Q.sortCol, Q.sortDesc = Q.deals and "dealprofit" or "profit", true end
+    -- (not a look for "sort" or "top" in the text: "name has topaz" has no sort of its own)
+    if vendor and not ordered and not Q.sortCol then Q.sortCol, Q.sortDesc = Q.deals and "dealprofit" or "profit", true end
     -- a click-sort stays when the query has no sort of its own
-    if Q.sortCol and not text:lower():find("sort") and not text:lower():find("top") then
+    if Q.sortCol and not ordered then
       sortRows(Q.results, { { col = Q.sortCol, desc = Q.sortDesc } })
     end
     if (missing or 0) > 0 then
@@ -1416,7 +1527,7 @@ local function show(text)
     Q.tries = tries
     if tries <= 200 then
       C_Timer.After(3, function()
-        if mine == rerunToken and Q.frame and Q.frame:IsShown() and Q.last == text then show(text) end
+        if mine == rerunToken and Q.frame and Q.frame:IsVisible() and Q.last == text then show(text) end
       end)
     end
   end
@@ -1483,10 +1594,10 @@ end
 function ns.onScan()
   Q.cacheFor = nil
   warm()
-  if Q.frame and Q.frame:IsShown() and Q.last then
+  if Q.frame and Q.frame:IsVisible() and Q.last then
     Q.tries = 0
     show(Q.last)
-  elseif Q.frame and Q.frame:IsShown() and Q.grouped and Q.groupList then
+  elseif Q.frame and Q.frame:IsVisible() and Q.grouped and Q.groupList then
     ns.queryList(Q.groupList)
   end
 end
@@ -1542,10 +1653,17 @@ end
 
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("AUCTION_HOUSE_SHOW")
+ev:RegisterEvent("AUCTION_HOUSE_CLOSED")
 ev:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 ev:SetScript("OnEvent", function(_, e, arg)
   if e == "GET_ITEM_INFO_RECEIVED" then
     if warming.ids and arg then itemInfo(arg) end
+    return
+  end
+  if e == "AUCTION_HOUSE_CLOSED" then
+    -- the queue drops every search without an answer when the auction house closes (AHQuery.lua): forget the one
+    -- in flight, or the live check would wait for it forever after reopening
+    live.busy = nil
     return
   end
   C_Timer.After(0.2, function()

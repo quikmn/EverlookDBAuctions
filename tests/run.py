@@ -93,6 +93,7 @@ def main() -> int:
     failures += search_queue()
     failures += undercut()
     failures += deals()
+    failures += audit_search()
 
     if failures:
         for f in failures:
@@ -828,6 +829,164 @@ def deals():
     check(t.n == 11 and t.cost == 89 and t.value == 143, "running total")
     txt = V.tallyText(t, ns.money)
     check(txt == "Bought 11 for 89c, vendor value 143c, profit 54c.", txt)
+    return failures
+
+
+def audit_search():
+    """Advanced search fixes: money typed with spaces or decimals, values that can't mean anything are errors with an
+    example, everyday words for slots and qualities, a search's own order found from the parse (not the text), and the
+    live check: no answer is never "none up", and rows are asked again instead of staying at "checking..."."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    lua.execute(QUEUE_SETUP)
+    lua.execute("""
+      AUDIT_TIME = 1000
+      function time() return AUDIT_TIME end
+      local create = CreateFrame
+      function CreateFrame(kind, name, parent)
+        local f = create(kind, name, parent)
+        f.GetHeight = function() return 400 end
+        -- fields (lowercase) start out nil, as on a real frame; methods stay the mock's
+        local mt = getmetatable(f)
+        local index = mt.__index
+        setmetatable(f, { __index = function(t, k)
+          if type(k) == "string" and k:match("^%l") then return nil end
+          return index(t, k)
+        end })
+        return f
+      end
+      AuctionHouseFrame = CreateFrame("Frame", "AuctionHouseFrame")
+      AuctionHouseFrame.BrowseResultsFrame = CreateFrame("Frame", nil, AuctionHouseFrame)
+      AuctionHouseFrame.SearchBar = CreateFrame("Frame", nil, AuctionHouseFrame)
+    """)
+    for name in ["Skin.lua", "Vendor.lua", "AHQuery.lua", "Search.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    P = ns.queryParse
+    G = lua.globals()
+    perr = lua.eval("function(P, t) local ok, e = pcall(P, t); if ok then return nil end; "
+                    "return type(e) == 'table' and e.query or tostring(e) end")
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("audit search: " + what)
+
+    def names(text):
+        rows, head, _m, _v = ns.queryRun(text)
+        if rows is None:
+            return head
+        return [rows[i].name for i in range(1, len(rows) + 1)]
+
+    # money: "1g 50s" is one amount, decimals work, nonsense is an error with an example
+    st = P("price lt 1g 50s")
+    check(len(st) == 1 and st[1].e.k == "cmp" and st[1].e["values"][1] == "1g50s",
+          "price lt 1g 50s: one amount, not a name search for 50s")
+    got = names("type has wand and price lt 0.25g sort by price")
+    check(got == ["Greater Magic Wand", "Sort Wand"], f"0.25g is 25s: {got}")
+    check(names("type has wand and price between (5s .. 0.25g) sort by price") == ["Greater Magic Wand", "Sort Wand"],
+          "between with decimal gold")
+    check(names("type has wand and price lt 1gold sort by price") == ["Greater Magic Wand", "Sort Wand", "Lesser Magic Wand"],
+          "1gold: a word for the unit")
+    got = perr(P, "price lt 5gx")
+    check(got is not None and "isn't an amount of money" in got and "e.g." in got, f"5gx: {got}")
+    got = perr(P, "reqlevel le abc")
+    check(got is not None and "isn't a number" in got and "e.g. reqlevel le 29" in got, f"reqlevel le abc: {got}")
+    check(perr(P, "price lt vendor") is None and perr(P, "profit ge 1s") is None, "columns and money still parse")
+    check(perr(P, "name has 50s") is None and perr(P, "ilvl has 2") is None, "text comparisons aren't checked")
+
+    # everyday words for slots and qualities; unknown ones are errors with an example
+    check(names("slot is cloak") == names("slot is back"), "cloak means back")
+    check(names("quality is green and type has wand sort by price") == ["Greater Magic Wand", "Sort Wand", "Lesser Magic Wand"],
+          f"green means uncommon: {names('quality is green and type has wand sort by price')}")
+    check(names("slot is 1h") == ["Old Sword"], "1h means onehand")
+    got = perr(P, "slot is spaceship")
+    check(got is not None and 'no slot called "spaceship"' in got and "e.g. slot is back" in got, f"unknown slot: {got}")
+    got = perr(P, "quality ge shiny")
+    check(got is not None and "e.g. quality ge rare" in got, f"unknown quality: {got}")
+
+    # a search's own order comes from the parse: "topaz" and "stop" aren't a top step
+    ns.queryRun("name has topaz")
+    check(ns.queryOrdered() is False, "name has topaz has no order of its own")
+    ns.queryRun("type has wand sort by price")
+    check(ns.queryOrdered() is True, "a sort step orders")
+    ns.queryRun("type has wand top 2 by ilvl")
+    check(ns.queryOrdered() is True, "top n by a column orders")
+    ns.queryRun("type has wand top 2")
+    check(ns.queryOrdered() is False, "top n alone doesn't")
+
+    # the live check: answers come from a fake queue
+    calls = []
+    Q = ns.ahq
+    Q.browse = lambda text, id_, opts, cb: calls.append((text, id_, cb))
+    Q.cancel = lambda owner: None
+    ns.query("type has wand sort by price")
+    f = G.EverlookAuctionsQueryResults
+    check(f is not None and len(calls) == 1 and calls[0][0] == "Greater Magic Wand", f"first row checked first: {calls}")
+    # no answer: the row says so (never "none up"), the next row is asked
+    calls[0][2](lua.table(ok=False))
+    G.advance(0.2)
+    check(len(calls) == 2, "next row asked after a missed one")
+    calls[1][2](lua.table(ok=True, full=True, entries=lua.table()))   # Sort Wand: complete and empty: none up
+    G.advance(0.2)
+    calls[2][2](lua.table(ok=True, full=True, entries=lua.eval("{ { itemKey = { itemID = 7001 }, minPrice = 2900, totalQuantity = 1 } }")))
+    G.advance(0.2)
+    head = f.head.text
+    check("1 without an answer" in head and "none" not in head.split("live prices")[0], f"status line: {head}")
+    # a minute later the missed row is asked again; five minutes later every row is
+    n = len(calls)
+    G.AUDIT_TIME = 1061
+    ns.liveStep()
+    check(len(calls) == n + 1 and calls[-1][1] == 7003, f"missed row asked again after a minute: {calls[n:]}")
+    calls[-1][2](lua.table(ok=True, full=True, entries=lua.eval("{ { itemKey = { itemID = 7003 }, minPrice = 950, totalQuantity = 1 } }")))
+    G.advance(0.2)
+    n = len(calls)
+    G.AUDIT_TIME = 1400
+    ns.liveStep()
+    check(len(calls) == n + 1, "after five minutes the rows are checked again instead of staying at checking...")
+    # the auction house closed with a check in flight: it is forgotten, so checks go on after reopening
+    G.AUDIT_TIME = 2000
+    ns.query("type has wand sort by ilvl")
+    n = len(calls)
+    ev = [fr for fr in G.MOCK_FRAMES.values() if fr.scripts and fr.scripts["OnEvent"]]
+    for fr in ev:
+        fr.scripts["OnEvent"](fr, "AUCTION_HOUSE_CLOSED")
+    ns.liveStep()
+    check(len(calls) == n + 1, f"after the auction house closed, the live check isn't stuck: {len(calls) - n}")
+
+    # Blizzard's favourites search is Blizzard's browse; Show in Blizzard search clears a picked category first
+    lua.execute("""
+      AuctionHouseSearchContext = { AllFavorites = 7, AllAuctions = 8 }
+      local ah = AuctionHouseFrame
+      ah.QueryAll = function() end
+      ah.SendBrowseQuery = function() end
+      ah.SetDisplayMode = function() end
+      local cats = { sel = 3 }
+      function cats:GetSelectedCategory() return self.sel end
+      function cats:SetSelectedCategory(i) self.sel = i end
+      CATS = cats
+      ah.GetCategoriesList = function() return cats end
+      local searched = 0
+      ah.SearchBar.SetSearchText = function(_, t) SEARCH_TEXT = t end
+      ah.SearchBar.StartSearch = function() SEARCHED = (SEARCHED or 0) + 1; SEARCHED_CAT = cats.sel end
+      ah.IsShown = function() return true end
+    """)
+    for fr in ev:
+        fr.scripts["OnEvent"](fr, "AUCTION_HOUSE_SHOW")
+    G.advance(1)
+    Q.blizzard = None
+    G.AuctionHouseFrame.QueryAll(G.AuctionHouseFrame, 7)
+    check(Q.blizzard is True, "the favourites search counts as Blizzard's browse")
+    Q.blizzard = None
+    G.AuctionHouseFrame.QueryAll(G.AuctionHouseFrame, 8)
+    check(Q.blizzard is None, "its own auctions list isn't a browse")
+    G.advance(10)
+    Q.showInBlizzard("Sort Wand")
+    G.advance(1)
+    check(G.SEARCHED == 1 and G.SEARCH_TEXT == "Sort Wand", "Show in Blizzard search searches the name")
+    check(G.SEARCHED_CAT is None, "with no category picked, so a picked one can't hide the item")
     return failures
 
 
