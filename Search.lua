@@ -1043,7 +1043,7 @@ local function makeRow(f, k)
   end
   b.cells, b.vcells = cells(COLS), cells(VCOLS)
   b.flag = UI.badge(b, 84, 16)
-  b.flag:SetPoint("RIGHT", f, "RIGHT", NAME_RIGHT, 0)
+  b.flag:SetPoint("RIGHT", b, "RIGHT", NAME_RIGHT + BAR_SHIFT + 1, 0)   -- on its own row, left of the price columns
   b.flag:Hide()
   b.name = UI.text(b, "body")
   b.name:SetPoint("LEFT", b.icon, "RIGHT", 8, 0)
@@ -1122,7 +1122,7 @@ local function makeResults()
   end)
   UI.tip(save, "Save to a shopping list", "Adds this search to the shopping list picked in the Shopping tab.")
 
-  local vendor = UI.button(f, "Below vendor", 92, 24)
+  local vendor = UI.button(f, "Below vendor", 104, 24)
   vendor:SetPoint("RIGHT", save, "LEFT", -6, 0)
   vendor:SetScript("OnClick", function()
     if Q.vendor and Q.deals and #Q.results > 0 then
