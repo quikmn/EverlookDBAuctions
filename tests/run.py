@@ -89,6 +89,7 @@ def main() -> int:
     failures += crafting_box()
     failures += scroll_bars()
     failures += below_vendor()
+    failures += query_language()
 
     if failures:
         for f in failures:
@@ -260,6 +261,9 @@ local db = {
     ["5000:0"] = "5,5,5,3,1",        -- a quest item with a sell price
     ["3000:0"] = "100,100,150,1,1",  -- gear: 1s, vendor 5s
     ["4000:0"] = ",,,2,1",           -- bids only
+    ["7001:0"] = "3000,3000,3500,2,2",  -- wands for the query language tests: 30s, req 20
+    ["7002:0"] = "2000,2000,2500,1,1",  -- 20s, req 25
+    ["7003:0"] = "900,900,1000,1,1",    -- 9s, req 35
   } } },
   itemInfo = {
     [2589] = { "Linen Cloth", 1, 5, 0, "Trade Goods", "Cloth", "", 1, 13, 20 },
@@ -268,6 +272,9 @@ local db = {
     [5000] = { "Quest Thing", 1, 1, 0, "Quest", "Quest", "", 1, 50, 1 },
     [3000] = { "Old Sword", 2, 20, 15, "Weapon", "Swords", "INVTYPE_WEAPON", 1, 500, 1 },
     [4000] = { "Bid Only", 1, 1, 0, "Trade Goods", "Cloth", "", 1, 100, 1 },
+    [7001] = { "Lesser Magic Wand", 2, 23, 20, "Weapon", "Wands", "INVTYPE_RANGEDRIGHT", 1, 200, 1 },
+    [7002] = { "Sort Wand", 2, 30, 25, "Weapon", "Wands", "INVTYPE_RANGEDRIGHT", 1, 300, 1 },
+    [7003] = { "Greater Magic Wand", 2, 40, 35, "Weapon", "Wands", "INVTYPE_RANGEDRIGHT", 1, 400, 1 },
   },
   itemStats = {},
 }
@@ -373,6 +380,120 @@ def below_vendor():
     check(V.flip(2589, 10) == 3 and V.flip(2589, 13) is None, "flip: profit when below, nothing when not")
     check(V.flip(1000, 0) is None and V.flip(1000, 1) is None, "flip: sell price 0 never counts")
     check(V.flip(5000, 5) is None, "flip: quest items never count")
+    return failures
+
+
+def query_language():
+    """The query language: steps without |, sort without a column, aliases, errors that say what's missing, and the
+    query box's line breaks."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    P = ns.queryParse
+    perr = lua.eval("function(P, t) local ok, e = pcall(P, t); if ok then return nil end; "
+                    "return type(e) == 'table' and e.query or tostring(e) end")
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("query: " + what)
+
+    def kinds(text):
+        st = P(text)
+        return [st[i].k for i in range(1, len(st) + 1)]
+
+    def names(text):
+        rows, head, _m, _v = ns.queryRun(text)
+        if rows is None:
+            return head
+        return [rows[i].name for i in range(1, len(rows) + 1)]
+
+    # steps without a |
+    check(kinds("type has wand and reqlevel le 29 sort by price") == ["where", "sort"], "sort without |")
+    check(kinds("type has wand sort by price desc top 2 by ilvl count") == ["where", "sort", "top", "count"],
+          "several steps without |")
+    check(kinds("type has wand and sort by price") == ["where", "sort"], "and leading into a step")
+    check(kinds("type has wand | sort by price | top 2") == ["where", "sort", "top"], "| still works")
+    check(kinds("items | where type has wand | sort by price") == ["where", "sort"], "items | where still works")
+    check(kinds("where type has wand sort by price") == ["where", "sort"], "a where in front")
+    check(kinds("sort by price") == ["sort"], "a sort on its own")
+    check(kinds("top 5 by ilvl") == ["top"], "a top on its own")
+    got = names("type has wand and reqlevel le 29 sort by price")
+    check(got == ["Sort Wand", "Lesser Magic Wand"], f"wands up to 29, cheapest first: {got}")
+    check(names("type has wand sort by ilvl desc top 2") == ["Greater Magic Wand", "Sort Wand"], "sort then top")
+    check(names("type has wand count") == [], "count gives no rows")
+
+    # step words as values or columns stay what they were
+    st = P("name has sort")
+    check(len(st) == 1 and st[1].e.col == "name" and st[1].e["values"][1] == "sort", "name has sort is a comparison")
+    check(names("name has sort") == ["Sort Wand"], "name has sort finds the Sort Wand")
+    st = P("name has sort sort by price")
+    check([st[i].k for i in range(1, len(st) + 1)] == ["where", "sort"] and st[1].e["values"][1] == "sort",
+          "name has sort, then a sort step")
+    st = P("type has wand and count gt 1")
+    check(len(st) == 1 and st[1].e.b.col == "qty", "count gt 1 is a comparison on qty")
+    check(P("type has wand sort by count")[2]["keys"][1].col == "qty", "sort by count sorts by qty")
+    st = P("spinning top")
+    check(len(st) == 1 and st[1].e.k == "and", "top without a number is a name word")
+
+    # sort without a column: by price
+    for q, desc in [("type has wand sort", False), ("type has wand sort asc", False), ("type has wand sort desc", True),
+                    ("type has wand sort by asc", False), ("type has wand sort by desc", True),
+                    ("type has wand | sort desc", True), ("type has wand sort by", False)]:
+        k = P(q)[2]["keys"][1]
+        check(k.col == "price" and k.desc is desc, f"{q}: by price, desc={desc}")
+    check(P("type has wand sort desc top 1")[3].k == "top", "sort desc, then top")
+    check(P("type has wand top 2")[2]["keys"] is None, "top without by stays unsorted")
+
+    # the owner's query: parses and runs
+    owner = "type has wand and reqlvl le 29 sort asc"
+    check(names(owner) == ["Sort Wand", "Lesser Magic Wand"], f"{owner}: {names(owner)}")
+    check(names("type has wand and reqlvl le 29 sort desc") == ["Lesser Magic Wand", "Sort Wand"], "sort desc")
+
+    # aliases
+    for a in ["lvlreq", "levelreq", "reqlvl", "lvl"]:
+        check(P(f"{a} le 29")[1].e.col == "reqlevel", f"{a} means reqlevel")
+    check(names("wand and lvlreq le 29 sort by price") == ["Sort Wand", "Lesser Magic Wand"], "lvlreq runs")
+
+    # errors say what is missing, with an example
+    for q, want in [("reqlvl le", "reqlvl le what? e.g. reqlvl le 29"),
+                    ("price lt", "price lt what? e.g. price lt 5g"),
+                    ("slot is", "slot is what? e.g. slot is trinket"),
+                    ("reqlvl", None),   # a lone column word searches names
+                    ("ilvl between", "ilvl between what? e.g. ilvl between (20 .. 30)"),
+                    ("type has wand sort by price,", "sort by which column?"),
+                    ("type has wand sort by flavour", "can't sort by flavour"),
+                    ("type has wand top 2 by", "top 2 by which column? e.g. top 2 by sta"),
+                    ("type has wand and", "something is missing after and; e.g."),
+                    ("(type has wand", "a ) is missing; e.g."),
+                    ("type has wand )", "not sure what ) means here; e.g."),
+                    ("type has wand |", "a step is missing after |; e.g. | sort by price")]:
+        got = perr(P, q)
+        if want is None:
+            check(got is None, f"{q!r} parses: {got}")
+        else:
+            check(got is not None and want in got, f"{q!r}: {got}")
+    for q in ["reqlvl le", "type has wand sort by price,", "type has wand and", "price lt", "slot in"]:
+        got = perr(P, q) or ""
+        check("e.g." in got and "a value is missing" not in got, f"{q!r} gives an example: {got}")
+
+    # the query box: line breaks become spaces; Enter does not break the line
+    one = ns.UI.oneLine
+    check(one("type has wand\nand reqlevel le 29\r\nsort by price") == "type has wand and reqlevel le 29 sort by price",
+          "pasted line breaks become spaces")
+    check(one("type has wand\n") == "type has wand" and one("wand") == "wand", "a break at the end goes")
+    check(names("type has wand\nand reqlevel le 29\nsort by price") == ["Sort Wand", "Lesser Magic Wand"],
+          "a search with line breaks runs")
+    opts = lua.eval("{ lines = 2, onEnter = function(e) ENTERED = (ENTERED or 0) + 1 end }")
+    box = ns.UI.input(lua.globals().UIParent, 100, 40, opts)
+    same = lua.eval("rawequal")
+    check(box.edbWell is not None and not same(box.edbWell, box), "a two-line box has its own well to anchor")
+    single = ns.UI.input(lua.globals().UIParent, 100, 24)
+    check(same(single.edbWell, single), "a one-line box is its own well")
     return failures
 
 

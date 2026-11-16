@@ -1,5 +1,5 @@
 -- EverlookDB Auctions: query search over the last full scan, in the same language as EverlookDB.com.
---   items | where slot is trinket and price lt 5g | sort by price
+--   slot is trinket and price lt 5g sort by price
 -- The Advanced search button on Buy's search row opens it over the auction list: type a query, press Enter.
 -- Click a result to find it on the auction house and buy as usual.
 -- Columns: name, quality, ilvl, reqlevel, slot, category, type, sell, stack, price (lowest buyout), median, qty,
@@ -7,7 +7,7 @@
 -- spellcrit, block, fire_res (and holy, nature, frost, shadow, arcane), and `stats` (all stats as text).
 -- From EverlookDB's data (Data.lua): slots (bag size), source (vendor, crafted, drop, quest, skinning,
 -- pickpocket), profession (that makes it), skill (needed to make it) and droprate (best drop chance, %).
--- Steps: where, sort by <col> [asc|desc], top <n> [by <col>], count.
+-- Steps: sort by <col> [asc|desc] (no column: price), top <n> [by <col>], count; a | between steps is optional.
 -- Below vendor price (Vendor.lua): `belowvendor` on its own, or a money column compared with another column
 -- (`price lt vendor`). profit is the vendor price minus the lowest buyout, each; stackprofit is that for a full stack.
 
@@ -67,7 +67,7 @@ for k in pairs(STATS) do KIND[k] = "number" end
 KIND.stats = "text"   -- every stat on the item as text, e.g. "Stamina 5, Agility 3": `stats has agility`
 local ALIAS = {
   rarity = "quality", subtype = "type", subclass = "type", itemclass = "category", level = "reqlevel", lvl = "reqlevel",
-  req = "reqlevel", reqlvl = "reqlevel", minlevel = "reqlevel", vendor = "sell", low = "price", lowest = "price",
+  req = "reqlevel", reqlvl = "reqlevel", lvlreq = "reqlevel", levelreq = "reqlevel", minlevel = "reqlevel", vendor = "sell", low = "price", lowest = "price",
   buyout = "price", med = "median", typical = "median", quantity = "qty", count = "qty", up = "auctions",
   strength = "str", agility = "agi", stamina = "sta", stam = "sta", intellect = "int", intel = "int", spirit = "spi",
   ac = "armor", armour = "armor", firres = "fire_res", fireres = "fire_res", frostres = "frost_res",
@@ -139,39 +139,61 @@ function Parser:isWord(w, o) local t = self:peek(o); return t and t.t == "word" 
 function Parser:isOp(v, o) local t = self:peek(o); return t and t.t == "op" and t.v == v end
 function Parser:fail(msg) error({ query = msg }, 0) end
 
-function Parser:value()
+local EG = "type has wand and reqlevel le 29 sort by price"   -- the example most errors end with
+
+-- An example value for a column, for error messages: "reqlvl le what? e.g. reqlvl le 29"
+local EXAMPLE = { quality = "rare", slot = "trinket", type = "wand", category = '"Trade Goods"', name = '"of the bear"',
+  stats = "spirit", source = "vendor", profession = "tailoring" }
+local function example(col)
+  return EXAMPLE[col] or KIND[col] == "money" and "5g" or KIND[col] == "text" and "wand" or "29"
+end
+local function exampleOp(col)
+  return KIND[col] == "text" and "has" or KIND[col] == "enum" and "is" or "le"
+end
+
+-- missing: the error when there is no value here (what is missing, with an example)
+function Parser:value(missing)
   local t = self:next()
-  if not t or t.t == "op" then self:fail("a value is missing") end
+  if not t or t.t == "op" then self:fail(missing or ("a value is missing; e.g. " .. EG)) end
   return t.v
 end
 
-function Parser:list()
-  if not self:isOp("(") then return { self:value() } end
+function Parser:list(missing)
+  if not self:isOp("(") then return { self:value(missing) } end
   self:next()
   local out = {}
   repeat
-    out[#out + 1] = self:value()
+    out[#out + 1] = self:value(missing)
     if self:isOp(",") then self:next() else break end
   until false
-  if not self:isOp(")") then self:fail("a ) is missing") end
+  if not self:isOp(")") then self:fail("a ) is missing; e.g. slot in (head, chest)") end
   self:next()
   return out
 end
 
 -- a column, a comparison and a value: "slot is trinket", "price lt 5g", "ilvl between (20 .. 30)"
-function Parser:comparison(col)
+-- word is the column as typed (an alias like lvlreq), for error messages
+function Parser:comparison(col, word)
+  word = word or col
   local negate = false
   if self:isWord("not") or self:isOp("!") then self:next(); negate = true end
   local t = self:next()
   local op = t and OPS[t.v:lower()]
   if t and t.t == "word" and t.v:lower() == "is" and self:isWord("not") then self:next(); op = "ne" end
   if t and t.v == "!" then op = nil end
-  if not op then self:fail("after " .. col .. " comes a comparison like is, gt, lt or has") end
+  if not op then
+    self:fail(("after %s comes a comparison like is, gt, ge, lt, le or has; e.g. %s %s %s"):format(
+      word, word, exampleOp(col), example(col)))
+  end
+  local opWord = t.v
   if op == "between" then
+    local lo, hi = "20", "30"
+    if KIND[col] == "money" then lo, hi = "1g", "5g" end
+    local missing = ("%s between what? e.g. %s between (%s .. %s)"):format(word, word, lo, hi)
     if self:isOp("(") then self:next() end
-    local a = self:value()
+    local a = self:value(missing)
     if self:isOp("..") then self:next() elseif self:isWord("and") then self:next() end
-    local b = self:value()
+    local b = self:value(missing)
     if self:isOp(")") then self:next() end
     return { k = "cmp", col = col, op = op, a = a, b = b, neg = negate }
   end
@@ -179,18 +201,48 @@ function Parser:comparison(col)
   if self:isWord("any") or self:isWord("anyof") then self:next(); mode = "any"
   elseif self:isWord("all") or self:isWord("allof") then self:next(); mode = "all" end
   if mode and self:isWord("of") then self:next() end
-  local values = (op == "in" or mode) and self:list() or { self:value() }
+  local values
+  if op == "in" or mode then
+    values = self:list(("%s %s what? e.g. %s %s (head, chest)"):format(word, opWord, word, opWord))
+  else
+    values = { self:value(("%s %s what? e.g. %s %s %s"):format(word, opWord, word, opWord, example(col))) }
+  end
   if col == "price" or col == "profit" or col == "stackprofit" then
     for _, v in ipairs(values) do if column(v) == "sell" or col ~= "price" then self.vendor = true end end
   end
   return { k = "cmp", col = col, op = op == "in" and "eq" or op, values = values, all = mode == "all", neg = negate }
 end
 
+-- Step words. Without a | in front, one starts a step only where a new condition or the end could come, and only
+-- when what follows fits the step: "type has wand sort by price", while "name has sort" and "count gt 5" stay as
+-- they are.
+local STEP = { where = true, sort = true, order = true, top = true, take = true, limit = true, count = true }
+local DIR = { asc = true, ascending = true, desc = true, descending = true }
+
+function Parser:atStep()
+  local t = self:peek()
+  if not t or t.t ~= "word" then return false end
+  local w = t.v:lower()
+  if not STEP[w] then return false end
+  local n = self:peek(1)
+  local nw = n and n.v:lower()
+  if n and n.t == "op" and n.v ~= "|" then return false end   -- "count >= 5"
+  if nw and OPS[nw] then return false end                     -- "count gt 5"
+  if w == "sort" or w == "order" then
+    return not n or n.t == "op" or nw == "by" or DIR[nw] or STEP[nw] or column((nw:gsub("^%-", ""))) ~= nil
+  elseif w == "top" or w == "take" or w == "limit" then
+    return n ~= nil and tonumber(n.v) ~= nil
+  elseif w == "count" then
+    return not n or n.t == "op" or STEP[nw] or false
+  end
+  return n ~= nil and n.t == "word"   -- where
+end
+
 function Parser:primary()
   if self:isOp("(") then
     self:next()
     local e = self:orExpr()
-    if not self:isOp(")") then self:fail("a ) is missing") end
+    if not self:isOp(")") then self:fail("a ) is missing; e.g. (slot is head or slot is chest) and int ge 5") end
     self:next()
     return e
   end
@@ -198,8 +250,13 @@ function Parser:primary()
     self:next()
     return { k = "not", e = self:primary() }
   end
+  local prev = self:peek(-1)
   local t = self:next()
-  if not t then self:fail("the condition ends too early") end
+  if not t then
+    if prev then self:fail(("something is missing after %s; e.g. %s"):format(prev.v, EG)) end
+    self:fail("type a search, e.g. " .. EG)
+  end
+  if t.t == "op" then self:fail(("%s can't go here; e.g. %s"):format(t.v, EG)) end
   local nxt = self:peek()
   -- belowvendor: auctions cheaper than a vendor pays
   if t.t == "word" and V.WORDS[t.v:lower()] and not (nxt and OPS[nxt.v:lower()]) then
@@ -208,7 +265,7 @@ function Parser:primary()
   end
   local col = t.t == "word" and column(t.v)
   if col and nxt and (OPS[nxt.v:lower()] or nxt.v:lower() == "not" or nxt.v == "!") then
-    return self:comparison(col)
+    return self:comparison(col, t.v)
   end
   -- a word on its own searches names
   return { k = "cmp", col = "name", op = "has", values = { t.v } }
@@ -217,8 +274,12 @@ end
 function Parser:andExpr()
   local e = self:primary()
   while true do
-    if self:isWord("and") then self:next()
-    elseif not self:peek() or self:isWord("or") or self:isOp(")") or self:isOp("|") then break end
+    if self:isWord("and") then
+      self:next()
+      if self:atStep() then break end   -- "... and sort by price": the and leads into the step
+    elseif not self:peek() or self:isWord("or") or self:isOp(")") or self:isOp("|") or self:atStep() then
+      break
+    end
     e = { k = "and", a = e, b = self:primary() }
   end
   return e
@@ -233,20 +294,35 @@ function Parser:orExpr()
   return e
 end
 
--- "items | where ... | sort by price desc | top 10 by ilvl | count" -> list of steps
+local SORT_EG = "e.g. sort by price asc, or sort by ilvl desc, price"
+
+-- "type has wand and reqlevel le 29 sort by price desc top 10 by ilvl" -> list of steps. "items | where" in front
+-- and a | between steps are optional. A sort without a column sorts by price (the lowest buyout).
 local function parse(text)
   local p = setmetatable({ toks = tokenize(text), pos = 1 }, Parser)
   local steps = {}
   if p:isWord("items") or p:isWord("item") then p:next() end
-  if p:peek() and not p:isOp("|") then
+  if p:isWord("where") and p:atStep() then p:next() end
+  local leading = (p:isWord("sort") or p:isWord("order") or p:isWord("top") or p:isWord("take") or p:isWord("limit"))
+    and p:atStep()
+  if p:peek() and not p:isOp("|") and not leading then
     -- no "items |" in front: treat the rest as a where
     steps[#steps + 1] = { k = "where", e = p:orExpr() }
   end
   while p:peek() do
-    if not p:isOp("|") then p:fail("steps are separated by |") end
-    p:next()
-    local w = p:next()
-    local word = w and w.v:lower()
+    local w
+    if p:isOp("|") then
+      p:next()
+      w = p:peek()
+      if not w then p:fail("a step is missing after |; e.g. | sort by price") end
+      if w.t ~= "word" or not STEP[w.v:lower()] then w = nil end   -- "| type has wand": a where without the word
+    elseif p:atStep() then
+      w = p:peek()
+    else
+      p:fail(("not sure what %s means here; e.g. %s"):format(p:peek().v, EG))
+    end
+    if w then p:next() end
+    local word = w and w.v:lower() or "where"
     if word == "where" then
       steps[#steps + 1] = { k = "where", e = p:orExpr() }
     elseif word == "sort" or word == "order" then
@@ -256,9 +332,15 @@ local function parse(text)
         local desc = false
         if p:isWord("desc") or p:isWord("descending") then p:next(); desc = true
         elseif p:isWord("asc") or p:isWord("ascending") then p:next() end
-        local name = p:value()
+        local t, name = p:peek(), nil
+        if #keys == 0 and (not t or t.t == "op" or (p:atStep() and not column(t.v))) then
+          name = "price"   -- no column: by the lowest buyout ("sort", "sort asc", "sort by desc")
+        else
+          name = p:value("sort by which column? " .. SORT_EG)
+        end
         if name:sub(1, 1) == "-" then desc, name = true, name:sub(2) end
-        local c = column(name) or p:fail("can't sort by " .. name .. "; try ilvl, reqlevel, price, median, qty, sta...")
+        local c = column(name)
+          or p:fail(("can't sort by %s; try price, median, ilvl, reqlevel, qty, sta... %s"):format(name, SORT_EG))
         if p:isWord("desc") or p:isWord("descending") then p:next(); desc = true
         elseif p:isWord("asc") or p:isWord("ascending") then p:next(); desc = false end
         keys[#keys + 1] = { col = c, desc = desc }
@@ -267,11 +349,13 @@ local function parse(text)
       until not more
       steps[#steps + 1] = { k = "sort", keys = keys }
     elseif word == "top" or word == "take" or word == "limit" then
-      local n = tonumber(p:value()) or p:fail(word .. " needs a number")
+      local missing = ("%s how many? e.g. %s 10, or %s 10 by ilvl"):format(word, word, word)
+      local n = tonumber(p:value(missing)) or p:fail(missing)
       local step = { k = "top", n = n }
       if p:isWord("by") then
         p:next()
-        local c = column(p:value()) or p:fail("top by which column?")
+        local by = ("%s %d by which column? e.g. %s %d by sta"):format(word, n, word, n)
+        local c = column(p:value(by)) or p:fail(by)
         local desc = true
         if p:isWord("asc") or p:isWord("ascending") then p:next(); desc = false
         elseif p:isWord("desc") or p:isWord("descending") then p:next() end
@@ -280,8 +364,6 @@ local function parse(text)
       steps[#steps + 1] = step
     elseif word == "count" then
       steps[#steps + 1] = { k = "count" }
-    else
-      p:fail("unknown step " .. tostring(w and w.v) .. "; use where, sort by, top or count")
     end
   end
   steps.vendor = p.vendor   -- a below-vendor search: shows profit columns, sorted by profit unless it says otherwise
@@ -577,7 +659,7 @@ ns.queryRun = function(text) return run(text) end
 ---------------------------------------------------------------------------------------------------------------------
 -- The Advanced search panel, over the auction list
 
-local ROW_TOP = 84          -- first result row, from the top of the panel
+local ROW_TOP = 104         -- first result row, from the top of the panel (under the query box, buttons and headers)
 
 -- Result columns: header, column to sort by, right edge (from the panel's right), width, and how to show the value.
 -- Live-checked values are white; values only from the scan are grey; sold-out rows say so.
@@ -716,14 +798,14 @@ end
 
 local EXAMPLES = {
   { "belowvendor", "Cheaper than a vendor pays: buy and vendor" },
-  { "slot is trinket | sort by price", "Every trinket, cheapest first" },
-  { "slot is back and agi ge 5 | sort by price", "Cloaks with 5+ agility" },
+  { "slot is trinket sort by price", "Every trinket, cheapest first" },
+  { "slot is back and agi ge 5 sort by price", "Cloaks with 5+ agility" },
   { "name like \"*of the eagle\" and reqlevel le 40", "Every \"of the Eagle\" item you can wear by 40" },
-  { "slot is wand and reqlevel le 30 | sort by dps desc", "Best wands up to level 30" },
-  { "stats has spirit and slot in (head, chest, robe) | top 20 by spi", "Top 20 spirit helmets and chests" },
-  { "quality ge rare and price lt 10g | sort by ilvl desc", "Blue or better under 10 gold" },
-  { "type is cloth and int ge 8 and reqlevel le 35 | sort by price", "Cloth with 8+ intellect up to 35" },
-  { "fire_res ge 5 | sort by fire_res desc, price", "Fire resistance gear" },
+  { "type has wand and reqlevel le 29 sort by dps desc", "Best wands up to level 29" },
+  { "stats has spirit and slot in (head, chest, robe) top 20 by spi", "Top 20 spirit helmets and chests" },
+  { "quality ge rare and price lt 10g sort by ilvl desc", "Blue or better under 10 gold" },
+  { "type is cloth and int ge 8 and reqlevel le 35 sort by price", "Cloth with 8+ intellect up to 35" },
+  { "fire_res ge 5 sort by fire_res desc, price", "Fire resistance gear" },
 }
 
 local GUIDE = table.concat({
@@ -735,8 +817,9 @@ local GUIDE = table.concat({
   C_INFO .. "like|r \"*of the bear\"  (* = anything)   " .. C_INFO .. "between|r (20 .. 30)   " .. C_INFO .. "in|r (head, chest)",
   "A word on its own searches names:  " .. C_GOOD .. "wand|r",
   "",
-  C_ACCENT .. "Steps|r   after a |",
-  C_INFO .. "| sort by|r price   " .. C_INFO .. "| sort by|r ilvl desc, price   " .. C_INFO .. "| top|r 10 " .. C_INFO .. "by|r sta   " .. C_INFO .. "| count|r",
+  C_ACCENT .. "Steps|r   at the end:  " .. C_GOOD .. "type has wand and reqlevel le 29 sort by price|r",
+  C_INFO .. "sort by|r price   " .. C_INFO .. "sort by|r ilvl desc, price   " .. C_INFO .. "sort desc|r (no column: by price)   " .. C_INFO .. "top|r 10 " .. C_INFO .. "by|r sta   " .. C_INFO .. "count|r",
+  "Every search is over items, so there is nothing to put in front. reqlevel is also lvl, lvlreq or reqlvl.",
   "Or click a column header to sort; click again to flip it.",
   "",
   C_ACCENT .. "Columns|r",
@@ -760,7 +843,7 @@ local GUIDE = table.concat({
 
 local function makeGuide(f)
   local g = UI.own(CreateFrame("Frame", nil, f))
-  g:SetPoint("TOPLEFT", 1, -40)
+  g:SetPoint("TOPLEFT", 1, -(ROW_TOP - 22))   -- under the query box and buttons
   g:SetPoint("BOTTOMRIGHT", -1, 1)
   g:SetFrameLevel(f:GetFrameLevel() + 20)
   UI.panel(g, T.bg, T.bg)
@@ -914,44 +997,52 @@ local function makeResults()
   f:SetScript("OnHide", function() blizzardList(true) end)
   f:Hide()   -- frames start shown; hiding first makes the first Show run OnShow too
 
-  -- top bar: query box, Search, Guide, Close
-  local close = UI.button(f, "Close", 60, 24)
-  close:SetPoint("TOPRIGHT", -8, -8)
+  -- the query box across the whole top, two lines tall; under it the status line, with the buttons on the right
+  local search   -- Enter and the Search button
+  local box = UI.input(f, 100, 40, { hint = "type has wand and reqlevel le 29 sort by price", max = 400, lines = 2,
+    onEnter = function() search() end })
+  box.edbWell:SetPoint("TOPLEFT", 8, -8)
+  box.edbWell:SetPoint("TOPRIGHT", -8, -8)
+  f.box = box
+
+  local close = UI.button(f, "Close", 54, 24)
+  close:SetPoint("TOPRIGHT", -8, -54)
   close:SetScript("OnClick", hideResults)
 
-  local help = UI.button(f, "Guide", 64, 24)
+  local help = UI.button(f, "Guide", 54, 24)
   help:SetPoint("RIGHT", close, "LEFT", -6, 0)
 
-  local go = UI.button(f, "Search", 76, 24, "primary")
+  local go = UI.button(f, "Search", 68, 24, "primary")
   go:SetPoint("RIGHT", help, "LEFT", -6, 0)
 
-  local save = UI.button(f, "Save", 56, 24)
+  local save = UI.button(f, "Save", 48, 24)
   save:SetPoint("RIGHT", go, "LEFT", -6, 0)
   save:SetScript("OnClick", function()
-    local q = Q.last or f.box:GetText():gsub("||", "|")
+    local q = Q.last or UI.oneLine(f.box:GetText()):gsub("||", "|")
     if ns.saveToList and q and q:match("%S") then ns.saveToList(q) end
   end)
   UI.tip(save, "Save to a shopping list", "Adds this search to the shopping list picked in the Shopping tab.")
 
-  local vendor = UI.button(f, "Below vendor", 100, 24)
+  local vendor = UI.button(f, "Below vendor", 92, 24)
   vendor:SetPoint("RIGHT", save, "LEFT", -6, 0)
   vendor:SetScript("OnClick", function() ns.query("belowvendor") end)
   UI.tip(vendor, "Below vendor price", "Auctions cheaper than what a vendor pays for the item: buy them and sell them to any vendor. Biggest profit first. The same as the search: belowvendor")
 
-  local box = UI.input(f, 100, 24, { hint = "slot is trinket and price lt 5g | sort by price", max = 400 })
-  box:SetPoint("TOPLEFT", 8, -8)
-  box:SetPoint("RIGHT", vendor, "LEFT", -6, 0)
-  local function search()
+  function search()
     box:ClearFocus()
-    if box:GetText():match("%S") then ns.query(box:GetText()) end
+    local text = UI.oneLine(box:GetText())
+    if text:match("%S") then ns.query(text) end
   end
-  box:SetScript("OnEnterPressed", search)
   go:SetScript("OnClick", search)
-  f.box = box
 
+  -- the status line: up to two lines left of the buttons
   f.head = UI.text(f, "dim")
-  f.head:SetPoint("TOPLEFT", 12, -44)
-  f.head:SetPoint("RIGHT", -12, 0)
+  f.head:SetPoint("TOPLEFT", 12, -51)
+  f.head:SetPoint("BOTTOMRIGHT", vendor, "BOTTOMLEFT", -8, -3)
+  f.head:SetJustifyH("LEFT")
+  f.head:SetJustifyV("MIDDLE")
+  f.head:SetWordWrap(true)
+  if f.head.SetMaxLines then f.head:SetMaxLines(2) end
   f.head:SetText("Type a query and press Enter. Guide explains how.")
 
   local band = UI.headerBand(f, 22)
@@ -1227,6 +1318,7 @@ function ns.query(text)
   local f = makeResults()
   if not f then return end
   if ns.closeBuy then ns.closeBuy() end
+  text = UI.oneLine(text)
   f.box:SetText(text)
   f.guide:Hide()
   f:Show()
@@ -1251,7 +1343,7 @@ function ns.queryList(list)
   f:Show()
   local out, total = {}, 0
   for _, q in ipairs(list.queries or {}) do
-    local plain = q:gsub("||", "|"):gsub("^%s*where%s+", "")
+    local plain = UI.oneLine(q):gsub("||", "|"):gsub("^%s*where%s+", "")
     local results, head = run(plain)
     -- what one of each costs at the lowest price (from the scan): a list of materials shows its total
     local sum, priced = 0, 0

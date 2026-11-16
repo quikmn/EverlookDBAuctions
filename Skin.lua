@@ -339,30 +339,104 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- Edit boxes: dark well, 1 px border that lights up on hover and turns gold while typing. opts.hint shows grey text
 -- while empty; opts.numeric allows digits only; opts.right aligns right; opts.max limits the length.
+-- opts.lines makes a box that many lines tall whose text wraps: still one line of text (Enter runs opts.onEnter
+-- instead of breaking the line, pasted line breaks become spaces), scrolled to keep the cursor in view. Anchor and
+-- size box.edbWell (the box itself when it is one line). opts.onEnter runs on Enter; without it Enter clears focus.
+
+-- Text with its line breaks as single spaces, and no spaces left at either end where a break was.
+function UI.oneLine(text)
+  text = tostring(text or "")
+  if not text:find("[\r\n]") then return text end
+  return (text:gsub("%s*[\r\n]+%s*", " "):gsub("^%s+", ""):gsub("%s+$", ""))
+end
 
 function UI.input(parent, w, h, opts)
   opts = opts or {}
-  local e = CreateFrame("EditBox", nil, parent)
-  e:SetSize(w or 120, h or 24)
+  local lines = opts.lines and opts.lines > 1 and opts.lines
+  local e, well
+  if lines then
+    -- the well holds a scroll frame that clips the box to the well; the box grows as its text wraps
+    well = CreateFrame("Frame", nil, parent)
+    well:SetSize(w or 120, h or 24)
+    local clip = CreateFrame("ScrollFrame", nil, well)
+    clip:SetPoint("TOPLEFT", 0, -1)
+    clip:SetPoint("BOTTOMRIGHT", 0, 1)
+    e = CreateFrame("EditBox", nil, clip)
+    e:SetMultiLine(true)
+    clip:SetScrollChild(e)
+    e:SetSize(w or 120, (h or 24) - 2)
+    clip:HookScript("OnSizeChanged", function(_, cw, ch)
+      e:SetWidth(cw)
+      if (e:GetHeight() or 0) < ch then e:SetHeight(ch) end
+    end)
+    e:SetTextInsets(7, 7, 4, 4)
+    -- keep the line with the cursor in view
+    e:HookScript("OnCursorChanged", function(_, _, y, _, lineH)
+      local top, view, at = -(y or 0), clip:GetHeight() or 0, clip:GetVerticalScroll() or 0
+      if top - 4 < at then at = top - 4
+      elseif top + (lineH or 0) + 4 > at + view then at = top + (lineH or 0) + 4 - view end
+      local range = clip.GetVerticalScrollRange and clip:GetVerticalScrollRange() or at
+      clip:SetVerticalScroll(math.max(0, math.min(at, math.max(range, 0))))
+    end)
+  else
+    e = CreateFrame("EditBox", nil, parent)
+    e:SetSize(w or 120, h or 24)
+    e:SetTextInsets(7, 7, 0, 0)
+    well = e
+  end
+  e.edbWell = well
   e:SetAutoFocus(false)
   e:SetFontObject(fontObject("body"))
-  e:SetTextInsets(7, 7, 0, 0)
   e:SetJustifyH(opts.right and "RIGHT" or "LEFT")
   if opts.numeric then e:SetNumeric(true) end
   if opts.max then e:SetMaxLetters(opts.max) end
-  paint(e, T.input, T.edge)
-  e.edbRing = ring(e)
+  paint(well, T.input, T.edge)
+  e.edbRing = ring(well)
+  local hint
   local function edge()
-    setEdge(e, e:HasFocus() and T.accent or e.edbOver and T.edgeHi or T.edge)
+    setEdge(well, e:HasFocus() and T.accent or e.edbOver and T.edgeHi or T.edge)
     e.edbRing:SetShown(e:HasFocus())
-    if e.edbHint then e.edbHint:SetShown(e:GetText() == "" and not e:HasFocus()) end
+    if hint then hint:SetShown(e:GetText() == "" and not e:HasFocus()) end
   end
   if opts.hint then
-    e.edbHint = UI.text(e, "mute")
-    e.edbHint:SetPoint("LEFT", 7, 0)
-    e.edbHint:SetPoint("RIGHT", -7, 0)
-    e.edbHint:SetJustifyH(opts.right and "RIGHT" or "LEFT")
-    e.edbHint:SetText(opts.hint)
+    hint = UI.text(e, "mute")
+    e.edbHint = hint
+    if lines then
+      hint:SetPoint("TOPLEFT", 7, -4)
+      hint:SetPoint("RIGHT", -7, 0)
+    else
+      hint:SetPoint("LEFT", 7, 0)
+      hint:SetPoint("RIGHT", -7, 0)
+    end
+    hint:SetJustifyH(opts.right and "RIGHT" or "LEFT")
+    hint:SetText(opts.hint)
+  end
+  -- Enter: once per key press, whether the game reports it as Enter or as a typed line break
+  local entered
+  local function enter()
+    local now = GetTime()
+    if entered == now then return end
+    entered = now
+    if opts.onEnter then opts.onEnter(e) else e:ClearFocus() end
+  end
+  if lines then
+    local before = ""
+    e:HookScript("OnTextChanged", function(self, typed)
+      local text = self:GetText()
+      if text:find("[\r\n]") then
+        -- one break typed and nothing else changed: that was Enter, so the text goes back to what it was
+        local i = text:find("[\r\n]")
+        local wasEnter = typed and text:sub(1, i - 1) .. text:sub(i + 1) == before
+        local clean = wasEnter and before or UI.oneLine(text)
+        local pos = wasEnter and i - 1 or self:GetCursorPosition() or #clean
+        before = clean
+        self:SetText(clean)
+        self:SetCursorPosition(math.min(pos, #clean))
+        if wasEnter then enter() end
+        return
+      end
+      before = text
+    end)
   end
   e:HookScript("OnEnter", function() e.edbOver = true; edge() end)
   e:HookScript("OnLeave", function() e.edbOver = false; edge() end)
@@ -370,7 +444,7 @@ function UI.input(parent, w, h, opts)
   e:HookScript("OnEditFocusLost", edge)
   e:HookScript("OnTextChanged", edge)
   e:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-  e:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+  e:SetScript("OnEnterPressed", enter)
   edge()
   return UI.own(e)
 end
