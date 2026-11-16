@@ -14,9 +14,12 @@ local UI = ns.UI
 local R = ns.recipeList
 local C = {}
 
-local W, PAD, ROW, GAP = 280, 10, 18, 2
-local PRICE_W, COUNT_W = 96, 30
-local LIST_W, LIST_ROW, LIST_MAX = 300, 22, 10
+-- the price columns fit a 4-digit gold price with its silver and copper ("1,234g 56s 78c" with coin icons)
+local W, PAD, ROW, GAP = 300, 10, 18, 2
+local PRICE_W, COUNT_W = 112, 30
+local LIST_W, LIST_ROW, LIST_MAX = 320, 22, 10
+local LIST_PRICE_W = 104
+local STALE = 24 * 3600   -- older prices show grey, as in the tooltips
 
 local QUIET = { 0.5, 0.5, 0.5 }
 local WHITE = { 1, 1, 1 }
@@ -34,10 +37,14 @@ local function enabled()
   return db and db.craft ~= false
 end
 
+-- The saved lowest price and when it was seen (nil when unknown).
 local function priceOf(id)
   local it = ns.itemFor and ns.itemFor(id)
   return it and it[1], it and it[4]
 end
+
+-- Whether a price seen at `at` is over a day old.
+local function stale(at) return at ~= nil and time() - at >= STALE end
 
 local function nameOf(id)
   local name = try(C_Item.GetItemNameByID, id)
@@ -107,15 +114,19 @@ local function work(info)
     local r = slot.reagents and slot.reagents[1]
     local need = ns.ok(slot.quantityRequired) or 0
     if r and r.itemID and need > 0 and not slot.hiddenInCraftingForm then
-      local p = priceOf(r.itemID)
-      w.mats[#w.mats + 1] = { r.itemID, need, p }
+      local p, at = priceOf(r.itemID)
+      w.mats[#w.mats + 1] = { r.itemID, need, p, at }
       if p then w.cost = w.cost + p * need else w.unpriced = w.unpriced + 1 end
+      if p and at and (not w.oldest or at < w.oldest) then w.oldest = at end
     end
   end
   w.out = ns.ok(sc.outputItemID)
   w.makes = ((sc.quantityMin or 1) + (sc.quantityMax or sc.quantityMin or 1)) / 2
   if w.out then
-    w.each = priceOf(w.out)
+    local at
+    w.each, at = priceOf(w.out)
+    w.eachAt = at
+    if w.each and at and (not w.oldest or at < w.oldest) then w.oldest = at end
     w.de = ns.disenchantValue and ns.disenchantValue(w.out)
   end
   return w
@@ -285,6 +296,15 @@ local function render()
   C.work = w
   place(f, ProfessionsFrame)
 
+  -- how old the prices are: the oldest one used (a price over a day old is grey)
+  if w.oldest and ns.ago then
+    f.sub:SetText("AH prices, oldest " .. ns.ago(w.oldest))
+    f.sub:SetTextColor(unpack(stale(w.oldest) and BAD or QUIET))
+  else
+    f.sub:SetText("lowest AH price")
+    f.sub:SetTextColor(unpack(QUIET))
+  end
+
   -- materials: icon and name, how many, what they cost
   local y = -PAD - 24
   for i, m in ipairs(w.mats) do
@@ -298,7 +318,7 @@ local function render()
     row.name:SetText(nameOf(m[1]))
     row.name:SetTextColor(qualityColor(m[1]))
     row.count:SetText("x" .. m[2])
-    if m[3] then setMoney(row.price, m[3] * m[2]) else quiet(row.price, "no AH price") end
+    if m[3] then setMoney(row.price, m[3] * m[2], stale(m[4]) and QUIET or nil) else quiet(row.price, "no AH price") end
     row:Show()
     y = y - ROW - GAP
   end
@@ -317,7 +337,8 @@ local function render()
     lines[#lines + 1] = { "Materials", w.cost, w.unpriced > 0 and QUIET or nil }
   end
   if w.out then
-    lines[#lines + 1] = { w.makes > 1 and ("Sells for (makes %s)"):format(w.makes) or "Sells for", value }
+    lines[#lines + 1] = { w.makes > 1 and ("Sells for (makes %s)"):format(w.makes) or "Sells for", value,
+      stale(w.eachAt) and QUIET or nil }
     if w.de then lines[#lines + 1] = { "Disenchant (estimate)", w.de } end
     if value and w.unpriced == 0 then
       local profit = math.floor(value * 0.95) - w.cost
@@ -385,7 +406,7 @@ local function makeListRow(L)
   end)
   row.price = text(row, "GameFontHighlightSmall", "RIGHT")
   row.price:SetPoint("RIGHT", 0, 0)
-  row.price:SetWidth(84)
+  row.price:SetWidth(LIST_PRICE_W)
   row.buy = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
   row.buy:SetSize(34, 18)
   row.buy:SetPoint("RIGHT", row.price, "LEFT", -10, 0)
@@ -396,6 +417,7 @@ local function makeListRow(L)
   row.buy:SetScript("OnTextChanged", function(self, user)
     if not user or not row.data then return end
     row.data.buy = tonumber(self:GetText()) or 0
+    row.data.typed = true   -- your amount: a bag change leaves it alone
     if row.data.buy > 0 and not row.data.tick then
       row.data.tick = true
       row.check:SetChecked(true)
@@ -447,7 +469,7 @@ function refreshList()
       row.have:SetText(("%d/%d"):format(d.have, d.need))
       row.have:SetTextColor(unpack(d.have >= d.need and GOOD or QUIET))
       row.buy:SetText(tostring(d.buy))
-      if d.price then setMoney(row.price, d.price) else quiet(row.price, "no AH price") end
+      if d.price then setMoney(row.price, d.price, stale(d.at) and QUIET or nil) else quiet(row.price, "no AH price") end
       row:Show()
       y = y - LIST_ROW
     elseif row then
@@ -545,9 +567,9 @@ local function makeList()
     h:SetPoint("RIGHT", right, 0)
     h:SetWidth(width)
   end
-  head("Price each", 0, 84)
-  head("Buy", -94, 34)
-  head("Have", -138, 44)
+  head("Price each", 0, LIST_PRICE_W)
+  head("Buy", -(LIST_PRICE_W + 10), 34)
+  head("Have", -(LIST_PRICE_W + 10 + 34 + 10), 44)
   local hi = text(L.head, "GameFontDisableSmall")
   hi:SetPoint("LEFT", 20, 0)
   hi:SetText("Item")
@@ -605,12 +627,36 @@ local function soon()
   C_Timer.After(0.3, function() pending = nil; render() end)
 end
 
+-- Bags changed (bought, looted, crafted): the shopping list's "have" counts follow, and an amount to buy that was
+-- worked out from them goes down with them. Amounts you typed and your ticks stay.
+function C.bagsChanged()
+  local L = C.list
+  if not (L and L:IsShown() and C.rows) then return end
+  local crafts = tonumber(L.crafts:GetText()) or 1
+  for _, row in ipairs(L.rows) do
+    local d = row:IsShown() and row.data
+    if d then
+      local have = haveOf(d.id)
+      if have ~= d.have then
+        if not d.typed then d.buy = R.toBuy(d.need / math.max(1, math.floor(crafts)), have, crafts) end
+        d.have = have
+        row.have:SetText(("%d/%d"):format(d.have, d.need))
+        row.have:SetTextColor(unpack(d.have >= d.need and GOOD or QUIET))
+        row.buy:SetText(tostring(d.buy))
+      end
+    end
+  end
+  listTotal()
+end
+
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("TRADE_SKILL_SHOW")
 ev:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+ev:RegisterEvent("BAG_UPDATE_DELAYED")
 ev:SetScript("OnEvent", function(_, e, name)
   if e == "GET_ITEM_INFO_RECEIVED" then soon(); return end
+  if e == "BAG_UPDATE_DELAYED" then C.bagsChanged(); return end
   if e == "ADDON_LOADED" and name ~= "Blizzard_Professions" then return end
   hook()
   if e == "TRADE_SKILL_SHOW" then C_Timer.After(0.1, render) end
