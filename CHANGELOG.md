@@ -8,6 +8,9 @@
 - Update prices sits on the bar and is always there. During the 15-minute wait it shows when the next update is.
 - Advanced search is a gold button on the Buy tab's search row.
 - The Selling tab no longer shows a second copy of your money.
+- The crafting cost box looks like part of the game now: the game's tooltip frame and fonts, item icons, lined-up columns and prices in gold, silver and copper. It sits right of the profession window's tab buttons instead of over them. A material without a price says "no AH price" in grey, with a short note under the totals, and the profit line only shows once everything has a price. Recipes that make no item (enchants) skip "Sells for".
+- Shopping list from a recipe: the Shopping list button in the crafting box lists the recipe's materials with how many you have and how many to buy, ticked when you have too few. Change an amount or the number of crafts, then Create list saves the ticked ones as a list named after the recipe in the auction house's Shopping tab. Press Run beside an item there to search for it. Making the list again for the same recipe updates it.
+- Shopping lists show how many to buy beside each search made from a recipe, and in the results.
 
 ## v0.6.0 (2026-11-14)
 
