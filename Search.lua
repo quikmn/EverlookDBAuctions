@@ -21,6 +21,7 @@ local ROW_H = 22
 
 local Q = { results = {}, offset = 0 }
 local liveStep   -- the live check (defined further down; the panel's scroll uses it)
+local blizzardSearch, modeButton   -- Blizzard's search row on or off, the Advanced search button's look (further down)
 local live = { tried = {}, busy = nil }   -- the live check: items tried, the one being looked up
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -661,7 +662,7 @@ ns.queryRun = function(text) return run(text) end
 ---------------------------------------------------------------------------------------------------------------------
 -- The Advanced search panel, over the auction list
 
-local ROW_TOP = 104         -- first result row, from the top of the panel (under the query box, buttons and headers)
+local ROW_TOP = 122         -- first result row, from the top of the panel (under the title, query box, buttons, headers)
 
 -- Result columns: header, column to sort by, right edge (from the panel's right), width, and how to show the value.
 -- Live-checked values are white; values only from the scan are grey; sold-out rows say so.
@@ -789,6 +790,50 @@ local function blizzardList(shown)
     if child ~= Q.frame then child:SetAlpha(shown and 1 or 0) end
   end
   for _, region in ipairs({ area:GetRegions() }) do region:SetAlpha(shown and 1 or 0) end
+end
+
+-- Blizzard's search box, Filter, favourites star and Search button: dimmed and switched off while Advanced search is
+-- open, so it's plain which search is active; put back exactly as they were when it closes.
+local saved = {}
+function blizzardSearch(on)
+  local bar = _G.AuctionHouseFrame and AuctionHouseFrame.SearchBar
+  if not bar then return end
+  for _, k in ipairs({ "SearchBox", "FilterButton", "SearchButton", "FavoritesSearchButton" }) do
+    local w = bar[k]
+    if w then
+      if not on then
+        if not saved[k] then
+          saved[k] = { alpha = w:GetAlpha(), enabled = not w.IsEnabled or w:IsEnabled() }
+        end
+        if w.ClearFocus then w:ClearFocus() end
+        w:SetAlpha(0.3)
+        if w.Disable then w:Disable() elseif w.SetEnabled then w:SetEnabled(false) end
+        if w.EnableMouse then w:EnableMouse(false) end
+      elseif saved[k] then
+        w:SetAlpha(saved[k].alpha)
+        if w.EnableMouse then w:EnableMouse(true) end
+        if saved[k].enabled then
+          if w.Enable then w:Enable() elseif w.SetEnabled then w:SetEnabled(true) end
+        end
+        saved[k] = nil
+      end
+    end
+  end
+end
+
+-- The Advanced search button shows whether Advanced search is open, and closes it again.
+function modeButton()
+  local b = Q.button
+  if not b then return end
+  local open = Q.frame and Q.frame:IsShown()
+  b:SetText(open and "Close advanced search" or "Advanced search")
+  b:EdbActive(open)
+end
+
+-- The line at the panel's top left: where you are.
+function ns.searchCrumb(item)
+  if not Q.frame then return end
+  Q.frame.crumb:SetText(C_ACCENT .. "Advanced search|r" .. (item and (C_MUTE .. "  >  |r" .. item) or ""))
 end
 
 local function setStatus(text, isError)
@@ -994,22 +1039,30 @@ local function makeResults()
   local f = UI.own(CreateFrame("Frame", "EverlookAuctionsQueryResults", area))
   f:SetAllPoints(area)
   f:SetFrameLevel(area:GetFrameLevel() + 200)
-  UI.panel(f, T.bg, T.edge)
+  UI.panel(f, T.bg, T.accent)   -- a gold edge: Advanced search is what's active
   f:EnableMouse(true)
-  f:SetScript("OnShow", function() blizzardList(false) end)
-  f:SetScript("OnHide", function() blizzardList(true) end)
+  f:SetScript("OnShow", function() blizzardList(false); blizzardSearch(false); modeButton() end)
+  f:SetScript("OnHide", function() blizzardList(true); blizzardSearch(true); modeButton() end)
   f:Hide()   -- frames start shown; hiding first makes the first Show run OnShow too
+
+  -- where you are: "Advanced search", and "Advanced search > item" while buying (Buy.lua sets it)
+  f.crumb = UI.text(f, "title")
+  f.crumb:SetPoint("TOPLEFT", 12, -8)
+  f.crumb:SetPoint("RIGHT", -12, 0)
+  f.crumb:SetJustifyH("LEFT")
+  f.crumb:SetWordWrap(false)
+  f.crumb:SetText(C_ACCENT .. "Advanced search|r")
 
   -- the query box across the whole top, two lines tall; under it the status line, with the buttons on the right
   local search   -- Enter and the Search button
   local box = UI.input(f, 100, 40, { hint = "type has wand and reqlevel le 29 sort by price", max = 400, lines = 2,
     onEnter = function() search() end })
-  box.edbWell:SetPoint("TOPLEFT", 8, -8)
-  box.edbWell:SetPoint("TOPRIGHT", -8, -8)
+  box.edbWell:SetPoint("TOPLEFT", 8, -26)
+  box.edbWell:SetPoint("TOPRIGHT", -8, -26)
   f.box = box
 
   local close = UI.button(f, "Close", 54, 24)
-  close:SetPoint("TOPRIGHT", -8, -54)
+  close:SetPoint("TOPRIGHT", -8, -72)
   close:SetScript("OnClick", hideResults)
 
   local help = UI.button(f, "Guide", 54, 24)
@@ -1040,7 +1093,7 @@ local function makeResults()
 
   -- the status line: up to two lines left of the buttons
   f.head = UI.text(f, "dim")
-  f.head:SetPoint("TOPLEFT", 12, -51)
+  f.head:SetPoint("TOPLEFT", 12, -69)
   f.head:SetPoint("BOTTOMRIGHT", vendor, "BOTTOMLEFT", -8, -3)
   f.head:SetJustifyH("LEFT")
   f.head:SetJustifyV("MIDDLE")
@@ -1350,9 +1403,16 @@ local function makeButton()
   if Q.button or not row then return end
   local b = UI.button(row, "Advanced search", 150, 22, "primary")
   b:SetPoint("RIGHT", row, "LEFT", -8, 0)
-  b:SetScript("OnClick", ns.openSearch)
-  UI.tip(b, "Advanced search", "Search everything in the last price update with the same query language as EverlookDB.com: stats, slot, item and required level, price. For example: slot is trinket and price lt 5g")
+  b:SetScript("OnClick", function()
+    if Q.frame and Q.frame:IsShown() then hideResults() else ns.openSearch() end
+  end)
+  UI.tip(b, function() return Q.frame and Q.frame:IsShown() and "Close Advanced search" or "Advanced search" end,
+    function()
+      if Q.frame and Q.frame:IsShown() then return "Back to Blizzard's own search." end
+      return "Search everything in the last price update with the same query language as EverlookDB.com: stats, slot, item and required level, price. For example: type has wand and reqlevel le 29 sort by price"
+    end)
   Q.button = b
+  modeButton()
 end
 
 local ev = CreateFrame("Frame")

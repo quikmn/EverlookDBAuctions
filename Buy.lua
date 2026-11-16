@@ -323,7 +323,7 @@ function render()
   if B.loaded then empty = "Nobody is selling this right now."
   elseif B.state == "retry" then empty = "The auction house didn't answer. Retrying..."
   elseif B.state == "noanswer" then empty = "The auction house didn't answer. Press Refresh to try again."
-  elseif B.state == "partial" then empty = "The auction house didn't send its whole list for this name. Try Blizzard's list." end
+  elseif B.state == "partial" then empty = "The auction house didn't send its whole list for this name. Try Show in Blizzard search." end
   f.list.empty:SetText(empty)
   f.list:SetItems(B.rows or {})
   f.qtyLabel:SetShown(B.commodity)
@@ -370,7 +370,7 @@ local function makeFrame()
   local host = _G.EverlookAuctionsQueryResults
   if B.frame or not host then return B.frame end
   local f = UI.own(CreateFrame("Frame", nil, host))
-  f:SetPoint("TOPLEFT", 1, -40)
+  f:SetPoint("TOPLEFT", 1, -26)   -- under the "Advanced search > item" line
   f:SetPoint("BOTTOMRIGHT", -1, 1)
   f:SetFrameLevel(host:GetFrameLevel() + 30)
   UI.panel(f, T.bg, T.bg)
@@ -381,30 +381,34 @@ local function makeFrame()
     cancelQuote()
     B.armed = nil
     ns.buyOpen = false
+    if ns.searchCrumb then ns.searchCrumb(nil) end
     if ns.liveStep then ns.liveStep() end
   end)
-  f:SetScript("OnShow", function() ns.buyOpen = true end)
+  f:SetScript("OnShow", function()
+    ns.buyOpen = true
+    if ns.searchCrumb then ns.searchCrumb(B.name) end
+  end)
   B.frame = f
 
   f.icon = UI.icon(f, 36)
   f.icon:SetPoint("TOPLEFT", 12, -10)
   f.name = UI.text(f, "big")
   f.name:SetPoint("TOPLEFT", f.icon, "TOPRIGHT", 10, -2)
-  f.name:SetPoint("RIGHT", f, "RIGHT", -230, 0)
+  f.name:SetPoint("RIGHT", f, "RIGHT", -296, 0)
   f.sub = UI.text(f, "dim")
   f.sub:SetPoint("TOPLEFT", f.name, "BOTTOMLEFT", 0, -5)
-  f.sub:SetPoint("RIGHT", f, "RIGHT", -230, 0)
+  f.sub:SetPoint("RIGHT", f, "RIGHT", -296, 0)
 
   local back = UI.button(f, "Back", 60, 22, "small")
   back:SetPoint("TOPRIGHT", -10, -12)
   back:SetScript("OnClick", close)
-  local blizz = UI.button(f, "Blizzard's list", 104, 22, "small")
+  local blizz = UI.button(f, "Show in Blizzard search", 150, 22, "small")
   blizz:SetPoint("RIGHT", back, "LEFT", -4, 0)
   blizz:SetScript("OnClick", function()
     local name = baseName()
     if ns.ahq then ns.ahq.showInBlizzard(name) end
   end)
-  UI.tip(blizz, "Show it in Blizzard's own list", "Buy, bid and see every version there.")
+  UI.tip(blizz, "Show it in Blizzard's own search", "Closes Advanced search and searches its name there: buy, bid and see every version.")
   local refresh = UI.button(f, "Refresh", 64, 22, "small")
   refresh:SetPoint("RIGHT", blizz, "LEFT", -4, 0)
   refresh:SetScript("OnClick", function()
@@ -493,6 +497,7 @@ function ns.openBuy(row)
   setStatus("Buy, then Confirm: two clicks for each purchase.", T.mute)
   ns.buyOpen = true
   f:Show()
+  if ns.searchCrumb then ns.searchCrumb(row.name) end
   render()
   send()
   return true
