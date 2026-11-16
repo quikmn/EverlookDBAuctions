@@ -389,13 +389,14 @@ end
 
 local function openShopping()
   local f = makeFrame()
-  if not f then return end
+  if not f then if ns.tabProbe then ns.tabProbe("Shopping", nil) end return end
   if ns.closeSearch then ns.closeSearch() end
   if ns.closeSelling then ns.closeSelling() end
   if ns.blizzardTabs then ns.blizzardTabs(false) end
   if SH.tab then pcall(PanelTemplates_SelectTab, SH.tab) end
   if ns.raise then ns.raise(f) end
   f:Show()
+  if ns.tabProbe then ns.tabProbe("Shopping", f) end
   if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 end
 

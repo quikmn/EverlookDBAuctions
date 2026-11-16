@@ -1504,13 +1504,14 @@ ns.closeSelling = closeSelling
 
 local function openSelling()
   local f = makeFrame()
-  if not f then return end
+  if not f then ns.tabProbe("Selling", nil); return end
   if ns.closeSearch then ns.closeSearch() end
   if ns.closeOthers then ns.closeOthers("selling") end
   blizzardTabs(false)
   if S.tab then pcall(PanelTemplates_SelectTab, S.tab) end
   ns.raise(f)
   f:Show()
+  ns.tabProbe("Selling", f)
   if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 end
 ns.openSelling = openSelling
@@ -1532,6 +1533,27 @@ function ns.raise(f)
   walk(ah, 1)
   f:SetFrameStrata(ah:GetFrameStrata())
   f:SetFrameLevel(math.min(top + 20, 9000))
+end
+
+-- Temporary: one chat line per tab click saying what happened to the panel, to find why the tab shows nothing.
+-- Who hid it is caught from the panel's OnHide.
+function ns.tabProbe(name, f)
+  if not f then ns.say(name .. " tab: no panel was made (AuctionHouseFrame missing?)"); return end
+  if not f.edbProbe then
+    f.edbProbe = true
+    f:HookScript("OnHide", function()
+      f.edbHiddenBy = (debugstack(2, 6, 0) or ""):gsub("
+", " / "):gsub("Interface/AddOns/", ""):sub(1, 300)
+    end)
+  end
+  f.edbHiddenBy = nil
+  C_Timer.After(0.2, function()
+    local p = f:GetParent()
+    ns.say(("%s tab: shown %s, visible %s, level %d, strata %s, size %dx%d, parent %s visible %s, alpha %.2f%s"):format(
+      name, tostring(f:IsShown()), tostring(f:IsVisible()), f:GetFrameLevel(), f:GetFrameStrata(),
+      f:GetWidth() or 0, f:GetHeight() or 0, p and (p:GetName() or "?") or "none", tostring(p and p:IsVisible()),
+      f:GetEffectiveAlpha(), f.edbHiddenBy and (" | hidden by: " .. f.edbHiddenBy) or ""))
+  end)
 end
 
 -- A tab after Blizzard's (and after any tab made before it). Shared with Shopping.lua.
