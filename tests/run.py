@@ -1,5 +1,6 @@
 """Offline tests in Lua 5.1 (WoW's version) via lupa: the shopping list from a recipe (RecipeList.lua), then the
-crafting box and the shopping list panel (Crafting.lua) against a fake profession window (tests/mock.lua).
+crafting box and the shopping list panel (Crafting.lua) against a fake profession window (tests/mock.lua), the scroll
+bars, and below vendor price (Vendor.lua and its search words in Search.lua) over a fake full scan.
 
 Usage: python -P tests/run.py
 """
@@ -87,6 +88,7 @@ def main() -> int:
 
     failures += crafting_box()
     failures += scroll_bars()
+    failures += below_vendor()
 
     if failures:
         for f in failures:
@@ -245,6 +247,132 @@ def scroll_bars():
     check(L.offset == 6, "only the left button pages")
     L.bar.thumb.scripts.OnMouseDown(L.bar.thumb, "RightButton")
     check(lua.eval("function(t) return rawget(t, 'drag') end")(L.bar.thumb) is None, "only the left button starts a drag")
+    return failures
+
+
+VENDOR_SETUP = """
+local ns = ...
+local db = {
+  scans = { { realm = "Test", side = "Alliance", at = 0, rows = {
+    ["2589:0"] = "10,10,12,400,9",   -- Linen Cloth: 10c each, vendor 13c, stacks of 20
+    ["2592:0"] = "50,50,60,200,5",   -- Wool Cloth: 50c, vendor 33c
+    ["1000:0"] = "1,1,1,5,1",        -- vendors don't buy it (sell price 0)
+    ["5000:0"] = "5,5,5,3,1",        -- a quest item with a sell price
+    ["3000:0"] = "100,100,150,1,1",  -- gear: 1s, vendor 5s
+    ["4000:0"] = ",,,2,1",           -- bids only
+  } } },
+  itemInfo = {
+    [2589] = { "Linen Cloth", 1, 5, 0, "Trade Goods", "Cloth", "", 1, 13, 20 },
+    [2592] = { "Wool Cloth", 1, 15, 0, "Trade Goods", "Cloth", "", 1, 33, 20 },
+    [1000] = { "Gift", 1, 1, 0, "Miscellaneous", "Junk", "", 1, 0, 1 },
+    [5000] = { "Quest Thing", 1, 1, 0, "Quest", "Quest", "", 1, 50, 1 },
+    [3000] = { "Old Sword", 2, 20, 15, "Weapon", "Swords", "INVTYPE_WEAPON", 1, 500, 1 },
+    [4000] = { "Bid Only", 1, 1, 0, "Trade Goods", "Cloth", "", 1, 100, 1 },
+  },
+  itemStats = {},
+}
+ns.db = function() return db end
+ns.house = function() return "Test-Alliance" end
+ns.money = function(c) return tostring(c) .. "c" end
+ns.num = function(n) return tostring(n) end
+ns.ago = function() return "just now" end
+ns.ok = function(v) return v end
+ns.say = function() end
+function GetRealmName() return "Test" end
+function time() return 1000 end
+function GetTime() return MOCK_NOW end
+MOCK_NOW = 100
+function strsplit(sep, s)
+  local out, i = {}, 1
+  while true do
+    local j = s:find(sep, i, true)
+    if not j then out[#out + 1] = s:sub(i); break end
+    out[#out + 1] = s:sub(i, j - 1)
+    i = j + 1
+  end
+  return unpack(out)
+end
+MOCK_CLASS = { [5000] = 12, [2589] = 7, [2592] = 7, [1000] = 15, [3000] = 2, [4000] = 7 }
+C_Item.GetItemInfoInstant = function(id) return id, "", "", "", 1, MOCK_CLASS[id] end
+C_Item.GetItemInfo = function(id) return nil end   -- nothing else is loaded
+MOCK_LOADS = 0
+C_Item.RequestLoadItemDataByID = function() MOCK_LOADS = MOCK_LOADS + 1 end
+return db
+"""
+
+
+def below_vendor():
+    """Below vendor price: the profit math, the search words, results over a fake scan, and loading item details."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    V = ns.vendor
+    G = lua.globals()
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("vendor: " + what)
+
+    # the price comparison and the profit math (vendors take no cut)
+    check(V.profit(10, 13) == 3, "profit each: vendor price minus buyout")
+    check(V.profit(50, 33) == -17, "negative when the auction costs more")
+    check(V.below(10, 13) is True and V.below(13, 13) is False and V.below(50, 33) is False, "below means strictly cheaper")
+    check(V.profit(10, 0) is None and V.below(1, 0) is False, "sell price 0: nothing to compare")
+    check(V.profit(None, 13) is None and V.profit(0, 13) is None, "no buyout: nothing to compare")
+    check(V.stackProfit(10, 13, 20) == 60, "a stack of 20 at 3c profit each is 60c")
+    check(V.stackProfit(100, 500, 1) == 400 and V.stackProfit(100, 500, None) == 400, "gear: a stack of one")
+    check(V.isQuest(5000) is True and V.isQuest(2589) is False, "quest items by item class")
+
+    # search words
+    P = ns.queryParse
+    st = P("belowvendor")
+    check(st.vendor is True and st[1].k == "where" and st[1].e.k == "below", "belowvendor on its own")
+    check(P("undervendor").vendor is True, "undervendor means the same")
+    st = P("price lt vendor")
+    check(st.vendor is True and st[1].e.col == "price" and st[1].e["values"][1] == "vendor", "price lt vendor")
+    check(P("price lt sell").vendor is True, "price lt sell")
+    check(P("belowvendor and profit ge 1s | sort by stackprofit desc").vendor is True, "with profit and a sort")
+    check(P("slot is trinket and price lt 5g").vendor is None, "a normal search is not a vendor search")
+    check(P("name has belowvendor")[1].e.col == "name", "as a value it stays a name search")
+
+    def names(text):
+        rows, head, _missing, vendor = ns.queryRun(text)
+        return [rows[i].name for i in range(1, len(rows) + 1)], head, vendor
+
+    got, head, vendor = names("belowvendor")
+    check(got == ["Old Sword", "Linen Cloth"], f"below vendor, biggest profit first: {got}")
+    check(vendor is True, "results say they are a vendor search")
+    check("Gift" not in got and "Quest Thing" not in got and "Bid Only" not in got,
+          "no sell price, quest items and bids-only never count")
+    got, _, _ = names("price lt vendor")
+    check(got == ["Old Sword", "Linen Cloth"], f"price lt vendor: the same, by profit: {got}")
+    got, _, _ = names("belowvendor | sort by price")
+    check(got == ["Linen Cloth", "Old Sword"], f"its own sort wins: {got}")
+    got, _, _ = names("belowvendor and profit lt 1s")
+    check(got == ["Linen Cloth"], f"profit as a column: {got}")
+    got, _, _ = names("belowvendor | sort by stackprofit desc")
+    check(got == ["Old Sword", "Linen Cloth"], f"stack profit 400c vs 60c: {got}")
+    got, _, _ = names("not belowvendor and category is \"Trade Goods\" | sort by name")
+    check(got == ["Bid Only", "Wool Cloth"], f"not belowvendor: {got}")
+    _, _, vendor = names("slot is onehand")
+    check(vendor is False, "a normal search has the normal columns")
+
+    # an item whose details aren't loaded: not marked, asked for once, not again within 30 s
+    check(V.flip(6000, 1) is None and G.MOCK_LOADS == 1, "unknown item: asked for its details once")
+    V.flip(6000, 1)
+    V.sellOf(6000)
+    check(G.MOCK_LOADS == 1, "not asked again right away")
+    G.MOCK_NOW = 200
+    V.sellOf(6000)
+    check(G.MOCK_LOADS == 2, "asked again after 30 seconds")
+    check(V.flip(2589, 10) == 3 and V.flip(2589, 13) is None, "flip: profit when below, nothing when not")
+    check(V.flip(1000, 0) is None and V.flip(1000, 1) is None, "flip: sell price 0 never counts")
+    check(V.flip(5000, 5) is None, "flip: quest items never count")
     return failures
 
 

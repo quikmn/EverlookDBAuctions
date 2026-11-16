@@ -10,6 +10,7 @@ EverlookDBAuctions.lua
 Skin.lua
 Data.lua
 Disenchant.lua
+Vendor.lua
 Sell.lua
 Search.lua
 Shopping.lua

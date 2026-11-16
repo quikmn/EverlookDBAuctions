@@ -8,9 +8,12 @@
 -- From EverlookDB's data (Data.lua): slots (bag size), source (vendor, crafted, drop, quest, skinning,
 -- pickpocket), profession (that makes it), skill (needed to make it) and droprate (best drop chance, %).
 -- Steps: where, sort by <col> [asc|desc], top <n> [by <col>], count.
+-- Below vendor price (Vendor.lua): `belowvendor` on its own, or a money column compared with another column
+-- (`price lt vendor`). profit is the vendor price minus the lowest buyout, each; stackprofit is that for a full stack.
 
 local ADDON, ns = ...
 local UI, T = ns.UI, ns.T
+local V = ns.vendor
 local C_BAD, C_MUTE, C_DIM, C_GOOD, C_INFO, C_ACCENT =
   UI.hex(T.bad), UI.hex(T.mute), UI.hex(T.dim), UI.hex(T.good), UI.hex(T.info), UI.hex(T.accent)
 
@@ -58,6 +61,7 @@ local KIND = {   -- text, number, enum or money
   ilvl = "number", reqlevel = "number", stack = "number", qty = "number", auctions = "number",
   sell = "money", price = "money", median = "money",
   slots = "number", skill = "number", profession = "text", source = "text", droprate = "number",
+  profit = "money", stackprofit = "money",
 }
 for k in pairs(STATS) do KIND[k] = "number" end
 KIND.stats = "text"   -- every stat on the item as text, e.g. "Stamina 5, Agility 3": `stats has agility`
@@ -68,6 +72,7 @@ local ALIAS = {
   strength = "str", agility = "agi", stamina = "sta", stam = "sta", intellect = "int", intel = "int", spirit = "spi",
   ac = "armor", armour = "armor", firres = "fire_res", fireres = "fire_res", frostres = "frost_res",
   drop = "droprate", dropchance = "droprate", chance = "droprate", bagslots = "slots", size = "slots", prof = "profession", craftedby = "profession", from = "source",
+  vendorprofit = "profit", flip = "profit", stack_profit = "stackprofit", perstack = "stackprofit",
   natureres = "nature_res", shadowres = "shadow_res", arcaneres = "arcane_res", blockvalue = "block", attackpower = "ap", spellpower = "sp", heal = "healing", def = "defense",
 }
 local function column(word)
@@ -175,6 +180,9 @@ function Parser:comparison(col)
   elseif self:isWord("all") or self:isWord("allof") then self:next(); mode = "all" end
   if mode and self:isWord("of") then self:next() end
   local values = (op == "in" or mode) and self:list() or { self:value() }
+  if col == "price" or col == "profit" or col == "stackprofit" then
+    for _, v in ipairs(values) do if column(v) == "sell" or col ~= "price" then self.vendor = true end end
+  end
   return { k = "cmp", col = col, op = op == "in" and "eq" or op, values = values, all = mode == "all", neg = negate }
 end
 
@@ -192,8 +200,13 @@ function Parser:primary()
   end
   local t = self:next()
   if not t then self:fail("the condition ends too early") end
-  local col = t.t == "word" and column(t.v)
   local nxt = self:peek()
+  -- belowvendor: auctions cheaper than a vendor pays
+  if t.t == "word" and V.WORDS[t.v:lower()] and not (nxt and OPS[nxt.v:lower()]) then
+    self.vendor = true
+    return { k = "below" }
+  end
+  local col = t.t == "word" and column(t.v)
   if col and nxt and (OPS[nxt.v:lower()] or nxt.v:lower() == "not" or nxt.v == "!") then
     return self:comparison(col)
   end
@@ -271,6 +284,7 @@ local function parse(text)
       p:fail("unknown step " .. tostring(w and w.v) .. "; use where, sort by, top or count")
     end
   end
+  steps.vendor = p.vendor   -- a below-vendor search: shows profit columns, sorted by profit unless it says otherwise
   return steps
 end
 
@@ -337,6 +351,13 @@ ns.liveFresh = liveFresh
 
 local function get(row, col)
   if STATS[col] then return statsOf(row)[col] or 0 end
+  -- what buying at the lowest price and selling to a vendor makes (vendors take no cut); none for quest items
+  if col == "profit" or col == "stackprofit" then
+    if row.quest then return nil end
+    local price = get(row, "price")
+    if col == "profit" then return V.profit(price, row.sell) end
+    return V.stackProfit(price, row.sell, row.stack)
+  end
   -- price and quantity: the live check when there is a fresh one (sold out = nothing up)
   local l = (col == "price" or col == "qty" or col == "auctions") and liveOf(row)
   if l then
@@ -386,7 +407,22 @@ local function compare(have, op, want)
   return false
 end
 
+-- A value that names a number or money column compares with that column of the same row: `price lt vendor`.
+-- The vendor price of a quest item or of an item vendors don't buy counts as no value.
+local function valueOf(row, col, want)
+  local ref = KIND[col] ~= "text" and KIND[col] ~= "enum" and type(want) == "string" and column(want)
+  if ref and (KIND[ref] == "money" or KIND[ref] == "number") then
+    if ref == "sell" and (row.quest or (row.sell or 0) <= 0) then return nil end
+    return get(row, ref)
+  end
+  return numberOf(col, want)
+end
+
 local function test(row, e)
+  if e.k == "below" then
+    local p = get(row, "profit")
+    return p ~= nil and p > 0
+  end
   if e.k == "and" then return test(row, e.a) and test(row, e.b) end
   if e.k == "or" then return test(row, e.a) or test(row, e.b) end
   if e.k == "not" then return not test(row, e.e) end
@@ -395,7 +431,7 @@ local function test(row, e)
   local r
   if op == "between" then
     local v = kind == "enum" and ENUMS[col][tostring(get(row, col))] or get(row, col)
-    local a, b = numberOf(col, e.a), numberOf(col, e.b)
+    local a, b = valueOf(row, col, e.a), valueOf(row, col, e.b)
     r = v ~= nil and a ~= nil and b ~= nil and v >= a and v <= b
   else
     local one = function(want)
@@ -404,7 +440,7 @@ local function test(row, e)
       end
       local have = get(row, col)
       if kind == "enum" then have = ENUMS[col][tostring(have)] end
-      return compare(have, op, numberOf(col, want))
+      return compare(have, op, valueOf(row, col, want))
     end
     if e.all then
       r = true
@@ -460,6 +496,7 @@ local function dataset()
         quality = QUALITY[(c[2] or 1) + 1], ilvl = c[3], reqlevel = c[4], category = c[5], type = c[6],
         slot = EQUIP[c[7] or ""] or "none", stack = c[10], sell = c[9],
         price = tonumber(f[1]), median = tonumber(f[3]), qty = tonumber(f[4]), auctions = tonumber(f[5]),
+        quest = V.isQuest(id, c[5]),
         source = sourceText(d[1]), profession = ns.PROFESSIONS and ns.PROFESSIONS[d[2] or 0] or "",
         skill = d[3] or 0, slots = d[4] or 0, droprate = d[5] or 0,
       }
@@ -492,6 +529,7 @@ local function sortRows(rows, keys)
   end)
 end
 ns.sortRows = sortRows
+ns.queryParse = function(text) return parse(text) end   -- for the offline tests
 
 local function run(text)
   local lower = " " .. (text or ""):lower() .. " "
@@ -503,6 +541,12 @@ local function run(text)
   end
   local rows, scanned, missing = dataset()
   if not rows then return nil, "No full scan of this auction house yet: open it and let the scan finish first." end
+  -- a below-vendor search with no order of its own: biggest profit first
+  if steps.vendor then
+    local ordered = false
+    for _, st in ipairs(steps) do if st.k == "sort" or st.keys then ordered = true end end
+    if not ordered then steps[#steps + 1] = { k = "sort", keys = { { col = "profit", desc = true } } } end
+  end
   local out = {}
   for _, r in ipairs(rows) do out[#out + 1] = r end
   local counted
@@ -525,8 +569,10 @@ local function run(text)
   local head = counted and ("%s matching item versions"):format(ns.num(counted))
     or ("%s results"):format(ns.num(#out))
   head = head .. (" in the full scan %s"):format(ns.ago(scanned.at))
-  return counted and {} or out, head, missing
+  return counted and {} or out, head, missing, steps.vendor and true or false
 end
+
+ns.queryRun = function(text) return run(text) end
 
 ---------------------------------------------------------------------------------------------------------------------
 -- The Advanced search panel, over the auction list
@@ -536,29 +582,49 @@ local ROW_TOP = 84          -- first result row, from the top of the panel
 -- Result columns: header, column to sort by, right edge (from the panel's right), width, and how to show the value.
 -- Live-checked values are white; values only from the scan are grey; sold-out rows say so.
 local GREY = C_DIM .. ""
+local function upCell(r)
+  local l = liveOf(r)
+  if l then return l.gone and C_BAD .. "-|r" or ns.num(l.qty or 0) end
+  return GREY .. ns.num(r.qty or 0) .. "|r"
+end
+local function lowestCell(r)
+  local l = liveOf(r)
+  if l then
+    if l.gone then return C_BAD .. "sold out|r" end
+    return l.price and ns.money(l.price) or C_MUTE .. "bids only|r"
+  end
+  return r.price and (GREY .. ns.money(r.price) .. "|r") or C_MUTE .. "bids only|r"
+end
+-- Profit after buying and vendoring: green once the live price is checked, grey from the scan, and "none now" when
+-- the live price is no longer under the vendor price.
+local function profitCell(col)
+  return function(r)
+    local p = get(r, col)
+    if not p then return "" end
+    if p <= 0 then return C_MUTE .. "none now|r" end
+    return (liveOf(r) and C_GOOD or GREY) .. "+" .. ns.money(p) .. "|r"
+  end
+end
 local COLS = {
-  { "Up", "qty", -10, 40, function(r)
-    local l = liveOf(r)
-    if l then return l.gone and C_BAD .. "-|r" or ns.num(l.qty or 0) end
-    return GREY .. ns.num(r.qty or 0) .. "|r"
-  end },
+  { "Up", "qty", -10, 40, upCell },
   { "Typical", "median", -56, 86, function(r) return r.median and (GREY .. ns.money(r.median) .. "|r") or "" end },
-  { "Lowest", "price", -148, 86, function(r)
-    local l = liveOf(r)
-    if l then
-      if l.gone then return C_BAD .. "sold out|r" end
-      return l.price and ns.money(l.price) or C_MUTE .. "bids only|r"
-    end
-    return r.price and (GREY .. ns.money(r.price) .. "|r") or C_MUTE .. "bids only|r"
-  end },
+  { "Lowest", "price", -148, 86, lowestCell },
   { "Req", "reqlevel", -240, 30, function(r)
     local v = r[Q.extra or "reqlevel"] or 0
     return v > 0 and v or ""
   end },
   { "iLvl", "ilvl", -276, 30, function(r) return r.ilvl or "" end },
 }
+-- A below-vendor search shows the profit instead of the typical price and the levels.
+local VCOLS = {
+  { "Up", "qty", -10, 40, upCell },
+  { "Per stack", "stackprofit", -56, 96, profitCell("stackprofit") },
+  { "Profit each", "profit", -158, 86, profitCell("profit") },
+  { "Lowest", "price", -250, 86, lowestCell },
+}
 local BAR_SHIFT = 16        -- room for the scroll bar on the right: every column moves left by this much
 local NAME_RIGHT = -312 - BAR_SHIFT   -- the item name stops here
+local VNAME_RIGHT = -342 - BAR_SHIFT  -- ... and here in a below-vendor search
 
 local function rowsFit(f)
   return math.max(4, math.floor((f:GetHeight() - ROW_TOP - 22) / ROW_H))
@@ -580,21 +646,37 @@ local function render()
       if r.want then tail = "buy " .. ns.num(r.want) .. "   " .. tail end
       b.name:SetText(C_ACCENT .. r.name .. "|r   " .. C_MUTE .. tail .. "|r")
       for c in ipairs(COLS) do b.cells[c]:SetText("") end
+      for c in ipairs(VCOLS) do b.vcells[c]:SetText("") end
+      b.flag:EdbSet(nil)
+      b.flag:Hide()
       b:Show()
     elseif r then
-      b.name:SetPoint("RIGHT", f, "RIGHT", NAME_RIGHT, 0)
       b.icon:SetTexture(r.icon)
       local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[(ENUMS.quality[r.quality] or 2) - 1]
       local l = liveOf(r)
       b.name:SetText((l and l.gone and GREY or color and color.hex or "|cffffffff") .. r.name .. "|r")
-      for c, col in ipairs(COLS) do b.cells[c]:SetText(col[5](r)) end
+      local cols, cells, other = COLS, b.cells, b.vcells
+      if Q.vendor then cols, cells, other = VCOLS, b.vcells, b.cells end
+      for c, col in ipairs(cols) do cells[c]:SetText(col[5](r)) end
+      for c in ipairs(other) do other[c]:SetText("") end
+      -- outside a below-vendor search, a small green tag marks results cheaper than a vendor pays
+      local p = not Q.vendor and get(r, "profit")
+      if p and p > 0 then
+        b.flag:EdbSet("Below vendor", T.good)
+        b.flag:Show()
+        b.name:SetPoint("RIGHT", b.flag, "LEFT", -6, 0)
+      else
+        b.flag:Hide()
+        b.name:SetPoint("RIGHT", f, "RIGHT", Q.vendor and VNAME_RIGHT or NAME_RIGHT, 0)
+      end
       b:Show()
     else
       b:Hide()
     end
   end
   for _, h in ipairs(Q.headers) do
-    if h.col == "reqlevel" or h.col == "slots" or h.col == "skill" or h.col == "droprate" then
+    if h.mode then h:SetShown(h.mode == (Q.vendor and "vendor" or "normal")) end
+    if h.mode == "normal" and (h.col == "reqlevel" or h.col == "slots" or h.col == "skill" or h.col == "droprate") then
       h.col = Q.extra or "reqlevel"
       h.label = Q.extra == "slots" and "Slots" or Q.extra == "skill" and "Skill" or Q.extra == "droprate" and "Drop%" or "Req"
     end
@@ -633,6 +715,7 @@ end
 -- Query guide
 
 local EXAMPLES = {
+  { "belowvendor", "Cheaper than a vendor pays: buy and vendor" },
   { "slot is trinket | sort by price", "Every trinket, cheapest first" },
   { "slot is back and agi ge 5 | sort by price", "Cloaks with 5+ agility" },
   { "name like \"*of the eagle\" and reqlevel le 40", "Every \"of the Eagle\" item you can wear by 40" },
@@ -661,7 +744,12 @@ local GUIDE = table.concat({
   "slot: head, neck, shoulder, back, chest, robe, shirt, tabard, wrist, hands, waist, legs, feet, finger, trinket, onehand, twohand, mainhand, offhand, holdable, shield, ranged, wand, thrown, bag",
   "price (lowest buyout), median (typical), qty (how many up), auctions, sell (vendor price)",
   "slots (bag size), source (vendor, crafted, drop, quest, skinning), profession, skill, droprate (best drop %)",
-  "Money: 5g, 50s, 1g50s, 20c",
+  "Money: 5g, 50s, 1g50s, 20c. Or another column: " .. C_GOOD .. "price lt vendor|r",
+  "",
+  C_ACCENT .. "Below vendor price|r",
+  C_GOOD .. "belowvendor|r finds auctions cheaper than a vendor pays (the same as " .. C_GOOD .. "price lt vendor|r), biggest profit first. Buy them and sell them to any vendor: vendors take no cut. Quest items and items vendors don't buy never count.",
+  C_INFO .. "profit|r (vendor price minus the lowest buyout, each) and " .. C_INFO .. "stackprofit|r (for a full stack):  " .. C_GOOD .. "belowvendor and profit ge 10s|r",
+  "Elsewhere, a green " .. C_GOOD .. "Below vendor|r tag marks such results.",
   "",
   C_ACCENT .. "Stats|r",
   "str, agi, sta, int, spi, armor, ap, sp, healing, mp5, defense, dps, hit, crit, block",
@@ -740,7 +828,7 @@ local function headerClick(self)
   render()
 end
 
-local function makeHeader(f, label, col, right, width)
+local function makeHeader(f, label, col, right, width, mode)
   local h = UI.own(CreateFrame("Button", nil, f))
   h:SetSize(width, 20)
   if right then
@@ -750,7 +838,7 @@ local function makeHeader(f, label, col, right, width)
   end
   h.text = UI.text(h, "head")
   h.text:SetPoint(right and "RIGHT" or "LEFT", 0, 0)
-  h.label, h.col = label, col
+  h.label, h.col, h.mode = label, col, mode
   h:SetScript("OnClick", headerClick)
   h:SetScript("OnEnter", function(self) self.text:SetTextColor(unpack(T.text)) end)
   h:SetScript("OnLeave", function(self) self.text:SetTextColor(unpack(Q.sortCol == self.col and T.accent or T.mute)) end)
@@ -765,16 +853,23 @@ local function makeRow(f, k)
   b.icon:SetSize(18, 18)
   b.icon:SetPoint("LEFT", 12, 0)
   b.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-  b.cells = {}
-  for c, col in ipairs(COLS) do
-    local fs = UI.text(b, "body")
-    fs:SetPoint("RIGHT", f, "RIGHT", col[3] - BAR_SHIFT, 0)
-    fs:SetPoint("TOP", b, "TOP", 0, 0)
-    fs:SetPoint("BOTTOM", b, "BOTTOM", 0, 0)
-    fs:SetWidth(col[4])
-    fs:SetJustifyH("RIGHT")
-    b.cells[c] = fs
+  local function cells(cols)
+    local out = {}
+    for c, col in ipairs(cols) do
+      local fs = UI.text(b, "body")
+      fs:SetPoint("RIGHT", f, "RIGHT", col[3] - BAR_SHIFT, 0)
+      fs:SetPoint("TOP", b, "TOP", 0, 0)
+      fs:SetPoint("BOTTOM", b, "BOTTOM", 0, 0)
+      fs:SetWidth(col[4])
+      fs:SetJustifyH("RIGHT")
+      out[c] = fs
+    end
+    return out
   end
+  b.cells, b.vcells = cells(COLS), cells(VCOLS)
+  b.flag = UI.badge(b, 84, 16)
+  b.flag:SetPoint("RIGHT", f, "RIGHT", NAME_RIGHT, 0)
+  b.flag:Hide()
   b.name = UI.text(b, "body")
   b.name:SetPoint("LEFT", b.icon, "RIGHT", 8, 0)
   b.name:SetPoint("RIGHT", f, "RIGHT", NAME_RIGHT, 0)
@@ -783,6 +878,14 @@ local function makeRow(f, k)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     local link = "item:" .. self.row.id .. (self.row.suffix ~= 0 and ("::::::::::::1:" .. self.row.suffix) or "")
     pcall(GameTooltip.SetHyperlink, GameTooltip, link)
+    local r = self.row
+    local p = get(r, "profit")
+    if p and p > 0 then
+      local stack = math.max(1, r.stack or 1)
+      GameTooltip:AddLine(("Below vendor price: a vendor pays %s each. Buy and vendor it for %s each%s."):format(
+        ns.money(r.sell), ns.money(p), stack > 1 and (", %s for a stack of %d"):format(ns.money(p * stack), stack) or ""),
+        T.good[1], T.good[2], T.good[3], true)
+    end
     GameTooltip:AddLine("Click to see its live auctions and buy.", T.info[1], T.info[2], T.info[3], true)
     GameTooltip:Show()
   end)
@@ -830,9 +933,14 @@ local function makeResults()
   end)
   UI.tip(save, "Save to a shopping list", "Adds this search to the shopping list picked in the Shopping tab.")
 
+  local vendor = UI.button(f, "Below vendor", 100, 24)
+  vendor:SetPoint("RIGHT", save, "LEFT", -6, 0)
+  vendor:SetScript("OnClick", function() ns.query("belowvendor") end)
+  UI.tip(vendor, "Below vendor price", "Auctions cheaper than what a vendor pays for the item: buy them and sell them to any vendor. Biggest profit first. The same as the search: belowvendor")
+
   local box = UI.input(f, 100, 24, { hint = "slot is trinket and price lt 5g | sort by price", max = 400 })
   box:SetPoint("TOPLEFT", 8, -8)
-  box:SetPoint("RIGHT", save, "LEFT", -6, 0)
+  box:SetPoint("RIGHT", vendor, "LEFT", -6, 0)
   local function search()
     box:ClearFocus()
     if box:GetText():match("%S") then ns.query(box:GetText()) end
@@ -853,7 +961,8 @@ local function makeResults()
 
   Q.headers = {}
   makeHeader(f, "Item", "name", nil, 120)
-  for _, col in ipairs(COLS) do makeHeader(f, col[1], col[2], col[3], col[4]) end
+  for _, col in ipairs(COLS) do makeHeader(f, col[1], col[2], col[3], col[4], "normal") end
+  for _, col in ipairs(VCOLS) do makeHeader(f, col[1], col[2], col[3], col[4], "vendor") end
   for _, h in ipairs(Q.headers) do h:SetFrameLevel(band:GetFrameLevel() + 1) end
 
   Q.rows = {}
@@ -1078,12 +1187,16 @@ end
 
 local rerunToken = 0
 local function show(text)
-  local results, head, missing = run(text)
+  local results, head, missing, vendor = run(text)
+  Q.vendor = vendor or false
   if not results then
     Q.results = {}
     setStatus(head, true)
   else
     Q.results = results
+    if vendor then head = head .. "  " .. C_DIM .. "profit = vendor price minus the lowest buyout|r" end
+    local own = text:lower():find("sort") or text:lower():find("top")
+    if vendor and not own and not Q.sortCol then Q.sortCol, Q.sortDesc = "profit", true end
     -- a click-sort stays when the query has no sort of its own
     if Q.sortCol and not text:lower():find("sort") and not text:lower():find("top") then
       sortRows(Q.results, { { col = Q.sortCol, desc = Q.sortDesc } })
@@ -1151,7 +1264,7 @@ function ns.queryList(list)
     total = total + (results and #results or 0)
   end
   live.tried = {}
-  Q.results, Q.grouped, Q.groupList, Q.last, Q.offset, Q.sortCol = out, list.name, list, nil, 0, nil
+  Q.results, Q.grouped, Q.groupList, Q.last, Q.offset, Q.sortCol, Q.vendor = out, list.name, list, nil, 0, nil, false
   setStatus(("%s: %d searches, %s results in the last full scan"):format(list.name, #(list.queries or {}), ns.num(total)))
   render()
   liveHead()

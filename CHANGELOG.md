@@ -12,6 +12,7 @@
 - The crafting cost box looks like part of the game now: the game's tooltip frame and fonts, item icons, lined-up columns and prices in gold, silver and copper. It sits right of the profession window's tab buttons instead of over them. A material without a price says "no AH price" in grey, with a short note under the totals, and the profit line only shows once everything has a price. Recipes that make no item (enchants) skip "Sells for".
 - Shopping list from a recipe: the Shopping list button in the crafting box lists the recipe's materials with how many you have and how many to buy, ticked when you have too few. Change an amount or the number of crafts, then Create list saves the ticked ones as a list named after the recipe in the auction house's Shopping tab. Press Run beside an item there to search for it. Making the list again for the same recipe updates it.
 - Shopping lists show how many to buy beside each search made from a recipe, and in the results.
+- Below vendor price: auctions cheaper than what a vendor pays for the item, so you can buy them and sell them to a vendor. The Below vendor button in Advanced search (or the search `belowvendor`, or `price lt vendor`) lists them from your last price update with the profit each and for a full stack, biggest profit first. Vendors take no cut. Advanced search results, the buy panel and Blizzard's own lists mark such auctions in green. Quest items and items vendors don't buy never count.
 
 ## v0.6.0 (2026-11-14)
 

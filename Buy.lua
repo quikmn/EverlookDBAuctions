@@ -3,7 +3,7 @@
 --   Items       pick an auction, press Buy, then press Confirm (the price is on the button): PlaceBid with its buyout.
 --   Commodities type how many, press Buy: the server quotes the total; press Confirm to pay it.
 -- Every purchase takes your two clicks (Buy, then Confirm) and buys once; nothing is bought on its own.
--- Sellers are never shown or kept.
+-- Sellers are never shown or kept. Auctions cheaper than a vendor pays get a green tag with the profit (Vendor.lua).
 
 local _, ns = ...
 local UI, T = ns.UI, ns.T
@@ -220,6 +220,9 @@ local function buildRow(L)
   b.tag = UI.text(b, "small")
   b.tag:SetPoint("LEFT", b.price, "RIGHT", 10, 0)
   b.tag:SetTextColor(unpack(T.accent))
+  b.vendor = UI.badge(b, 60, 16)
+  b.vendor:SetPoint("LEFT", b.tag, "RIGHT", 6, 0)
+  b.vendor:Hide()
   b.left = UI.text(b, "dim")
   b.left:SetPoint("RIGHT", -10, 0)
   b.left:SetWidth(80)
@@ -243,6 +246,11 @@ local function buildRow(L)
     if not r then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     if r.link then pcall(GameTooltip.SetHyperlink, GameTooltip, r.link) else pcall(GameTooltip.SetItemByID, GameTooltip, B.id) end
+    local p = ns.vendor and r.unit and ns.vendor.flip(B.id, r.unit)
+    if p then
+      GameTooltip:AddLine(("Below vendor price: buy and vendor it for %s each, %s for all %d."):format(
+        money(p), money(p * r.qty), r.qty), T.good[1], T.good[2], T.good[3], true)
+    end
     if not B.commodity then
       GameTooltip:AddLine(r.mine and "Your own auction." or "Click to pick it, then Buy.", T.info[1], T.info[2], T.info[3])
     end
@@ -255,6 +263,15 @@ end
 local function fillRow(b, r)
   b.price:SetText(r.unit and money(r.unit) or (C_MUTE .. "bids only|r"))
   b.tag:SetText(r.mine and "yours" or "")
+  -- below vendor price: a green tag with what buying and vendoring makes, each
+  local p = not r.mine and ns.vendor and r.unit and ns.vendor.flip(B.id, r.unit)
+  if p then
+    b.vendor:EdbSet("vendor +" .. money(p), T.good)
+    b.vendor:SetWidth(b.vendor.text:GetStringWidth() + 12)
+    b.vendor:Show()
+  else
+    b.vendor:Hide()
+  end
   b.qty:SetText(num(r.qty))
   b.total:SetText((not B.commodity and r.buyout and r.qty > 1) and money(r.buyout) or "")
   b.left:SetText(fmtLeft(r.left, r.band))
@@ -264,6 +281,16 @@ end
 function render()
   local f = B.frame
   if not f or not f:IsShown() then return end
+  -- the vendor price joins the line under the name once the item's details are there
+  if not B.subVendor and B.bits and ns.vendor then
+    local sell, c = ns.vendor.sellOf(B.id)
+    if sell then
+      B.subVendor = true
+      if sell > 0 and not ns.vendor.isQuest(B.id, c and c[5]) then
+        f.sub:SetText(table.concat(B.bits, "   ") .. "   vendor " .. money(sell))
+      end
+    end
+  end
   f.list.empty:SetText(B.loaded and "Nobody is selling this right now." or "Looking up the live auctions...")
   f.list:SetItems(B.rows or {})
   f.qtyLabel:SetShown(B.commodity)
@@ -302,6 +329,7 @@ local function close()
   if B.frame then B.frame:Hide() end
 end
 ns.closeBuy = close
+ns.buyRefresh = function() if ns.buyOpen then render() end end
 
 local function makeFrame()
   local host = _G.EverlookAuctionsQueryResults
@@ -435,7 +463,9 @@ function ns.openBuy(row)
   f.name:SetText((c and c.hex or "|cffffffff") .. row.name .. "|r")
   local bits = { B.commodity and "commodity: buy any amount" or "item: pick an auction" }
   if row.median then bits[#bits + 1] = "typical " .. money(row.median) end
+  B.bits = bits
   f.sub:SetText(table.concat(bits, "   "))
+  B.subVendor = false
   setStatus("Buy, then Confirm: two clicks for each purchase.", T.mute)
   ns.buyOpen = true
   f:Show()
