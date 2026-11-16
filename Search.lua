@@ -456,6 +456,7 @@ local function get(row, col)
     if v ~= nil then return v end
   end
   if col == "stats" then return statsOf(row).stats end
+  if col == "scanprice" then return row.price end
   return row[col]
 end
 
@@ -697,12 +698,17 @@ local function upCell(r)
   if l then return l.gone and C_BAD .. "-|r" or ns.num(l.qty or 0) end
   return GREY .. ns.num(r.qty or 0) .. "|r"
 end
+-- Now: only what the auction house said in the last few minutes, never the scan
 local function lowestCell(r)
   local l = liveOf(r)
   if l then
-    if l.gone then return C_BAD .. "sold out|r" end
+    if l.gone then return C_BAD .. "none up|r" end
     return l.price and ns.money(l.price) or C_MUTE .. "bids only|r"
   end
+  return C_MUTE .. "checking...|r"
+end
+-- Last scan: the cheapest at the last full scan, always grey because it can be out of date
+local function scanCell(r)
   return r.price and (GREY .. ns.money(r.price) .. "|r") or C_MUTE .. "bids only|r"
 end
 -- Profit after buying and vendoring: green once the live price is checked, grey from the scan, and "none now" when
@@ -717,8 +723,8 @@ local function profitCell(col)
 end
 local COLS = {
   { "Up", "qty", -10, 40, upCell },
-  { "Usual", "median", -56, 112, function(r) return r.median and (GREY .. ns.money(r.median) .. "|r") or "" end },
-  { "Cheapest", "price", -174, 112, lowestCell },
+  { "Last scan", "scanprice", -56, 112, scanCell },
+  { "Now", "price", -174, 112, lowestCell },
   { "Req lvl", "reqlevel", -292, 50, function(r)
     local v = r[Q.extra or "reqlevel"] or 0
     return v > 0 and v or ""
@@ -738,7 +744,7 @@ local VCOLS = {
   { "Deals", "deals", -10, 40, dealsCell },
   { "Total", "dealprofit", -56, 112, dealProfitCell },
   { "Profit each", "profit", -174, 104, profitCell("profit") },
-  { "Cheapest", "price", -284, 112, lowestCell },
+  { "Now", "price", -284, 112, lowestCell },
 }
 local BAR_SHIFT = 16        -- room for the scroll bar on the right: every column moves left by this much
 local NAME_RIGHT = -384 - BAR_SHIFT   -- the item name stops here
@@ -1016,8 +1022,8 @@ local function makeHeader(f, label, col, right, width, mode)
   h.label, h.col, h.mode = label, col, mode
   h:SetScript("OnClick", headerClick)
   local tips = {
-    price = "The cheapest buyout for one, right now: what you pay for the cheapest one.",
-    median = "The usual price: half of the auctions for one are cheaper, half dearer. Shows if the cheapest is a bargain.",
+    price = "The cheapest buyout for one, checked with the auction house in the last 5 minutes: what you'd pay now. Says checking... until the check is in, none up when nobody is selling it.",
+    scanprice = "The cheapest buyout for one at the last full scan (its age is in the line above). Can be out of date: Now is the real price.",
     qty = "How many are up for sale.",
     reqlevel = "The level you need to use it.",
     ilvl = "Item level: how strong the item is.",
@@ -1082,6 +1088,9 @@ local function makeRow(f, k)
       GameTooltip:AddLine(("Below vendor price: a vendor pays %s each. Buy and vendor it for %s each%s."):format(
         ns.money(r.sell), ns.money(p), stack > 1 and (", %s for a stack of %d"):format(ns.money(p * stack), stack) or ""),
         T.good[1], T.good[2], T.good[3], true)
+    end
+    if r.median then
+      GameTooltip:AddLine("Usual price at the last scan: " .. ns.money(r.median) .. " (half the auctions cheaper, half dearer)", 0.7, 0.7, 0.7, true)
     end
     GameTooltip:AddLine("Click to see its live auctions and buy.", T.info[1], T.info[2], T.info[3], true)
     GameTooltip:Show()
