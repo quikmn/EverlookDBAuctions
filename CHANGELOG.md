@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- The Shopping tab explains itself when you have no lists yet: what lists are for, in big plain words, with a New list button in the middle.
+- Clicking a search in a shopping list puts it in the box to change, and Save now changes it in place. It used to add a second copy.
+- Tooltips no longer say "none up" for an item whose only auctions have bids and no buyout; they say so. "None up" and the disenchant estimate now say how old the scan or prices are.
+- Random-stat gear ("of the Bear") shows the price of its own version from your last full scan. When that version wasn't in the scan, the line says the price is for any version.
+- The crafting box says how old its prices are, and prices over a day old are grey. Its price columns fit prices in the thousands of gold. The recipe shopping list updates how many you have when your bags change, keeping amounts you typed.
+- Tags like "vendor +1g 23s 45c" grow to fit their text instead of spilling over their neighbours. `/eah debug` lists any labels that are cut off on screen.
+- `/eah` says when the options couldn't open and why. Durations in the options read 12 hours, 24 hours, 48 hours. `/eah auto on` and `off` show in the options at once.
+- `/eah run <list>` says to open the auction house first when it's closed, and a list name it doesn't know gets your list names and an example.
+- With automatic updates off, the button reads "Allowed in 12:34" instead of "Next update", since none starts by itself.
+- Day-by-day prices older than 30 days are cut every time you log in, not only after a full scan.
+- Text you type (a command, a list name, a search) shows in chat and lists exactly as typed, `|` included.
 - Scroll bars you can use: every list (Buy, Selling, Shopping, search results), the Advanced search guide and the import box have a wider scroll bar you can grab and drag with the left mouse button, or click above or below it to jump a page. Search results had no scroll bar before. The mouse wheel works over the bar too.
 - `/eah feedback` and a Feedback button in the options show a link for reporting bugs and ideas.
 - The box beside the auction house is gone. Its contents are on a bar along the bottom of the auction house window instead, beside your money: which house, how many items have prices, and how old they are. The window is a little taller to make room, so the lists keep their size.
