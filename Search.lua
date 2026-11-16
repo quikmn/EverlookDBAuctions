@@ -717,13 +717,13 @@ local function profitCell(col)
 end
 local COLS = {
   { "Up", "qty", -10, 40, upCell },
-  { "Typical", "median", -56, 86, function(r) return r.median and (GREY .. ns.money(r.median) .. "|r") or "" end },
-  { "Lowest", "price", -148, 86, lowestCell },
-  { "Req", "reqlevel", -240, 30, function(r)
+  { "Usual", "median", -56, 112, function(r) return r.median and (GREY .. ns.money(r.median) .. "|r") or "" end },
+  { "Cheapest", "price", -174, 112, lowestCell },
+  { "Req", "reqlevel", -292, 30, function(r)
     local v = r[Q.extra or "reqlevel"] or 0
     return v > 0 and v or ""
   end },
-  { "iLvl", "ilvl", -276, 30, function(r) return r.ilvl or "" end },
+  { "iLvl", "ilvl", -328, 30, function(r) return r.ilvl or "" end },
 }
 -- A below-vendor search shows the profit instead of the typical price and the levels.
 local function dealsCell(r)
@@ -736,13 +736,13 @@ local function dealProfitCell(r)
 end
 local VCOLS = {
   { "Deals", "deals", -10, 40, dealsCell },
-  { "Total", "dealprofit", -56, 96, dealProfitCell },
-  { "Profit each", "profit", -158, 86, profitCell("profit") },
-  { "Lowest", "price", -250, 86, lowestCell },
+  { "Total", "dealprofit", -56, 112, dealProfitCell },
+  { "Profit each", "profit", -174, 104, profitCell("profit") },
+  { "Cheapest", "price", -284, 112, lowestCell },
 }
 local BAR_SHIFT = 16        -- room for the scroll bar on the right: every column moves left by this much
-local NAME_RIGHT = -312 - BAR_SHIFT   -- the item name stops here
-local VNAME_RIGHT = -342 - BAR_SHIFT  -- ... and here in a below-vendor search
+local NAME_RIGHT = -364 - BAR_SHIFT   -- the item name stops here
+local VNAME_RIGHT = -402 - BAR_SHIFT  -- ... and here in a below-vendor search
 
 local function rowsFit(f)
   return math.max(4, math.floor((f:GetHeight() - ROW_TOP - 22) / ROW_H))
@@ -1015,8 +1015,28 @@ local function makeHeader(f, label, col, right, width, mode)
   h.text:SetPoint(right and "RIGHT" or "LEFT", 0, 0)
   h.label, h.col, h.mode = label, col, mode
   h:SetScript("OnClick", headerClick)
-  h:SetScript("OnEnter", function(self) self.text:SetTextColor(unpack(T.text)) end)
-  h:SetScript("OnLeave", function(self) self.text:SetTextColor(unpack(Q.sortCol == self.col and T.accent or T.mute)) end)
+  local tips = {
+    price = "The cheapest buyout for one, right now: what you pay for the cheapest one.",
+    median = "The usual price: half of the auctions for one are cheaper, half dearer. Shows if the cheapest is a bargain.",
+    qty = "How many are up for sale.",
+    profit = "What one makes: what a vendor pays minus the cheapest buyout.",
+    dealprofit = "What buying every auction under vendor price and selling it to a vendor makes.",
+    deals = "How many auctions are under vendor price.",
+  }
+  h:SetScript("OnEnter", function(self)
+    self.text:SetTextColor(unpack(T.text))
+    if tips[self.col] then
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:AddLine(self.label, 1, 1, 1)
+      GameTooltip:AddLine(tips[self.col], nil, nil, nil, true)
+      GameTooltip:AddLine("Click to sort.", 0.6, 0.6, 0.6)
+      GameTooltip:Show()
+    end
+  end)
+  h:SetScript("OnLeave", function(self)
+    self.text:SetTextColor(unpack(Q.sortCol == self.col and T.accent or T.mute))
+    GameTooltip:Hide()
+  end)
   Q.headers[#Q.headers + 1] = h
 end
 
