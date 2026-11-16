@@ -93,6 +93,8 @@ local function build()
   p.cut:SetPoint("TOPLEFT", 16, -112)
   p.note = UI.text(p, "mute")
   p.note:SetPoint("LEFT", p.cut, "RIGHT", 10, 0)
+  p.note:SetPoint("RIGHT", p, "RIGHT", -16, 0)   -- a long error wraps inside the window instead of running off it
+  p.note:SetWordWrap(true)
   p.note:SetText("1s, 50c, 1g, 5%, or 0 to match the cheapest. Press Enter.")
   p.cut:SetScript("OnEnterPressed", function(self)
     local okSet, why = ns.setUndercut(self:GetText())
@@ -105,9 +107,9 @@ local function build()
   local dl = UI.label(p, "DEFAULT DURATION", "mute")
   dl:SetPoint("TOPLEFT", 16, -148)
   p.durs = {}
-  for k, d in ipairs({ { 1, "12h" }, { 2, "24h" }, { 3, "48h" } }) do
-    local b = UI.button(p, d[2], 56, 24, "small")
-    b:SetPoint("TOPLEFT", 16 + (k - 1) * 60, -164)
+  for k, d in ipairs({ { 1, "12 hours" }, { 2, "24 hours" }, { 3, "48 hours" } }) do
+    local b = UI.button(p, d[2], 76, 24, "small")
+    b:SetPoint("TOPLEFT", 16 + (k - 1) * 80, -164)
     b.dur = d[1]
     b:SetScript("OnClick", function()
       ns.sellSettings().duration = d[1]
@@ -162,15 +164,28 @@ local function build()
   end
 end
 
+-- Opens the options and says so in chat, or says why they didn't open.
 local function open()
-  if not O.panel then return end
+  if not O.panel then
+    ns.say("the options couldn't be built" .. (ns.optionsError and (": " .. ns.plain(ns.optionsError)) or "")
+      .. ". Settings still work as commands: /eah help lists them, for example /eah auto off.")
+    return
+  end
   local cat = O.category
   if cat and Settings and Settings.OpenToCategory then
     local id = (cat.GetID and cat:GetID()) or cat.ID
-    if pcall(Settings.OpenToCategory, id) then return end
+    if pcall(Settings.OpenToCategory, id) then ns.say("options opened. /eah help lists the commands."); return end
   end
-  if InterfaceOptionsFrame_OpenToCategory and pcall(InterfaceOptionsFrame_OpenToCategory, O.panel) then return end
-  ns.say("couldn't open the options; find EverlookDB Auctions under Options > AddOns.")
+  if InterfaceOptionsFrame_OpenToCategory and pcall(InterfaceOptionsFrame_OpenToCategory, O.panel) then
+    ns.say("options opened. /eah help lists the commands.")
+    return
+  end
+  ns.say("couldn't open the options; find EverlookDB Auctions in the game's Settings under AddOns.")
+end
+
+-- A setting changed by a command (/eah auto off, /eah undercut 5%) shows at once if the options are open.
+function ns.optionsRefresh()
+  if O.panel and O.panel:IsShown() then refresh() end
 end
 
 local ev = CreateFrame("Frame")
