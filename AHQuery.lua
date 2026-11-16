@@ -375,6 +375,11 @@ function Q.showInBlizzard(name)
   if not bar or not name then return end
   bar:SetSearchText(name)
   Q.whenIdle(function()
+    -- a category picked on the left would limit the search to it ("No items found" for a sword under Consumables)
+    local cats = AuctionHouseFrame.GetCategoriesList and AuctionHouseFrame:GetCategoriesList()
+    if cats and cats.GetSelectedCategory and cats:GetSelectedCategory() and cats.SetSelectedCategory then
+      pcall(cats.SetSelectedCategory, cats, nil)
+    end
     local sentAt = now()
     bar:SetSearchText(name)
     bar:StartSearch()
@@ -424,6 +429,14 @@ local function hook()
   hooked = true
   if ah.SendBrowseQueryInternal then hooksecurefunc(ah, "SendBrowseQueryInternal", function() Q.blizzardSearch(true) end) end
   if ah.QueryItem then hooksecurefunc(ah, "QueryItem", function() Q.blizzardSearch(false) end) end
+  -- the favourites star (and opening the auction house with favourites) sends a browse that isn't a
+  -- SendBrowseQueryInternal; its answer is a browse answer too and must not be read as ours
+  if ah.QueryAll then
+    hooksecurefunc(ah, "QueryAll", function(_, context)
+      local fav = _G.AuctionHouseSearchContext and AuctionHouseSearchContext.AllFavorites
+      Q.blizzardSearch(fav ~= nil and context == fav)
+    end)
+  end
 end
 
 local ev = CreateFrame("Frame")
