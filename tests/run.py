@@ -93,6 +93,7 @@ def main() -> int:
     failures += search_queue()
     failures += undercut()
     failures += deals()
+    failures += core_and_lists()
 
     if failures:
         for f in failures:
@@ -829,6 +830,183 @@ def deals():
     txt = V.tallyText(t, ns.money)
     check(txt == "Bought 11 for 89c, vendor value 143c, profit 54c.", txt)
     return failures
+
+
+def core_and_lists():
+    """Helper 4's audit: the tooltip's auction line never passes an old or bid-only price off as current, day lows
+    are cut at load, chat echoes escape |, Shopping's click-to-change edits in place, /eah run explains itself, tags
+    widen to fit, idle scroll bars do no per-frame work, the crafting box ages its prices and follows bag changes,
+    and /eah says when the options can't open."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("core/lists: " + what)
+
+    def fresh_lua():
+        lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+        lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+        run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+        return lua, run
+
+    def load(run, ns, *names):
+        for name in names:
+            run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+
+    # --- the core: tooltip lines, pruning at load, the unknown-command echo
+    lua, run = fresh_lua()
+    lua.execute(CORE_SETUP)
+    ns = lua.table()
+    load(run, ns, "EverlookDBAuctions.lua")
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    fire("ADDON_LOADED", "EverlookDBAuctions")
+    G = lua.globals()
+    days = G.EverlookAuctionsDB.houses["Test-Alliance"].days
+    check(days[2592] is None, "day lows older than 30 days are cut at load")
+    check(days[2589] is not None and days[2589][10] is None and days[2589][99] == 7, "a recent day low stays")
+
+    now = 100 * 86400
+    line = ns.auctionLine
+    left, price, fresh = line("AH", "", lua.table(None, 4, 2, now), None, now - 3600, now, now)
+    check(price is None and "bids only" in left and "4 up" in left, f"bid-only auctions aren't 'none up': {left}")
+    left, price, fresh = line("AH", "", None, None, now - 7200, now, now)
+    check(price is None and "none up" in left and "2 h ago" in left, f"'none up' says how old the scan is: {left}")
+    left, price, fresh = line("AH", "", lua.table(500, 3, 1, now - 2 * 86400), None, None, now, now)
+    check(price == 500 and fresh is False and "2 days ago" in left, f"an old price is marked old: {left}")
+    row = lua.table(low=900, qty=2, at=now - 60)
+    left, price, fresh = line("AH", " x20", lua.table(500, 3, 1, now), row, None, now, now)
+    check(price == 900 and fresh and "this version" in left and " x20" in left, f"random-stat version priced: {left}")
+    left, price, fresh = line("AH", "", lua.table(500, 3, 1, now), False, None, now, now)
+    check(price == 500 and "any version" in left, f"a version missing from the scan says it's any version's: {left}")
+    check(line("AH", " x20", None, None, None, now, now) is None, "nothing known: no line")
+
+    G.PRINTED = lua.table()
+    G.SlashCmdList.EVERLOOKAUCTIONS("foo|bar")
+    out = G.PRINTED[1] or ""
+    check("foo||bar" in out, f"an unknown command is echoed with | escaped: {out}")
+
+    # --- Skin: tags widen to fit, scroll bars idle without OnUpdate
+    lua, run = fresh_lua()
+    ns = lua.table()
+    run(VENDOR_SETUP, "setup", ns)
+    load(run, ns, "Skin.lua")
+    UI = ns.UI
+    badge = lua.eval("""function(UI)
+      local b = UI.badge(UIParent, 60, 16)
+      function b:SetWidth(w) self.w = w end
+      return b
+    end""")(UI)
+    badge.EdbSet(badge, "Sold")
+    check(badge.w == 60, f"a short text keeps the tag's width: {badge.w}")
+    badge.text.GetStringWidth = lua.eval("function() return 101 end")
+    badge.EdbSet(badge, "vendor +1g 23s 45c")
+    check(badge.w == 111, f"a long text widens the tag to fit: {badge.w}")
+    L = lua.eval("""function(UI)
+      return UI.list(UIParent, 20, function() return CreateFrame("Button") end, function() end)
+    end""")(UI)
+    thumb = L.bar.thumb
+    check(thumb.scripts.OnUpdate is None, "an idle scroll thumb has no OnUpdate")
+    lua.globals().GetCursorPosition = lua.eval("function() return 0, 10 end")
+    thumb.scripts.OnMouseDown(thumb, "LeftButton")
+    check(thumb.scripts.OnUpdate is not None, "dragging follows the cursor")
+    thumb.scripts.OnMouseUp(thumb)
+    check(thumb.scripts.OnUpdate is None, "letting go stops the per-frame work")
+
+    # --- Shopping: click-to-change edits in place, /eah run explains itself
+    said = []
+    ns.say = lambda m: said.append(m)
+    load(run, ns, "Shopping.lua")
+    store = ns.shoppingStore
+    lst = lua.eval('{ name = "Mats", queries = { "a", "b" }, want = { b = 4 } }')
+    check(store(lst, "c", None) == "added" and lst.queries[3] == "c", "a new search is added")
+    check(store(lst, "a", None) == "same" and len(lst.queries) == 3, "a search already there isn't added twice")
+    check(store(lst, "b2", lua.table(list=lst, query="b")) == "saved" and lst.queries[2] == "b2" and len(lst.queries) == 3,
+          "a clicked search is changed in place, not added")
+    check(lst.want["b2"] == 4 and lst.want["b"] is None, "its amount to buy moves with it")
+    check(store(lst, "a", lua.table(list=lst, query="c")) == "same" and lst.queries[3] == "c",
+          "changing a search into one already there leaves both alone")
+    check(store(lst, "", None) is None, "nothing typed: nothing stored")
+    db = ns.db()
+    db.lists = lua.eval('{ { name = "Herbs", queries = { "x" } } }')
+    lua.globals().AuctionHouseFrame = None
+    ns.slash("run herbs")
+    check(said and "open the auction house first" in said[-1], f"/eah run with the auction house closed: {said[-1:]}")
+    lua.execute("AuctionHouseFrame = CreateFrame('Frame', 'AuctionHouseFrame')")
+    ns.slash("run h|erbs")
+    check("h||erbs" in said[-1] and "lists: herbs" in said[-1] and "for example" in said[-1].lower(),
+          f"an unknown list names the lists, with an example, | escaped: {said[-1]}")
+
+    # --- Crafting: price ages, bag changes
+    lua, run = fresh_lua()
+    lua.execute("MOCK_TIME = 10 * 86400; function time() return MOCK_TIME end; MOCK_SEEN = {}")
+    ns = lua.table()
+    run(CRAFT_SETUP, "setup", ns)
+    ns.itemFor = lua.eval("function(id) local p = MOCK_PRICES[id]; return p and { p, 1, 1, MOCK_SEEN[id] or MOCK_TIME } end")
+    ns.ago = lua.eval("function(t) return (MOCK_TIME - t) .. ' s ago' end")
+    load(run, ns, "RecipeList.lua", "Crafting.lua")
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    fire("ADDON_LOADED", "Blizzard_Professions")
+    fire("TRADE_SKILL_SHOW")
+    G = lua.globals()
+    box = G.EverlookAuctionsCrafting
+    check(box.sub.text == "AH prices, oldest 0 s ago", f"the box says how old its prices are: {box.sub.text}")
+    G.MOCK_SEEN[2840] = 10 * 86400 - 2 * 86400
+    lua.eval("function(ns) ns.craftRefresh() end")(ns)
+    check(box.sub.text == "AH prices, oldest 172800 s ago", f"the oldest price used: {box.sub.text}")
+    rows = [box.rows[i] for i in range(1, len(box.rows) + 1)]
+    check(rows[1].price.color[1] == 0.5 and rows[0].price.color[1] == 1, "a price over a day old is grey, a new one white")
+    box.shop.scripts.OnClick(box.shop)
+    L = G.EverlookAuctionsRecipeList
+    lrows = [L.rows[i] for i in range(1, len(L.rows) + 1)]
+    check([r.buy.text for r in lrows] == ["0", "3", "1"], "amounts before the bags change")
+    lrows[2].buy.text = "7"
+    lrows[2].buy.scripts.OnTextChanged(lrows[2].buy, True)
+    G.MOCK_BAGS[2840] = 3
+    G.MOCK_BAGS[2880] = 1
+    fire("BAG_UPDATE_DELAYED")
+    check(lrows[1].have.text == "3/4" and lrows[1].buy.text == "1",
+          f"bought 2 bars: have 3/4, buy 1 ({lrows[1].have.text}, {lrows[1].buy.text})")
+    check(lrows[2].have.text == "1/1" and lrows[2].buy.text == "7", "an amount you typed stays")
+
+    # --- Options: /eah says when the options can't open
+    lua, run = fresh_lua()
+    lua.execute("StaticPopupDialogs = {}")
+    ns = lua.table()
+    run(VENDOR_SETUP, "setup", ns)
+    load(run, ns, "Skin.lua")
+    said = []
+    ns.say = lambda m: said.append(m)
+    ns.plain = lua.eval("function(t) return (tostring(t):gsub('|', '||')) end")
+    load(run, ns, "Options.lua")
+    ns.optionsError = "boom|x"
+    check(ns.slash("options") is True and said and "couldn't be built" in said[-1] and "boom||x" in said[-1]
+          and "for example" in said[-1], f"the options failing to build is said, with what still works: {said[-1:]}")
+    return failures
+
+
+CORE_SETUP = """
+SlashCmdList = {}
+MOCK_TIME = 100 * 86400
+function time() return MOCK_TIME end
+function GetTime() return 1 end
+function GetServerTime() return MOCK_TIME end
+function GetRealmName() return "Test" end
+function UnitFactionGroup() return "Alliance" end
+function strsplit(sep, s)
+  local out, i = {}, 1
+  while true do
+    local j = s:find(sep, i, true)
+    if not j then out[#out + 1] = s:sub(i); break end
+    out[#out + 1] = s:sub(i, j - 1)
+    i = j + 1
+  end
+  return unpack(out)
+end
+PRINTED = {}
+function print(...) PRINTED[#PRINTED + 1] = table.concat({ ... }, " ") end
+EverlookAuctionsDB = { houses = { ["Test-Alliance"] = { items = {},
+  days = { [2589] = { [10] = 5, [99] = 7 }, [2592] = { [1] = 3 } } } } }
+"""
 
 
 if __name__ == "__main__":

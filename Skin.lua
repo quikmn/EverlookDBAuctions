@@ -558,26 +558,29 @@ function UI.scrollbar(parent, opts)
   thumb:EnableMouse(true)
   thumb:SetScript("OnEnter", function() lit(true) end)
   thumb:SetScript("OnLeave", function(self) if not self.drag then lit(false) end end)
+  -- follows the cursor every frame only while dragging: an idle scroll bar does no per-frame work
+  local function follow(self)
+    local d = self.drag
+    if not d then self:SetScript("OnUpdate", nil); return end
+    if not IsMouseButtonDown("LeftButton") then self.drag = nil; self:SetScript("OnUpdate", nil); lit(self:IsMouseOver()); return end
+    local _, y = GetCursorPosition()
+    y = y / self:GetEffectiveScale()
+    set(UI.scrollDrag(d.start, d.y - y, bar:GetHeight() - self:GetHeight(), maxPos()))
+  end
   thumb:SetScript("OnMouseDown", function(self, button)
     if button ~= "LeftButton" then return end
     local _, y = GetCursorPosition()
     self.drag = { y = y / self:GetEffectiveScale(), start = opts.get() }
     lit(true)
+    self:SetScript("OnUpdate", follow)
   end)
   local function stop(self)
     self.drag = nil
+    self:SetScript("OnUpdate", nil)
     lit(self:IsMouseOver())
   end
   thumb:SetScript("OnMouseUp", stop)
-  thumb:SetScript("OnHide", function(self) self.drag = nil; lit(false) end)
-  thumb:SetScript("OnUpdate", function(self)
-    local d = self.drag
-    if not d then return end
-    if not IsMouseButtonDown("LeftButton") then stop(self); return end
-    local _, y = GetCursorPosition()
-    y = y / self:GetEffectiveScale()
-    set(UI.scrollDrag(d.start, d.y - y, bar:GetHeight() - self:GetHeight(), maxPos()))
-  end)
+  thumb:SetScript("OnHide", function(self) self.drag = nil; self:SetScript("OnUpdate", nil); lit(false) end)
   bar:EnableMouse(true)
   bar:SetScript("OnMouseDown", function(self, button)
     if button ~= "LeftButton" then return end
@@ -757,9 +760,11 @@ function UI.check(parent, text, onClick)
 end
 
 -- A status tag: short text on a faint tint of its color (Undercut, Lowest, Sold...). tag:EdbSet(text, color).
+-- A text wider than the tag widens it (from its anchor), so it never spills over its neighbours.
 function UI.badge(parent, w, h)
   local f = CreateFrame("Frame", nil, parent)
-  f:SetSize(w or 64, h or 16)
+  f.edbW = w or 64
+  f:SetSize(f.edbW, h or 16)
   f.bg = f:CreateTexture(nil, "BACKGROUND", nil, 3)
   f.bg:SetAllPoints()
   f.text = UI.text(f, "small")
@@ -769,6 +774,7 @@ function UI.badge(parent, w, h)
     color = color or T.mute
     self.text:SetTextColor(color[1], color[2], color[3], 1)
     self.bg:SetColorTexture(color[1], color[2], color[3], (text and text ~= "") and 0.14 or 0)
+    self:SetWidth(math.max(self.edbW, math.ceil(self.text:GetStringWidth() or 0) + 10))
   end
   return UI.own(f)
 end
@@ -1087,6 +1093,28 @@ local function apply()
   ah:HookScript("OnShow", function() C_Timer.After(0.3, function() walk(ah) end) end)
 end
 ns.applySkin = apply
+
+-- The addon's own texts that don't fit right now ("Below ven…"): buttons and tags on screen whose label is cut off
+-- or wider than they are. For /eah debug, so cut-off labels can be found without hunting for them.
+function UI.cutOff()
+  local out = {}
+  for f in pairs(own) do
+    local fs = f.edbLabel or (f.edbW and f.text)
+    if fs and f.IsVisible and f:IsVisible() then
+      local text = fs:GetText() or ""
+      local need = (fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth()) or fs:GetStringWidth() or 0
+      local room = (f:GetWidth() or 0) - (f.edbLabel and 8 or 4)   -- a button's label sits 4 px in from each side
+      local cut = (fs.IsTruncated and fs:IsTruncated()) or need > room
+      if text ~= "" and cut then
+        local p = f:GetParent()
+        out[#out + 1] = ("\"%s\" (%d px wide, needs %d) in %s"):format((text:gsub("|", "||")), f:GetWidth() or 0,
+          math.ceil(need) + (f.edbLabel and 8 or 4), tostring(p and p.GetName and p:GetName() or "an unnamed frame"))
+      end
+    end
+  end
+  table.sort(out)
+  return out
+end
 
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")

@@ -56,10 +56,10 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 - `/eah sell` opens the Selling tab, `/eah shop` the Shopping tab, `/eah run <list>` runs a shopping list
 - `/eah undercut 1s` sets how far under the cheapest auction to price: `1c`, `50c`, `1g`, `5%`, or `0` to match it
 - `/eah options` opens the options
-- `/eah debug` lists what is shown where and the addon's auction house searches (for bug reports)
+- `/eah debug` lists what is shown where, the addon's auction house searches and any cut-off labels (for bug reports)
 - `/eah feedback` (or the Feedback button in the options) shows a link for reporting bugs and ideas
 - `/eah test` reloads the UI after every full scan, so the scan is saved to disk at once (for testing)
-- `/eah auto off` (or `on`) stops or restarts the automatic full scan when you open the auction house (at most every 15 minutes)
+- `/eah auto off` (or `on`) stops or restarts automatic price updates: one when you open the auction house, then every 15 minutes while it's open
 - `/eah skin off` (or `on`) turns the EverlookDB look for the auction house off or on (then `/reload`)
 
 ## Coming next

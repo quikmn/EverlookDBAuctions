@@ -57,6 +57,10 @@ end
 
 local function say(msg) print("|cffffd100EverlookDB Auctions:|r " .. msg) end
 
+-- Text the player typed or named (a command, a list name), safe to print: a lone | starts a WoW escape code and
+-- garbles what follows, so it is doubled.
+local function plain(text) return (tostring(text or ""):gsub("|", "||")) end
+
 local function money(copper)
   copper = math.floor(copper or 0)
   if GetMoneyString then return GetMoneyString(copper, true) end
@@ -182,7 +186,7 @@ local function refreshPanel()
     if yielding() then
       text = "Updating prices… waiting for your purchase"
     elseif est - took >= 2 then
-      text = ("Updating prices… about %d s left · keep browsing"):format(est - took)
+      text = ("Updating prices… about %d seconds left · keep browsing"):format(est - took)
     else
       text = "Updating prices… almost done · keep browsing"
     end
@@ -216,7 +220,9 @@ local function refreshPanel()
   local wait = scanWait(h)
   if wait > 0 then
     panel.button:Disable()
-    panel.button:SetText(("%s %d:%02d"):format(bad and "Try again in" or "Next update", math.floor(wait / 60), wait % 60))
+    -- "Next update" only when one will start by itself; with automatic updates off it is when one may be started
+    local lead = bad and "Try again in" or db.auto == false and "Allowed in" or "Next update"
+    panel.button:SetText(("%s %d:%02d"):format(lead, math.floor(wait / 60), wait % 60))
   else
     panel.button:Enable()
     panel.button:SetText(bad and "Try again" or "Update prices")
@@ -638,14 +644,22 @@ function startScan(auto)
   if not house or not ahFrame() or not ahFrame():IsShown() then say("open the auction house first."); return end
   local h = getHouse(house)
   local wait = scanWait(h)
-  if wait > 0 then say(("the server allows one price update about every 15 minutes; try again in %d:%02d."):format(math.floor(wait / 60), wait % 60)); return end
+  if wait > 0 then
+    if auto then return end
+    say(("the server allows one price update about every 15 minutes; try again in %d:%02d."):format(math.floor(wait / 60), wait % 60))
+    return
+  end
   local kind = apiKind()
   if kind == "modern" then
     scan = { started = time(), mode = "replicate", side = houseSide, at = GetServerTime() }
     C_AuctionHouse.ReplicateItems()
   elseif kind == "classic" then
-    local canQuery, canAll = CanSendAuctionQuery()
-    if not canAll then say("the server doesn't allow a price update right now; try again later."); return end
+    local _, canAll = CanSendAuctionQuery()
+    if not canAll then
+      -- the automatic update asks every second while the window is open: only a press of the button gets a reply
+      if not auto then say("the server doesn't allow a price update right now; try again in a minute.") end
+      return
+    end
     scan = { started = time(), mode = "getall", side = houseSide, at = GetServerTime() }
     QueryAuctionItems("", nil, nil, 0, nil, nil, true, false, nil)
   else
@@ -717,6 +731,27 @@ local function stackSize(id)
   return info[1] and info[9] or 1
 end
 
+-- What the tooltip's auction line says for one auction house. stack = " x20" while Shift shows a full stack's price
+-- (only on lines with a price). it = the saved price { low, quantity, auctions, time }
+-- or nil; row = the newest full scan's row for this random-stat version ("of the Bear") or nil; scanned = when the
+-- last full scan finished. Returns the left text, the price (nil for a text-only line) and whether it is current.
+-- Every line says how old it is: a price is never shown as if it were live.
+function ns.auctionLine(label, stack, it, row, scanned, now, serverNow)
+  if row and row.low then
+    local at = now - (serverNow - (row.at or serverNow))
+    return ("%s%s, this version (%s up, %s)"):format(label, stack, row.qty or "?", ago(at)), row.low, now - at < STALE
+  end
+  if it and it[1] then
+    return ("%s%s%s (%s up, %s)"):format(label, stack, row == false and ", any version" or "", it[2] or "?", ago(it[4])), it[1],
+      now - (it[4] or 0) < STALE
+  end
+  if it and (it[2] or 0) > 0 then
+    -- the last full scan found some, but only with a bid and no buyout
+    return ("%s: %s up with bids only, no buyout (%s)"):format(label, it[2], ago(it[4])), nil, false
+  end
+  if scanned then return ("%s: none up in the full scan %s"):format(label, ago(scanned)), nil, false end
+end
+
 local function priceLines(tooltip, id)
   if not db then return end
   local stack = IsShiftKeyDown() and tipOn("stack") and stackSize(id) or 1
@@ -725,18 +760,28 @@ local function priceLines(tooltip, id)
   local keys = { factionKey() }
   local neutral = (GetRealmName() or "?") .. "-Neutral"
   if db.houses[neutral] then keys[#keys + 1] = neutral end
+  -- random-stat gear: the tooltip's own version ("of the Bear") has its own price in the full scan
+  local vkey
+  if tooltip.GetItem then
+    local okItem, _, link = pcall(tooltip.GetItem, tooltip)
+    local key, sfx = variantOf(id, okItem and link or nil)
+    if key and sfx and sfx ~= 0 then vkey = key end
+  end
   for _, key in ipairs(keys) do
     local h = db.houses[key]
     local it = h and h.items[id]
-    local label = key:match("%-(%a+)$") == "Neutral" and "Neutral AH" or "AH"
-    if tipOn("auction") then
-      if it and it[1] then
-        local fresh = (time() - it[4]) < STALE
+    local side = key:match("%-(%a+)$")
+    local label = side == "Neutral" and "Neutral AH" or "AH"
+    if tipOn("auction") and h then
+      -- false: a version that isn't in the newest scan, so the line says the price is for any version
+      local row = vkey and (ns.scanRowFor(vkey, side) or false) or nil
+      local left, price, fresh = ns.auctionLine(label, suffix, it, row, h.scanned and h.days[id] and h.scanned,
+        time(), GetServerTime and GetServerTime() or time())
+      if left and price then
         local r, g, b = fresh and 1 or 0.6, fresh and 0.82 or 0.6, fresh and 0 or 0.6
-        tooltip:AddDoubleLine(label .. suffix .. " (" .. (it[2] or "?") .. " up, " .. ago(it[4]) .. ")", money(each(it[1])),
-          r, g, b, 1, 1, 1)
-      elseif h and h.scanned and h.days[id] then
-        tooltip:AddDoubleLine(label, "none up in the last scan", 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
+        tooltip:AddDoubleLine(left, money(each(price)), r, g, b, 1, 1, 1)
+      elseif left then
+        tooltip:AddLine(left, 0.6, 0.6, 0.6)
       end
     end
     local d = h and h.days[id]
@@ -752,8 +797,13 @@ local function priceLines(tooltip, id)
     end
   end
   if tipOn("disenchant") and ns.disenchantValue then
-    local value = ns.disenchantValue(id)
-    if value then tooltip:AddDoubleLine("Disenchant (estimate)", money(value), 0.6, 0.6, 0.6, 1, 1, 1) end
+    local value, oldest = ns.disenchantValue(id)
+    if value then
+      -- how old the oldest material price is, so an old estimate doesn't pass for today's
+      local fresh = (oldest or 0) < STALE
+      tooltip:AddDoubleLine(("Disenchant (estimate, prices %s)"):format(ago(time() - (oldest or 0))), money(value),
+        0.6, 0.6, 0.6, fresh and 1 or 0.6, fresh and 1 or 0.6, fresh and 1 or 0.6)
+    end
   end
   if tipOn("vendor") then
     local info = { pcall(C_Item.GetItemInfo, id) }
@@ -803,6 +853,12 @@ function events.ADDON_LOADED(name)
   db.version = VERSION
   db.houses = db.houses or {}
   db.scans = db.scans or {}
+  -- day lows older than 30 days go at every load too: with automatic updates off they would otherwise pile up from
+  -- searches alone (they used to be cut only when a full scan finished)
+  for _, h in pairs(db.houses) do
+    h.items, h.days = h.items or {}, h.days or {}
+    pruneDays(h)
+  end
   hookTooltips()
 end
 
@@ -871,8 +927,12 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
       print(("  crafting box: %d px right of the profession window (clear of its tab buttons)"):format(ns.craftDebug()))
     end
     for i, t in ipairs(ah and ah.Tabs or {}) do
-      print(("  Blizzard tab %d: %s, id %s"):format(i, tostring(t:GetText()), tostring(t:GetID())))
+      print(("  Blizzard tab %d: %s, id %s"):format(i, plain(t:GetText()), tostring(t:GetID())))
     end
+    -- labels on screen that don't fit their button or tag
+    local cut = ns.UI and ns.UI.cutOff and ns.UI.cutOff() or {}
+    print(#cut == 0 and "  no cut-off labels on screen" or ("  %d cut-off labels on screen:"):format(#cut))
+    for i = 1, math.min(15, #cut) do print("    " .. cut[i]) end
     return
   end
   if msg == "test" then
@@ -883,6 +943,7 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   end
   if msg == "auto off" or msg == "auto on" then
     db.auto = msg == "auto on"
+    if ns.optionsRefresh then ns.optionsRefresh() end   -- the options window shows the change if it is open
     say(db.auto and "prices update by themselves (when you open the auction house, then every 15 minutes while it is open)."
       or "automatic price updates are off. Press Update prices or type /eah scan when you want one.")
     return
@@ -892,8 +953,8 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
     return
   end
   if msg == "" then
-    -- bare /eah: the options
-    if ns.slash and ns.slash("options") then say("Options opened. /eah help lists commands.") end
+    -- bare /eah: the options (Options.lua says so itself, or why they didn't open)
+    if not (ns.slash and ns.slash("options")) then say("the options aren't loaded. /eah help lists the commands.") end
     return
   end
   if msg == "status" then
@@ -909,10 +970,10 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
     if ns.help then ns.help() end
     print(("  /eah auto on  or  /eah auto off  update prices by themselves while the auction house is open (now %s)"):format(db.auto == false and "off" or "on"))
     print(("  /eah test  reload after every full scan so it is saved at once (now %s)"):format(db.reloadAfterScan and "on" or "off"))
-    print("  /eah debug  what is shown where, and the addon's auction house searches (for bug reports)")
+    print("  /eah debug  what is shown where, the addon's auction house searches and any cut-off labels (for bug reports)")
     return
   end
-  say(("unknown command \"%s\". /eah help lists the commands, for example /eah scan or /eah undercut 1s."):format(msg))
+  say(("unknown command \"%s\". /eah help lists the commands, for example /eah scan or /eah undercut 1s."):format(plain(msg)))
 end
 
 -- /eah status
@@ -945,6 +1006,7 @@ ns.startScan = function() startScan() end
 ns.db = function() return db end
 ns.house = function() return house end
 ns.money, ns.num, ns.ago, ns.say, ns.variantOf, ns.ahFrame, ns.ok = money, num, ago, say, variantOf, ahFrame, ok
+ns.plain = plain
 
 -- Which saved auction house to read: the one given ("Alliance", "Horde" or "Neutral" on this realm), else the one
 -- that is open, else the player's own faction's.

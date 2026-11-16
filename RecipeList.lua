@@ -21,8 +21,8 @@ function R.query(name)
   return ('name is "%s"'):format(name)
 end
 
--- One row per material: { id, name, need (for all crafts), have, buy, tick, price }.
---   mats = { { id, need per craft, price each }, ... } (as the crafting box works them out)
+-- One row per material: { id, name, need (for all crafts), have, buy, tick, price, at (when the price was seen) }.
+--   mats = { { id, need per craft, price each, when seen }, ... } (as the crafting box works them out)
 --   haveOf(id) and nameOf(id) come from the game.
 function R.rows(mats, crafts, haveOf, nameOf)
   crafts = math.max(1, math.floor(tonumber(crafts) or 1))
@@ -31,7 +31,7 @@ function R.rows(mats, crafts, haveOf, nameOf)
     local have = haveOf and haveOf(m[1]) or 0
     local buy = R.toBuy(m[2], have, crafts)
     out[#out + 1] = { id = m[1], name = nameOf and nameOf(m[1]) or ("item " .. m[1]), need = m[2] * crafts,
-      have = have, buy = buy, tick = buy > 0, price = m[3] }
+      have = have, buy = buy, tick = buy > 0, price = m[3], at = m[4] }
   end
   return out
 end

@@ -17,6 +17,9 @@ local C_GOOD, C_MUTE = UI.hex(T.good), UI.hex(T.mute)
 local SH = {}
 local ROW = 24
 
+-- Text with any | doubled, so a list name or search shows as typed (a lone | starts a WoW escape code).
+local function plain(text) return (tostring(text or ""):gsub("|", "||")) end
+
 local function lists()
   local db = ns.db()
   if not db then return {} end
@@ -145,21 +148,24 @@ local function buildQueryRow(L)
     if l and b.index then
       local q = table.remove(l.queries, b.index)
       if l.want and q then l.want[q] = nil end
+      if SH.editing and SH.editing.query == q then SH.editing = nil end
       render()
     end
   end)
   b:SetScript("OnClick", function(self)
-    -- put it in the box to change it
+    -- put it in the box to change it: Save then replaces it in place (Add while nothing is being changed)
     if self.item then
-      SH.frame.add:SetText(self.item)
+      SH.editing = { list = picked(), query = self.item }
+      SH.frame.add:SetText(plain(self.item))
       SH.frame.add:SetFocus()
+      render()
     end
   end)
   return b
 end
 
 local function fillQueryRow(b, q)
-  b.text:SetText(C_GOOD .. q .. "|r")
+  b.text:SetText(C_GOOD .. plain(q) .. "|r")
   local l = picked()
   local n = l and l.want and l.want[q]
   b.want:SetText(n and ("buy " .. num(n)) or "")
@@ -169,7 +175,7 @@ function render()
   local f = SH.frame
   if not f or not f:IsShown() then return end
   local all = lists()
-  f.lists.empty:SetText("No lists yet. Press New.")
+  f.lists.empty:SetText("No lists yet. Press New list on the right.")
   f.lists:SetItems(all)
   local l = picked()
   for _, w in ipairs(f.needList) do w:SetShown(l ~= nil) end
@@ -181,6 +187,31 @@ function render()
   f.del:SetText(SH.deleteArmed and "Sure?" or "Delete")
   f.del:EdbActive(SH.deleteArmed and true or false)
   f.count:SetText(("%s searches"):format(num(#l.queries)))
+  -- the search being changed: still in this list?
+  local e = SH.editing
+  if e and e.list ~= l then SH.editing, e = nil, nil end
+  f.addBtn:SetText(e and "Save" or "Add")
+end
+
+-- Saves a typed search into list l: a new one, or in place of the search being changed (keeping its amount to
+-- buy). Returns what happened: "added", "saved", "same" (already there) or nil (nothing typed).
+function SH.store(l, q, editing)
+  if not l or q == "" then return nil end
+  if editing and editing.list == l then
+    for i, have in ipairs(l.queries) do
+      if have == editing.query then
+        if q ~= have then
+          for _, other in ipairs(l.queries) do if other == q then return "same" end end
+          l.queries[i] = q
+          if l.want and l.want[have] then l.want[q], l.want[have] = l.want[have], nil end
+        end
+        return "saved"
+      end
+    end
+  end
+  for _, have in ipairs(l.queries) do if have == q then return "same" end end
+  l.queries[#l.queries + 1] = q
+  return "added"
 end
 
 local function showText(mode)
@@ -188,7 +219,7 @@ local function showText(mode)
   local l = picked()
   f.io.mode = mode
   f.io.title:SetText(mode == "export" and "Export: copy this text (Ctrl+C)" or "Import: paste lists (Ctrl+V), then press Import")
-  f.io.box:SetText(mode == "export" and l and exportText(l) or "")
+  f.io.box:SetText(mode == "export" and l and plain(exportText(l)) or "")   -- Import turns || back into |
   f.io.go:SetShown(mode == "import")
   f.io:Show()
   f.io.box:SetFocus()
@@ -215,14 +246,16 @@ local function makeFrame()
   local title = UI.text(left, "title")
   title:SetPoint("TOPLEFT", 10, -10)
   title:SetText("Shopping lists")
-  local new = UI.button(left, "New", 76, 22, "small")
-  new:SetPoint("TOPLEFT", 10, -34)
-  new:SetScript("OnClick", function()
+  local function startList()
     newList("Shopping list")
     render()
     f.name:SetFocus()
     f.name:HighlightText()
-  end)
+    setStatus("New list made. Name it, then type a search under Add a search and press Add.", T.good)
+  end
+  local new = UI.button(left, "New", 76, 22, "small")
+  new:SetPoint("TOPLEFT", 10, -34)
+  new:SetScript("OnClick", startList)
   local imp = UI.button(left, "Import", 76, 22, "small")
   imp:SetPoint("LEFT", new, "RIGHT", 4, 0)
   imp:SetScript("OnClick", function() showText("import") end)
@@ -240,9 +273,43 @@ local function makeFrame()
   f.needList = {}
   local function needs(w) f.needList[#f.needList + 1] = w; return w end
 
-  f.none = UI.text(R, "dim")
-  f.none:SetPoint("TOPLEFT", 14, -16)
-  f.none:SetText("Make a list with New, or Import one. Save in Advanced search adds searches to it.")
+  -- no lists yet: what the tab is for, in big plain words, and the button to start, front and centre
+  local none = CreateFrame("Frame", nil, R)
+  none:SetPoint("TOPLEFT", 24, -24)
+  none:SetPoint("BOTTOMRIGHT", -24, 24)
+  f.none = none
+  local block = CreateFrame("Frame", nil, none)
+  block:SetSize(440, 300)
+  block:SetPoint("CENTER", 0, 10)
+  local head = UI.text(block, "big")
+  head:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 20, "")
+  head:SetTextColor(unpack(T.accent))
+  head:SetPoint("TOP", 0, 0)
+  head:SetJustifyH("CENTER")
+  head:SetText("Shopping lists: searches you run often")
+  local body = UI.text(block, "body")
+  body:SetFont(STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF", 14, "")
+  body:SetTextColor(unpack(T.text))
+  body:SetWidth(440)
+  body:SetWordWrap(true)
+  body:SetJustifyH("CENTER")
+  body:SetPoint("TOP", head, "BOTTOM", 0, -16)
+  body:SetText("Keep the things you shop for in a list, like Linen Cloth or trinkets under 5 gold. "
+    .. "Run the whole list with one click and the results of every search show one after another, "
+    .. "with live prices. Nothing is bought until you click Buy.")
+  local go = UI.button(block, "New list", 170, 34, "primary")
+  go:SetPoint("TOP", body, "BOTTOM", -70, -24)
+  go:SetScript("OnClick", startList)
+  local imp2 = UI.button(block, "Import a list", 130, 34)
+  imp2:SetPoint("LEFT", go, "RIGHT", 10, 0)
+  imp2:SetScript("OnClick", function() showText("import") end)
+  local how = UI.text(block, "dim")
+  how:SetWidth(440)
+  how:SetWordWrap(true)
+  how:SetJustifyH("CENTER")
+  how:SetPoint("TOP", go, "BOTTOM", 70, -20)
+  how:SetText("You can also press Save in Advanced search to add the search you just ran, or make a list of a "
+    .. "recipe's materials with Shopping list beside the profession window.")
 
   local nl = needs(UI.label(R, "LIST NAME"))
   nl:SetPoint("TOPLEFT", 12, -10)
@@ -263,13 +330,16 @@ local function makeFrame()
     local l, i = picked()
     if not l then return end
     if not SH.deleteArmed then
-      SH.deleteArmed = true
+      -- armed for 3 seconds; a timer from an earlier press doesn't disarm a newer one
+      local armed = {}
+      SH.deleteArmed = armed
       render()
-      C_Timer.After(3, function() if SH.deleteArmed then SH.deleteArmed = nil; render() end end)
+      C_Timer.After(3, function() if SH.deleteArmed == armed then SH.deleteArmed = nil; render() end end)
       return
     end
     SH.deleteArmed = nil
     table.remove(lists(), i)
+    SH.editing = nil
     setStatus("Deleted " .. l.name .. ".", T.dim)
     render()
   end)
@@ -293,20 +363,34 @@ local function makeFrame()
   f.count:SetJustifyH("RIGHT")
   local addBtn = needs(UI.button(R, "Add", 56, 24))
   addBtn:SetPoint("TOPRIGHT", -12, -84)
+  f.addBtn = addBtn
   f.add = needs(UI.input(R, 100, 24, { hint = "slot is trinket and price lt 5g sort by price", max = 400 }))
   f.add:SetPoint("TOPLEFT", 12, -84)
   f.add:SetPoint("RIGHT", addBtn, "LEFT", -6, 0)
   local function add()
     local l = picked()
     local q = f.add:GetText():gsub("||", "|"):match("^%s*(.-)%s*$")
-    if not l or q == "" then return end
-    for _, have in ipairs(l.queries) do if have == q then f.add:SetText(""); return end end
-    l.queries[#l.queries + 1] = q
+    local done = SH.store(l, q, SH.editing)
+    if not done then return end
+    if done == "same" then
+      setStatus("That search is already in the list.", T.dim)
+    else
+      setStatus(done == "saved" and "Search changed." or "Search added.", T.good)
+    end
+    SH.editing = nil
     f.add:SetText("")
     f.add:ClearFocus()
     render()
   end
   f.add:SetScript("OnEnterPressed", add)
+  -- Escape, or emptying the box, stops changing a search: Add adds a new one again
+  f.add:SetScript("OnEscapePressed", function(self)
+    self:ClearFocus()
+    if SH.editing then SH.editing = nil; self:SetText(""); render() end
+  end)
+  f.add:HookScript("OnTextChanged", function(self)
+    if SH.editing and self:GetText() == "" then SH.editing = nil; render() end
+  end)
   addBtn:SetScript("OnClick", add)
 
   local bd = needs(UI.headerBand(R, 20))
@@ -410,10 +494,10 @@ function ns.saveToList(q)
   if not ns.db() then return end
   local l = picked() or newList("Shopping list")
   for _, have in ipairs(l.queries) do
-    if have == q then ns.say(("already in %s."):format(l.name)); return end
+    if have == q then ns.say(("already in %s."):format(plain(l.name))); return end
   end
   l.queries[#l.queries + 1] = q
-  ns.say(("saved to %s (%d searches). The Shopping tab has your lists."):format(l.name, #l.queries))
+  ns.say(("saved to %s (%d searches). The Shopping tab has your lists."):format(plain(l.name), #l.queries))
   render()
 end
 
@@ -435,6 +519,8 @@ ev:SetScript("OnEvent", function(_, e)
   end)
 end)
 
+ns.shoppingStore = SH.store   -- for tests/run.py
+
 -- A list made elsewhere (the profession window's Shopping list) shows at once if the tab is open.
 function ns.shoppingRefresh() render() end
 
@@ -445,11 +531,23 @@ function ns.slash(msg)
     return true
   end
   local listName = msg:match("^run%s+(.+)$")
+  if msg == "run" then
+    ns.say("which list? For example /eah run " .. plain(lists()[1] and lists()[1].name:lower() or "shopping list") .. ".")
+    return true
+  end
   if listName then
+    if not (_G.AuctionHouseFrame and AuctionHouseFrame:IsShown()) then
+      ns.say("open the auction house first, then /eah run " .. plain(listName) .. ".")
+      return true
+    end
     for _, l in ipairs(lists()) do
       if l.name:lower() == listName then runList(l); return true end
     end
-    ns.say("no list called " .. listName .. ".")
+    local names = {}
+    for i, l in ipairs(lists()) do if i <= 5 then names[#names + 1] = plain(l.name:lower()) end end
+    ns.say(("no list called \"%s\". %s"):format(plain(listName), #names > 0
+      and ("Your lists: " .. table.concat(names, ", ") .. ". For example /eah run " .. names[1] .. ".")
+      or "Make one in the auction house's Shopping tab with New."))
     return true
   end
   return prevSlash and prevSlash(msg) or false
