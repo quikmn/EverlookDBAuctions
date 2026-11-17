@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Quick sell shows what you actually get when it sells: the total minus the auction house's cut (5%, or 15% at the neutral houses), with the deposit back. The vendor and disenchant comparisons and the crafting box's profit use the same cut.
 - Each place has its own colour so you can tell where you are: Advanced search and its buy panel blue, Quick sell green, Shopping violet, the price-update bar cyan-grey. It shows in the panel's border, its title, its tab, its section headers and the box you're typing in. Gold stays for the one main action (Buy, Post, Search, New list); Blizzard's own views keep their look.
 - The bar's Update prices / Try again is a small quiet button in the bar's colour, and "the last price update was cut off" is no longer alarm red: red is kept for real problems. The progress bar is in the bar's colour too.
 - Quick sell's post block is laid out like Blizzard's Sell frame: Quantity with Max, Unit price in separate gold, silver and copper boxes with the coin inside each, Duration, Deposit, Total price, Post. No Suggest button: the price is set for you (the cheapest live auction minus your undercut), a click on a live auction undercuts that one, and an Undercut cheapest link brings the automatic price back after you type your own. The line under Quantity only says "Buyers can buy any amount." for stackable goods.

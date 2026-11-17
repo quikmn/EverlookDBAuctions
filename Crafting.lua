@@ -341,8 +341,9 @@ local function render()
       stale(w.eachAt) and QUIET or nil }
     if w.de then lines[#lines + 1] = { "Disenchant (estimate)", w.de } end
     if value and w.unpriced == 0 then
-      local profit = math.floor(value * 0.95) - w.cost
-      lines[#lines + 1] = { "Profit after the 5% AH cut", profit, profit >= 0 and GOOD or BAD }
+      local cut = ns.ahCut and ns.ahCut() or 0.05   -- 15% at a neutral house
+      local profit = math.floor(value * (1 - cut)) - w.cost
+      lines[#lines + 1] = { ("Profit after the %d%% AH cut"):format(cut * 100), profit, profit >= 0 and GOOD or BAD }
     end
   end
   for k, line in ipairs(f.lines) do

@@ -659,6 +659,7 @@ local function updateTotals()
   local qty, unit = S.qty or 0, S.unit or 0
   if not g then
     f.total:SetText("-")
+    if f.net then f.net:SetText("") end
     f.deposit:SetText("-")
     f.source:SetText("")
     f.qtyNote:SetText("")
@@ -674,15 +675,21 @@ local function updateTotals()
   if g.commodity then dep = try(AH.CalculateCommodityDeposit, g.id, S.dur, qty)
   elseif g.loc then dep = try(AH.CalculateItemDeposit, g.loc, S.dur, qty) end
   f.deposit:SetText(dep and money(dep) or "-")
-  -- the auction house keeps 5% of a sale (more at a neutral house): say so when a vendor or disenchanting pays more
-  local net = math.floor(unit * 0.95)
+  -- the auction house keeps 5% of a sale (15% at a neutral house): show what you get, and say so when a vendor or
+  -- disenchanting pays more
+  local cut = ns.ahCut and ns.ahCut() or 0.05
+  local net = math.floor(unit * (1 - cut))
+  if f.net then
+    f.net:SetText((unit > 0 and qty > 0)
+      and ("You get %s when it sells (the AH keeps %d%%), and the deposit back."):format(money(net * qty), cut * 100) or "")
+  end
   local warn = (unit > 0 and qty > 0) and depositWarning(dep, unit * qty, (g.vendor or 0) * qty) or nil
   if warn then
     -- said first: the deposit is lost when it doesn't sell
   elseif unit > 0 and (g.vendor or 0) > net then
-    warn = ("A vendor pays %s each, more than this nets after the 5%% cut."):format(money(g.vendor))
+    warn = ("A vendor pays %s each, more than this gets you after the AH's %d%% cut."):format(money(g.vendor), cut * 100)
   elseif unit > 0 and g.de and g.de > net then
-    warn = ("Disenchanting is worth about %s, more than this nets after the 5%% cut."):format(money(g.de))
+    warn = ("Disenchanting is worth about %s, more than this gets you after the AH's %d%% cut."):format(money(g.de), cut * 100)
   end
   f.source:SetText(warn and (UI.hex(T.bad) .. warn .. "|r") or S.source or "")
   f.post:SetEnabled(not S.posting and not S.warned and qty >= 1 and qty <= (S.avail or 0) and unit >= priceStep())
@@ -1516,6 +1523,9 @@ local function makeFrame()
   lab("Total price", 150, -214)
   f.total = needs(UI.text(P, "big"))
   f.total:SetPoint("TOPLEFT", 150, -230)
+  -- what you actually get when it sells: the total minus the auction house's cut (the deposit comes back too)
+  f.net = needs(UI.text(P, "mute"))
+  f.net:SetPoint("TOPLEFT", f.total, "BOTTOMLEFT", 0, -3)
 
   f.post = UI.button(P, "Post", 150, 30, "primary")
   f.post:SetPoint("BOTTOMRIGHT", -12, 12)

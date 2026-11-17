@@ -1072,4 +1072,6 @@ end
 function ns.latestRow(key) return house and ns.scanRowFor(key) end
 function ns.history(id) return house and ns.historyFor(id) or {} end
 function ns.houseItem(id) return house and ns.itemFor(id) end
+-- What the auction house keeps of a sale: 5%, or 15% at the neutral houses (Booty Bay, Gadgetzan, Everlook).
+function ns.ahCut() return houseSide == "Neutral" and 0.15 or 0.05 end
 ns.today = today
