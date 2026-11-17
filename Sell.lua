@@ -1261,7 +1261,8 @@ local function makeFrame()
   f:SetFrameLevel(ah:GetFrameLevel() + 150)
   f:EnableMouse(true)
   local PLACE = UI.place(f, "sell")   -- Quick sell's colour: where you are
-  UI.panel(f, T.bg, PLACE)
+  UI.panel(f, UI.tint(T.bg, PLACE, UI.WASH), PLACE)
+  UI.placeEdge(f, PLACE)
   f:Hide()
   S.frame = f
 
@@ -1275,7 +1276,7 @@ local function makeFrame()
   headNote:SetText("EverlookDB's selling: everything in your bags, priced from the live auctions. Blizzard's Sell tab is separate.")
 
   ------------------------------------------------------------------------------------------------ bags (left)
-  local left = UI.panel(CreateFrame("Frame", nil, f))
+  local left = UI.panel(CreateFrame("Frame", nil, f), UI.tint(T.surface, PLACE, UI.WASH_INNER), UI.tint(T.edge, PLACE, UI.WASH_EDGE))
   left:SetPoint("TOPLEFT", 8, -28)
   left:SetPoint("BOTTOMLEFT", 8, 30)
   left:SetWidth(256)
@@ -1315,7 +1316,7 @@ local function makeFrame()
   f.bags:SetPoint("BOTTOMRIGHT", -3, 4)
 
   ------------------------------------------------------------------------------------------------ post panel
-  local P = UI.panel(CreateFrame("Frame", nil, f))
+  local P = UI.panel(CreateFrame("Frame", nil, f), UI.tint(T.surface, PLACE, UI.WASH_INNER), UI.tint(T.edge, PLACE, UI.WASH_EDGE))
   P:SetPoint("TOPLEFT", left, "TOPRIGHT", 8, 0)
   P:SetPoint("TOPRIGHT", -8, -28)
   P:SetHeight(270)   -- room under Deposit and Total for what you get after the cut
@@ -1572,7 +1573,7 @@ local function makeFrame()
   f.confirm = cf
 
   ------------------------------------------------------------------------------------------------ lists (lower right)
-  local Lw = UI.panel(CreateFrame("Frame", nil, f))
+  local Lw = UI.panel(CreateFrame("Frame", nil, f), UI.tint(T.surface, PLACE, UI.WASH_INNER), UI.tint(T.edge, PLACE, UI.WASH_EDGE))
   Lw:SetPoint("TOPLEFT", P, "BOTTOMLEFT", 0, -8)
   Lw:SetPoint("BOTTOMRIGHT", -8, 30)
   f.curBtn = UI.button(Lw, "Current auctions", 128, 22, "small")
@@ -1672,11 +1673,11 @@ ns.blizzardTabs = blizzardTabs
 
 -- The window's title while one of our tabs is open ("Quick sell", "Shopping"), and Blizzard's own back when it closes
 -- (its tab click doesn't set the title again when its view didn't change underneath ours).
-function ns.ahTitle(text)
+function ns.ahTitle(text, color)
   local ah = _G.AuctionHouseFrame
   if not ah then return end
   if text then
-    if ah.SetTitle then pcall(ah.SetTitle, ah, text) end
+    if ah.SetTitle then pcall(ah.SetTitle, ah, color and (ns.UI.hex(color) .. text .. "|r") or text) end
   elseif ah.UpdateTitle then
     pcall(ah.UpdateTitle, ah)
   end
@@ -1700,7 +1701,7 @@ local function openSelling()
   if S.tab then pcall(PanelTemplates_SelectTab, S.tab) end
   ns.raise(f)
   f:Show()
-  ns.ahTitle("Quick sell")
+  ns.ahTitle("Quick sell", ns.T.places.sell)
   if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 end
 ns.openSelling = openSelling

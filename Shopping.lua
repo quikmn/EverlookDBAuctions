@@ -236,12 +236,13 @@ local function makeFrame()
   f:SetFrameLevel(ah:GetFrameLevel() + 150)
   f:EnableMouse(true)
   local PLACE = UI.place(f, "shopping")   -- Shopping's colour: where you are
-  UI.panel(f, T.bg, PLACE)
+  UI.panel(f, UI.tint(T.bg, PLACE, UI.WASH), PLACE)
+  UI.placeEdge(f, PLACE)
   f:Hide()
   SH.frame = f
 
   -- lists (left)
-  local left = UI.panel(CreateFrame("Frame", nil, f))
+  local left = UI.panel(CreateFrame("Frame", nil, f), UI.tint(T.surface, PLACE, UI.WASH_INNER), UI.tint(T.edge, PLACE, UI.WASH_EDGE))
   left:SetPoint("TOPLEFT", 8, -8)
   left:SetPoint("BOTTOMLEFT", 8, 30)
   left:SetWidth(256)
@@ -270,7 +271,7 @@ local function makeFrame()
   f.lists:SetPoint("BOTTOMRIGHT", -3, 4)
 
   -- the picked list (right)
-  local R = UI.panel(CreateFrame("Frame", nil, f))
+  local R = UI.panel(CreateFrame("Frame", nil, f), UI.tint(T.surface, PLACE, UI.WASH_INNER), UI.tint(T.edge, PLACE, UI.WASH_EDGE))
   R:SetPoint("TOPLEFT", left, "TOPRIGHT", 8, 0)
   R:SetPoint("BOTTOMRIGHT", -8, 30)
   f.needList = {}
@@ -498,7 +499,7 @@ local function openShopping()
   if SH.tab then pcall(PanelTemplates_SelectTab, SH.tab) end
   if ns.raise then ns.raise(f) end
   f:Show()
-  if ns.ahTitle then ns.ahTitle("Shopping lists") end
+  if ns.ahTitle then ns.ahTitle("Shopping lists", T.places.shopping) end
   if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 end
 

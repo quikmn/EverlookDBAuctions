@@ -187,6 +187,29 @@ function UI.panel(f, fill, edge)
   return f
 end
 
+-- base mixed with a share a (0..1) of colour c: panels take a light wash of their place's colour, so a place reads
+-- as that colour across the whole panel, not just its edge.
+function UI.tint(base, c, a)
+  return { base[1] + (c[1] - base[1]) * a, base[2] + (c[2] - base[2]) * a, base[3] + (c[3] - base[3]) * a, base[4] or 1 }
+end
+UI.WASH, UI.WASH_INNER, UI.WASH_EDGE = 0.10, 0.08, 0.45
+
+-- A place's frame: a 2 px border in its colour around the whole panel, so you see at a glance which part of the
+-- addon you are in (the 1 px panel edge alone was too faint to read as a colour).
+function UI.placeEdge(f, c)
+  local W = 2
+  local function bar(p1, p2, horizontal)
+    local t = f:CreateTexture(nil, "OVERLAY", nil, 7)
+    t:SetColorTexture(unpack(c))
+    t:SetPoint(p1)
+    t:SetPoint(p2)
+    if horizontal then t:SetHeight(W) else t:SetWidth(W) end
+    return t
+  end
+  return { bar("TOPLEFT", "TOPRIGHT", true), bar("BOTTOMLEFT", "BOTTOMRIGHT", true),
+    bar("TOPLEFT", "BOTTOMLEFT", false), bar("TOPRIGHT", "BOTTOMRIGHT", false) }
+end
+
 -- A 1 px line in the border color.
 function UI.line(parent, horizontal, color, layer)
   local t = parent:CreateTexture(nil, layer or "BORDER")

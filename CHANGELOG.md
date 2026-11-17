@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Blizzard's Cancel Auction button no longer sits on top of the price bar's button: Blizzard's Auctions and Sell views now end above the bar.
+- Quick sell, Shopping and Advanced search are washed in their own colour (green, violet, blue) with a thicker coloured border and a coloured window title, so you always see where you are.
+
 - `/eah` opens a real settings window in the same look as Lattice and the other EverlookDB addons (it is also in the game's Settings under AddOns). Every setting is a command too: `/eah settings` lists them and `/eah duration 24`, `/eah tipvendor on` or `/eah skin off` changes one, says so in chat and updates the open window. `/eah undercut` updates the open window and Quick sell's price as well.
 - Quick sell and Shopping tabs are as wide as Blizzard's tabs, so their names no longer run to the edges, and the window's title says where you are (Quick sell, Shopping lists) instead of keeping the last Blizzard tab's title.
 - Closing the auction house with Quick sell or Shopping open no longer leaves the next visit with no tab selected.

@@ -252,6 +252,20 @@ local function grow(ah)
   pcall(function()
     ah:SetHeight(ah:GetHeight() + BAR_H)
     if ah.CategoriesList then ah.CategoriesList:SetHeight(ah.CategoriesList:GetHeight() + BAR_H) end
+    -- Blizzard's Auctions view ends at the money display and hangs its Cancel Auction button 22 px below that, in the
+    -- bottom strip where our bar now sits; lift the views that end at the money display above the bar instead
+    for _, key in ipairs({ "AuctionsFrame", "ItemSellFrame" }) do
+      local v = ah[key]
+      if v then
+        local pts = {}
+        for i = 1, v:GetNumPoints() do pts[i] = { v:GetPoint(i) } end
+        v:ClearAllPoints()
+        for _, p in ipairs(pts) do
+          if p[1] == "BOTTOM" and (p[2] == ah.MoneyFrameBorder or p[2] == ah) then p[5] = (p[5] or 0) + BAR_H end
+          v:SetPoint(unpack(p))
+        end
+      end
+    end
     local f = ah.ItemBuyFrame
     if f then
       local points = {}

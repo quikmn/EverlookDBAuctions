@@ -1203,7 +1203,8 @@ local function makeResults()
   f:SetAllPoints(area)
   f:SetFrameLevel(area:GetFrameLevel() + 200)
   UI.place(f, "search")
-  UI.panel(f, T.bg, PLACE)   -- the blue edge: you are in Advanced search
+  UI.panel(f, UI.tint(T.bg, PLACE, UI.WASH), PLACE)   -- the blue edge: you are in Advanced search
+  UI.placeEdge(f, PLACE)
   f:EnableMouse(true)
   f:SetScript("OnShow", function() blizzardList(false); blizzardSearch(false); modeButton() end)
   f:SetScript("OnHide", function() blizzardList(true); blizzardSearch(true); modeButton() end)
