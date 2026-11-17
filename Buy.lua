@@ -144,7 +144,10 @@ function send()
           B.rows = rows
           B.sel = B.sel and B.sel.auctionID and B.buyMatch(rows, B.sel) or nil
           if not B.sel then B.armed = nil end
-          if left <= 0 then B.loaded, B.state = true, nil end
+          if left <= 0 then
+            B.loaded, B.state = true, nil
+            if not B.partial and not B.showAll then B.shareLive(rows) end
+          end
           render()
           if left <= 0 and B.deal then dealPick() end
         end)
@@ -156,7 +159,12 @@ function send()
       if gen ~= B.gen then return end
       if not answer.ok then noAnswer(); return end
       if #answer.entries == 0 then
-        if answer.full then B.rows, B.loaded, B.state = {}, true, nil else B.state = "partial" end
+        if answer.full then
+          B.rows, B.loaded, B.state = {}, true, nil
+          B.shareLive({})
+        else
+          B.state = "partial"
+        end
         render()
         if answer.full and B.deal then dealPick() end
         return
@@ -169,6 +177,19 @@ function send()
   render()
 end
 ns.buyKeys = function() return B.keys, B.showAll end
+
+-- A complete live answer goes to Advanced search's row too (its lowest buyout each and how many are up), so the row
+-- shows it when you go back. Only for the row's own version (not when every version is listed together).
+function B.shareLive(rows)
+  if not ns.setLive or not B.vkey then return end
+  if #rows == 0 then ns.setLive(B.vkey, { gone = true }); return end
+  local price, qty = nil, 0
+  for _, r in ipairs(rows) do
+    qty = qty + (r.qty or 0)
+    if r.unit and r.unit > 0 and (not price or r.unit < price) then price = r.unit end
+  end
+  ns.setLive(B.vkey, { price = price, qty = qty })
+end
 
 -- The quantity you'd get and what it would cost, cheapest first, from other sellers' commodities.
 local function estimate(qty)
@@ -649,7 +670,10 @@ function dealPick()
     return
   end
   B.dealWait = nil
-  local pick = ns.vendor.nextDeal(B.rows, sell, B.commodity)
+  -- the list's bar: 10s per auction, any amount when the search names a profit
+  local q = ns.lastQuery and ns.lastQuery()
+  local minProfit = (type(q) == "string" and q:lower():find("profit")) and 0 or ns.vendor.MIN_DEAL
+  local pick = ns.vendor.nextDeal(B.rows, sell, B.commodity, minProfit)
   if not pick then
     if ns.dropResult and B.row then ns.dropResult(B.row) end
     for k, r in ipairs(deal.list) do
@@ -703,6 +727,16 @@ function events.COMMODITY_PRICE_UPDATED(unit, total)
     render()
     return
   end
+  -- more than 5% over the listed price (the cheapest sold meanwhile): refused, as Blizzard's own dialog does
+  local _, listed = estimate(quote.qty)
+  if listed > 0 and quote.total > listed * 1.05 then
+    cancelQuote()
+    setStatus(("The price went up to %s (from %s). Not bought; looking at the auctions again."):format(
+      money(quote.total), money(listed)), T.bad)
+    C_Timer.After(0.5, function() if ns.buyOpen then send() end end)
+    render()
+    return
+  end
   -- the quote holds for a short while; then it's gone and Buy asks again
   local secs = try(AH.GetQuoteDurationRemaining)
   if type(secs) ~= "number" or secs <= 0 then secs = 30 end
@@ -714,13 +748,7 @@ function events.COMMODITY_PRICE_UPDATED(unit, total)
     end
   end)
   local each = money(quote.unit or math.floor(quote.total / math.max(1, quote.qty)))
-  local _, listed = estimate(quote.qty)
-  if listed > 0 and quote.total > listed * 1.05 then
-    setStatus(("The auction house quotes %s (%s each), more than the %s listed: the cheapest went meanwhile. Confirm within %d seconds to pay it anyway."):format(
-      money(quote.total), each, money(listed), secs), T.bad)
-  else
-    setStatus(("The auction house quotes %s (%s each). Confirm within %d seconds to pay."):format(money(quote.total), each, secs), T.accent)
-  end
+  setStatus(("The auction house quotes %s (%s each). Confirm within %d seconds to pay."):format(money(quote.total), each, secs), T.accent)
   render()
 end
 

@@ -491,6 +491,13 @@ local function liveOf(r)
 end
 local function liveFresh(r) return liveOf(r) ~= nil end
 ns.liveFresh = liveFresh
+-- The buy panel's complete live answer for a row's key ({ price, qty } or { gone = true }), so the row shows it.
+function ns.setLive(key, entry)
+  if not key or type(entry) ~= "table" then return end
+  entry.at = time()
+  Q.live[key] = entry
+  if Q.liveMiss then Q.liveMiss[key] = nil end
+end
 
 -- Rows the live check asked about but got no price for: "noanswer" (the auction house didn't answer) or "unclear"
 -- (an incomplete answer that can't tell this version apart). Asked again after LIVE_RETRY seconds.

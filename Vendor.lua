@@ -146,19 +146,24 @@ end
 
 -- Start buying (Buy.lua): what to buy next of an item from its live auctions (sorted cheapest first). Items: the
 -- cheapest auction under vendor price that isn't yours. Stackable goods: how many are up under vendor price from
--- other sellers, and what they cost. nil when nothing is under vendor price any more.
-function V.nextDeal(rows, sell, commodity)
+-- other sellers, and what they cost. nil when nothing is under vendor price any more. minProfit (copper, default 0):
+-- the same bar as the list: an auction of an item must make that much, stackable goods that much together.
+function V.nextDeal(rows, sell, commodity, minProfit)
   if not sell or sell <= 0 then return nil end
+  minProfit = minProfit or 0
   if commodity then
     local qty, cost = 0, 0
     for _, r in ipairs(rows or {}) do
       local n = r.others or r.qty or 0
       if r.unit and r.unit < sell and n > 0 then qty, cost = qty + n, cost + n * r.unit end
     end
-    return qty > 0 and { qty = qty, cost = cost } or nil
+    if qty > 0 and qty * sell - cost >= minProfit then return { qty = qty, cost = cost } end
+    return nil
   end
   for _, r in ipairs(rows or {}) do
-    if not r.mine and r.unit and r.buyout and r.unit < sell then return r end
+    if not r.mine and r.unit and r.buyout and r.unit < sell and (sell - r.unit) * (r.qty or 1) >= minProfit then
+      return r
+    end
   end
   return nil
 end

@@ -96,6 +96,7 @@ def main() -> int:
     failures += core_and_lists()
     failures += audit_search()
     failures += buy_panel()
+    failures += buy_decisions()
 
     if failures:
         for f in failures:
@@ -1277,7 +1278,7 @@ def buy_panel():
         return lua.table(auctionID=aid, buyoutAmount=buyout, quantity=qty, containsOwnerItem=False, timeLeft=3)
 
     # Start buying on Old Sword (vendor 500c): its cheapest auction under vendor price is picked, one click buys it
-    G.ITEMS = tbl(auction(1, 100), auction(2, 600))
+    G.ITEMS = tbl(auction(1, 300, 3), auction(2, 600))
     deal_list = tbl(lua.table(header=True), lua.table(id=3000, name="Old Sword", quality="uncommon"))
     ns.startDeals(deal_list)
     f = G.EverlookAuctionsQueryResults.children[1]
@@ -1285,7 +1286,7 @@ def buy_panel():
     answer(3000)
     click(f.buy)
     bids = calls("PlaceBid")
-    check(len(bids) == 1 and bids[0][2] == 1 and bids[0][3] == 100, f"one click buys the picked deal: {len(bids)}")
+    check(len(bids) == 1 and bids[0][2] == 1 and bids[0][3] == 300, f"one click buys the picked deal: {len(bids)}")
     # an error from the auction house: said, and nothing left waiting
     fire("AUCTION_HOUSE_SHOW_ERROR", 1)
     check("refused" in f.status.text and "Nothing was paid" in f.status.text, f"refusal reported: {f.status.text}")
@@ -1316,7 +1317,7 @@ def buy_panel():
     answer(424242)
     check(len(G.DROPPED) == 0, "not dropped while its vendor price is unknown")
     check("vendor price" in f.status.text, f"says it waits: {f.status.text}")
-    ns.db().itemInfo[424242] = lua.eval('{ "Mystery", 1, 1, 0, "Trade Goods", "Cloth", "", 1, 1000, 1 }')
+    ns.db().itemInfo[424242] = lua.eval('{ "Mystery", 1, 1, 0, "Trade Goods", "Cloth", "", 1, 5000, 1 }')
     G.advance(1)
     check(f.status.text.startswith("Picked"), f"picked once the price came: {f.status.text}")
 
@@ -1377,6 +1378,63 @@ def buy_panel():
     G.C_Item.GetItemInfoInstant = lua.eval("function() return nil end")
     check(V.isQuest(999999, None) is False and V.isQuest(999999, "Quest") is True,
           "an item not known yet isn't remembered as no quest item")
+    return failures
+
+
+def buy_decisions():
+    """Start buying uses the list's 10s bar, a commodity quote over 5% above the listed price is refused, and a
+    complete live answer from the buy panel reaches Advanced search's row."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    lua.execute(BUY_SETUP)
+    run(AHQ_FAKE, "ahq", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Buy.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    G = lua.globals()
+    ev = G.MOCK_FRAMES[len(G.MOCK_FRAMES)]
+    tbl = lua.eval("function(...) return { ... } end")
+    browse_answer = lua.eval("function(id) return { ok = true, full = true, entries = { { itemKey = { itemID = id } } } } end")
+    V = ns.vendor
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("buy decisions: " + what)
+
+    # the 10s bar: per auction for items, together for stackable goods
+    rows = tbl(lua.table(unit=100, buyout=100, qty=1), lua.table(unit=100, buyout=300, qty=3))
+    pick = V.nextDeal(rows, 500, False, V.MIN_DEAL)
+    check(pick is not None and pick.qty == 3, "an item: the first auction making 10s, not one making 4s")
+    check(V.nextDeal(tbl(lua.table(unit=100, buyout=100, qty=1)), 500, False, V.MIN_DEAL) is None, "4s: nothing")
+    check(V.nextDeal(tbl(lua.table(unit=100, buyout=100, qty=1)), 500, False, 0) is not None, "no bar: taken")
+    goods = tbl(lua.table(unit=10, qty=20, others=20))
+    check(V.nextDeal(goods, 13, True, V.MIN_DEAL) is None, "goods making 60c together: nothing")
+    check(V.nextDeal(goods, 13, True, 0).qty == 20, "goods with no bar: all of them")
+
+    # a live answer reaches the search row
+    got = {}
+    ns.setLive = lambda key, entry: got.__setitem__(key, entry)
+    G.IS_COMMODITY = True
+    G.COMMS = tbl(lua.table(unitPrice=10, quantity=20, numOwnerItems=0), lua.table(unitPrice=12, quantity=5, numOwnerItems=0))
+    ns.openBuy(lua.table(id=2589, key="2589:0", name="Linen Cloth", quality="common"))
+    G.AHQ.browse(browse_answer(2589))
+    G.AHQ["items"](G.AHQ.key, True, True)
+    e = got.get("2589:0")
+    check(e is not None and e.price == 10 and e.qty == 25, "the row gets the lowest price and how many are up")
+
+    # a quote more than 5% over the listed price is refused
+    f = G.EverlookAuctionsQueryResults.children[1]
+    f.qty.text = "5"
+    f.qty.scripts.OnTextChanged(f.qty, True)
+    f.buy.scripts.OnClick(f.buy)
+    ev.scripts.OnEvent(ev, "COMMODITY_PRICE_UPDATED", 11, 55)
+    check(f.buy.text == "Buy" and "went up to 55c (from 50c)" in f.status.text, f"refused: {f.status.text}")
+    f.buy.scripts.OnClick(f.buy)
+    ev.scripts.OnEvent(ev, "COMMODITY_PRICE_UPDATED", 10, 52)
+    check(f.buy.text == "Confirm 52c", f"within 5%: {f.buy.text}")
     return failures
 
 

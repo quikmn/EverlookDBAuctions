@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Buy panel: during Start buying only the auction it picked is bought in one click, and it only picks auctions that make at least 10s (like the list); refused or unanswered purchases say so; commodity quotes run out like Blizzard's, and one more than 5% above the listed price is refused; the status line no longer covers the list. A live look in the buy panel also updates the item's row in Advanced search.
 - The Shopping tab explains itself when you have no lists yet: what lists are for, in big plain words, with a New list button in the middle.
 - Clicking a search in a shopping list puts it in the box to change, and Save now changes it in place. It used to add a second copy.
 - Tooltips no longer say "none up" for an item whose only auctions have bids and no buyout; they say so. "None up" and the disenchant estimate now say how old the scan or prices are.
