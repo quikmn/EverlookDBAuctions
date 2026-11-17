@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Tab text stays in the middle of the tab when the tab is selected (it dropped to the bottom edge).
+
 - Price updates: the server allows one about every 15 minutes and counts every request, answered or not; Try again now waits those 15 minutes instead of 1 (asking sooner was ignored, so one cut-off update led to "no answer" after "no answer").
 - The price bar no longer shows a made-up percentage while waiting: it says it is asking the server and for how long, then counts the auctions actually read.
 - /eah status lists the last price updates and how each ended.

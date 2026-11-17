@@ -966,6 +966,13 @@ local function tabState(tab, selected)
     local c = selected and place or (NORMAL_FONT_COLOR and { NORMAL_FONT_COLOR:GetRGB() }) or T.accent
     fs:SetTextColor(c[1], c[2], c[3], 1)
   end
+  -- Blizzard drops a selected tab's text 3 to 5 px to sit in its taller tab art; our flat tabs keep one shape, so the
+  -- text stays in the middle of the tab, selected or not
+  local text = tab.Text or (tab.GetFontString and tab:GetFontString())
+  if text and text.SetPoint then
+    text:ClearAllPoints()
+    text:SetPoint("CENTER", s.fill, "CENTER", 0, 0)
+  end
   tabs[tab] = selected and "on" or "off"
 end
 
