@@ -481,6 +481,9 @@ local function store(k, c, commodity)
   summarize(e)
   Live.cache[c] = e
   if commodity then Live.byId[k.itemID] = e end
+  -- the tooltip's AH price follows this fresh answer (an item with random suffixes is searched one variant at a time,
+  -- so only plain items and commodities count)
+  if ns.noteLivePrice and (commodity or (k.itemSuffix or 0) == 0) and (full or #rows > 0) then ns.noteLivePrice(k.itemID, rows) end
   return e
 end
 

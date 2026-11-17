@@ -778,6 +778,22 @@ local function captureBrowse()
   end
 end
 
+-- One item's live auctions, looked up by Quick sell or Buy: the newest lowest price, so the tooltip and the 30-day
+-- low follow what was just seen instead of the last full scan. rows = { { unit = copper each, qty = n }, ... }, every
+-- variant of the item (one random-suffix variant alone says nothing about the item's lowest price).
+function ns.noteLivePrice(id, rows)
+  if scan or not house or not id or type(rows) ~= "table" then return end
+  local low, qty = nil, 0
+  for _, r in ipairs(rows) do
+    if r.unit and r.unit > 0 and (not low or r.unit < low) then low = r.unit end
+    qty = qty + (r.qty or 0)
+  end
+  if not low then return end   -- nothing up with a buyout: keep the last known price
+  local h = getHouse(house)
+  h.items[id] = { low, qty, nil, time() }
+  noteDay(h, id, low, today())
+end
+
 ---------------------------------------------------------------------------------------------------------------------
 -- Tooltips
 

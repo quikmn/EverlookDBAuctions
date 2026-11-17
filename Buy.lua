@@ -147,6 +147,8 @@ function send()
           if left <= 0 then
             B.loaded, B.state = true, nil
             if not B.partial and not B.showAll then B.shareLive(rows) end
+            -- every variant of the item came in: the tooltip's AH price follows it
+            if not B.partial and not B.showAll and ns.noteLivePrice then ns.noteLivePrice(B.id, rows) end
           end
           render()
           if left <= 0 and B.deal then dealPick() end

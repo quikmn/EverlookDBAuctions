@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The AH price in tooltips now updates when Quick sell or Buy looks an item up, so it shows the lowest price just seen instead of the last full scan (which could be half an hour old). The 30-day low counts it too.
 - Advanced search: `source is vendor` now finds every item a vendor sells, also ones you can get other ways too (it only found items whose only way was a vendor), as on EverlookDB.com. `is`, `has`, `in` and `is not` compare whole ways, so `source has drop` no longer finds world drops (`source is "world drop"` does). The guide lists all 13 ways; `from` is another word for source, `worlddrop` means world drop and `profession` means crafted, and a way that isn't one (`source is trainer`) says which ways there are.
 - The item data covers more ways to get an item: fishing, herbalism, mining, object, world drop, container and disenchant are new.
 - Quick sell: when a vendor pays exactly what the auction house gets you after its cut, the Sells to vendor box says so instead of "pays more than the AH".
