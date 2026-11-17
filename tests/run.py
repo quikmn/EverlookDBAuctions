@@ -103,6 +103,7 @@ def main() -> int:
     failures += tooltip_text()
     failures += tooltip_reads_last()
     failures += reload_logged()
+    failures += scan_storage()
 
     if failures:
         for f in failures:
@@ -2076,6 +2077,159 @@ def reload_logged():
         failures.append("reload: a finished update is not logged as cut off")
     if "reload" not in ns.unfinishedText(h):
         failures.append("reload: the bar still says a reload cut it off")
+    return failures
+
+
+FAKE_ENCODING = """
+Enum = Enum or {}
+Enum.CompressionMethod = { Deflate = 0, Zlib = 1, Gzip = 2 }
+ENCODE_BREAK = nil   -- "decompress" gives other text back, "throw" makes compressing fail
+C_EncodingUtil = {
+  CompressString = function(s, method)
+    if ENCODE_BREAK == "throw" then error("no") end
+    assert(method == 1)
+    return "Z" .. s
+  end,
+  DecompressString = function(s, method)
+    assert(method == 1)
+    return ENCODE_BREAK == "decompress" and s:sub(2) .. "x" or s:sub(2)
+  end,
+  EncodeBase64 = function(s) return "B" .. s end,
+  DecodeBase64 = function(s) return s:sub(2) end,
+}
+"""
+
+
+def scan_storage():
+    """Older full scans packed (zlib + base64 when the game round-trips it, else plain text), retention (7 days,
+    same-hour thinning, the scan and size caps, the newest per house always kept), and the unsaved-scans note."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("scan storage: " + what)
+
+    def core(encoding):
+        lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+        lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+        lua.execute(CORE_SETUP)
+        if encoding:
+            lua.execute(FAKE_ENCODING)
+        run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+        ns = lua.table()
+        run((ROOT / "EverlookDBAuctions.lua").read_text(encoding="utf-8"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
+        fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+        fire("ADDON_LOADED", "EverlookDBAuctions")
+        return lua, ns
+
+    make = """function(at, side)
+      return { realm = "Test", realmID = 5, side = side or "Alliance", at = at, took = 30, build = "1", addon = "dev",
+        auctions = 9, noLink = 1, linkRounds = { 1 }, noLinkItems = { "7:1" }, linkSamples = { "x" },
+        rows = { ["2:0"] = "5,5,5,1,1,0,0,0,0,0,1,", ["10:3"] = "9,9,9,2,1,0,0,0,0,1,0,", ["10:-7"] = "8,8,8,1,1,0,0,0,1,0,0,,of the Bear" },
+        deals = { ["2:0"] = "5:1" } }
+    end"""
+    packed = "10:-7=8,8,8,1,1,0,0,0,1,0,0,,of the Bear\n10:3=9,9,9,2,1,0,0,0,0,1,0,\n2:0=5,5,5,1,1,0,0,0,0,0,1,"
+
+    # --- packing: compressed when the game round-trips it
+    lua, ns = core(True)
+    sc = lua.eval(make)(1000)
+    ns.compactScan(sc)
+    check(sc.zm == "zlib-b64" and sc.z == "BZ" + packed and sc.packed is None, f"compressed and base64: {sc.z!r}")
+    check(sc.rows is None and sc.deals is None and sc.linkSamples is None, "rows, deals and link samples go")
+    check(sc.nrows == 3, f"row count kept: {sc.nrows}")
+    check(sc.realm == "Test" and sc.realmID == 5 and sc.side == "Alliance" and sc.at == 1000 and sc.took == 30
+          and sc.auctions == 9 and sc.noLink == 1 and sc.linkRounds[1] == 1 and sc.noLinkItems[1] == "7:1"
+          and sc.build == "1" and sc.addon == "dev", "every other field kept")
+    ns.compactScan(sc)
+    check(sc.z == "BZ" + packed, "packing twice changes nothing")
+
+    # a round trip that gives other text back, or compressing that fails: plain packed text
+    for brk in ["decompress", "throw"]:
+        lua.globals().ENCODE_BREAK = brk
+        sc = lua.eval(make)(1000)
+        ns.compactScan(sc)
+        check(sc.z is None and sc.zm is None and sc.packed == packed and sc.rows is None,
+              f"{brk}: falls back to plain text ({sc.z!r})")
+    lua.globals().ENCODE_BREAK = None
+
+    # no C_EncodingUtil at all, or no CompressString: plain packed text
+    lua2, ns2 = core(False)
+    sc = lua2.eval(make)(1000)
+    ns2.compactScan(sc)
+    check(sc.packed == packed and sc.z is None and sc.nrows == 3, "no encoding API: plain packed text")
+    lua2.execute(FAKE_ENCODING + "C_EncodingUtil.CompressString = nil")
+    sc = lua2.eval(make)(1000)
+    ns2.compactScan(sc)
+    check(sc.packed == packed and sc.z is None, "no CompressString: plain packed text")
+
+    # --- retention
+    G = lua.globals()
+    now = G.MOCK_TIME
+    day = 86400
+    mk = lua.eval(make)
+    setp = lua.eval("function(sc, n) sc.rows, sc.deals = nil, nil; sc.packed = string.rep('x', n); sc.nrows = 1 end")
+    tbl = lua.eval("function(...) return { ... } end")
+
+    def ats(scans):
+        return [scans[i].at for i in range(1, len(scans) + 1)]
+
+    # past 7 days goes, unless it is the newest scan of its house; the house's previous scan is packed
+    scans = tbl(mk(now - 8 * day), mk(now - 10 * day, "Horde"), mk(now - day), mk(now))
+    dropped = ns.trimScans(scans, now)
+    check(dropped == 1 and ats(scans) == [now - 10 * day, now - day, now], f"8-day-old scan dropped: {ats(scans)}")
+    check(scans[1].rows is not None and scans[3].rows is not None, "the newest scan per house keeps its rows")
+    check(scans[2].rows is None and scans[2].z is not None, "the house's older scan is packed")
+
+    # over 60 scans: a scan with a newer one of its house in the same server hour goes first, oldest first
+    base = (now // 3600 - 20) * 3600
+    scans = tbl(*[mk(base + k * 900) for k in range(64)])   # 4 per hour, 16 hours
+    dropped = ns.trimScans(scans, now)
+    left = ats(scans)
+    gone = sorted(set(base + k * 900 for k in range(64)) - set(left))
+    check(dropped == 4 and len(left) == 60, f"64 scans trimmed to 60 ({dropped} dropped)")
+    check(gone == [base, base + 900, base + 1800, base + 3600], f"same-hour duplicates, oldest first: {[(g - base) // 900 for g in gone]}")
+    check(left[-1] == base + 63 * 900 and scans[60].rows is not None, "the newest is kept with its rows")
+
+    # no same-hour duplicates: the oldest go
+    scans = tbl(*[mk(base - 100 * 3600 + k * 7200) for k in range(62)])
+    ns.trimScans(scans, now)
+    left = ats(scans)
+    check(len(left) == 60 and left[0] == base - 100 * 3600 + 2 * 7200, f"oldest dropped when none share an hour: {len(left)}")
+
+    # the size cap: 1,000,000 bytes each, about 20 MB in all
+    scans = tbl(*[mk(base + k * 3600) for k in range(25)])
+    for i in range(1, 25):
+        setp(scans[i], 1000000)
+    ns.trimScans(scans, now)
+    check(len(scans) == 21 and scans[1].at == base + 4 * 3600, f"over 20 MB: oldest dropped ({len(scans)} left)")
+
+    # the newest scan of each house is never dropped, even alone over the size cap
+    big = mk(base - 5 * 3600, "Horde")
+    setp(big, 30000000)
+    big.packed = None
+    big.rows = lua.eval("{}")
+    big.nrows = 500000   # 500,000 rows x 72 bytes: 36 MB estimated
+    scans = tbl(mk(base - 6 * 3600), big, mk(base - 3600), mk(base))
+    ns.trimScans(scans, now)
+    check(len(scans) == 2 and scans[1].side == "Horde" and scans[2].at == base, f"only the newest per house left: {ats(scans)}")
+
+    # --- the unsaved-scans note
+    db = G.EverlookAuctionsDB
+    a, b, c = mk(now - 3000), mk(now - 1000), mk(now - 500)
+    db.scans = tbl(a, b)
+    ns.noteUnsaved(b, now - 1000)
+    check(ns.unsavedText(now) is None, "under 30 minutes: no note")
+    check(ns.unsavedText(now + 801) == "1 scan waiting to upload · /reload saves it", f"one scan: {ns.unsavedText(now + 801)}")
+    ns.noteUnsaved(c, now - 500)
+    check(ns.unsavedText(now + 801) == "1 scan waiting to upload · /reload saves it", "a scan no longer kept doesn't count")
+    db.scans[3] = c
+    check(ns.unsavedText(now) is None and ns.unsavedText(now + 1000) == "2 scans waiting to upload · /reload saves them",
+          f"two scans, timed by the oldest: {ns.unsavedText(now + 1000)}")
+    G.PRINTED = lua.table()
+    G.SlashCmdList.EVERLOOKAUCTIONS("status")
+    out = "\n".join(G.PRINTED[i] for i in range(1, len(G.PRINTED) + 1))
+    check("2 scans from this session not on disk yet" in out and "/reload" in out, f"/eah status lists them: {out}")
+    check("full scans kept for EverlookDB.com: 3" in out, "/eah status counts the scans kept")
     return failures
 
 
