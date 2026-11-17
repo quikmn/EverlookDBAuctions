@@ -4,7 +4,8 @@
 --   Tooltips  auction price, 30-day low and median, disenchant value, vendor price, full-stack price with Shift
 --   General   automatic price updates, the EverlookDB look for Blizzard's auction house, crafting cost
 -- Every setting is also a command: /eah <setting> <value> sets it, says so in chat and updates the open window;
--- /eah settings lists them. The core (EverlookDBAuctions.lua) routes /eah here.
+-- /eah get lists them. The core (EverlookDBAuctions.lua) routes /eah to this app, which follows the chat-command
+-- pattern every EverlookDB addon shares (EverlookUI): help, get/set, search, status, version, suggestions.
 local ADDON, ns = ...
 local UI = LibStub and LibStub("EverlookUI-1", true)
 
@@ -101,6 +102,23 @@ local function build()
     after = function() if ns.craftRefresh then ns.craftRefresh() end end,
   })
 
+  -- the addon's own commands; the shared ones (help, get, set, search, status, version, feedback) come with the app
+  app:StatusLines(function() if ns.showStatus then ns.showStatus() end end)
+  app:Command("scan", "scan", "update prices now (auction house open)", function() if ns.startScan then ns.startScan() end end)
+  app:Command("sell", "sell", "open Quick sell (auction house open)", function() ns.slash("sell") end, { "selling", "quicksell", "quick" })
+  app:Command("shop", "shop", "open Shopping (auction house open)", function() ns.slash("shop") end, { "shopping", "lists" })
+  app:Command("run", "run <list>", "run a shopping list (auction house open)", function(rest)
+    ns.slash(rest == "" and "run" or ("run " .. rest))
+  end)
+  -- "/eah undercut 1s" keeps its own reply (it names the step); "/eah set undercut 1s" works as for any setting
+  app:Command("undercut", "undercut", "", function(rest) ns.slash("undercut " .. rest) end).hidden = true
+  app:Command("test", "test", "reload after every full scan, so it is saved at once", function()
+    if ns.toggleTestMode then ns.toggleTestMode() end
+  end)
+  app:Command("debug", "debug", "what is shown where, and any cut-off labels (for bug reports)", function()
+    if ns.debugReport then ns.debugReport() end
+  end)
+
   app:Section("selling", "Selling", function(stack)
     UI.Header(stack, "Selling", "Quick sell's price is the cheapest live auction minus your undercut. Blizzard's own Sell tab gets the same undercut when you pick an auction in its list.")
     app:Widget(stack, "undercut")
@@ -117,7 +135,7 @@ local function build()
     app:Widget(stack, "skin")
     app:Widget(stack, "crafting")
     UI.Header(stack, "Chat commands")
-    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah run <list>  run a shopping list\n/eah settings  every setting with its value\n/eah undercut 1s  change one setting")
+    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting")
   end)
 end
 
@@ -150,6 +168,7 @@ ev:SetScript("OnEvent", function(_, _, name)
   if not UI then ns.optionsError = "the EverlookUI library is missing"; return end
   local okBuild, err = pcall(build)
   if not okBuild then ns.optionsError = err; O.app = nil end
+  ns.app = O.app -- /eah goes through it (EverlookDBAuctions.lua)
 end)
 
 local prevSlash, prevHelp = ns.slash, ns.help

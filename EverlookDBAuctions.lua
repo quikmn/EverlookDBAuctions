@@ -64,7 +64,7 @@ local function ok(v)
   return v
 end
 
-local function say(msg) print("|cffffd100EverlookDB Auctions:|r " .. msg) end
+local function say(msg) print("|cffffd100EverlookDB Auctions|r: " .. msg) end -- the prefix every EverlookDB addon uses
 
 -- Text the player typed or named (a command, a list name), safe to print: a lone | starts a WoW escape code and
 -- garbles what follows, so it is doubled.
@@ -1175,47 +1175,56 @@ for e in pairs(events) do pcall(frame.RegisterEvent, frame, e) end  -- some even
 frame:SetScript("OnEvent", function(_, e, ...) events[e](...) end)
 
 local showStatus   -- /eah status (below)
+
+-- /eah debug: what is shown where, for bug reports about tabs and panels ("I click Selling and nothing changes")
+function ns.debugReport()
+  local ah = _G.AuctionHouseFrame
+  say(("debug: AuctionHouseFrame %s, mode %s, tab %s"):format(ah and (ah:IsShown() and "shown" or "hidden") or "missing",
+    tostring(ah and ah.GetDisplayMode and select(2, pcall(ah.GetDisplayMode, ah))), tostring(ah and ah.selectedTab)))
+  for _, name in ipairs({ "EverlookAuctionsBar", "EverlookAuctionsSelling", "EverlookAuctionsShopping", "EverlookAuctionsQueryResults",
+      "EverlookAuctionsSellingTab", "EverlookAuctionsShoppingTab", "EverlookAuctionsCrafting", "EverlookAuctionsRecipeList" }) do
+    local f = _G[name]
+    if not f then
+      print(("  %s: not made"):format(name))
+    else
+      local w, h = f:GetSize()
+      print(("  %s: %s (visible %s), %dx%d, strata %s level %d, alpha %.2f, parent %s"):format(name,
+        f:IsShown() and "shown" or "hidden", tostring(f:IsVisible()), w or 0, h or 0, f:GetFrameStrata(),
+        f:GetFrameLevel(), f:GetEffectiveAlpha(), tostring(f:GetParent() and f:GetParent():GetName())))
+    end
+  end
+  if ns.ahq then for _, line in ipairs(ns.ahq.debugLines()) do print("  " .. line) end end
+  if ns.craftDebug and ns.craftDebug() then
+    print(("  crafting box: %d px right of the profession window (clear of its tab buttons)"):format(ns.craftDebug()))
+  end
+  for i, t in ipairs(ah and ah.Tabs or {}) do
+    print(("  Blizzard tab %d: %s, id %s"):format(i, plain(t:GetText()), tostring(t:GetID())))
+  end
+  -- labels on screen that don't fit their button or tag
+  local cut = ns.UI and ns.UI.cutOff and ns.UI.cutOff() or {}
+  print(#cut == 0 and "  no cut-off labels on screen" or ("  %d cut-off labels on screen:"):format(#cut))
+  for i = 1, math.min(15, #cut) do print("    " .. cut[i]) end
+end
+
+-- /eah test: reload after every full scan, so it is saved at once
+function ns.toggleTestMode()
+  db.reloadAfterScan = not db.reloadAfterScan
+  say(db.reloadAfterScan and "test mode on: the UI reloads after the next full scan, so it is saved at once."
+    or "test mode off.")
+end
+ns.testMode = function() return db.reloadAfterScan and true or false end
+
+-- /eah: the shared EverlookDB command pattern (EverlookUI, set up in Options.lua): help, get/set, search, status,
+-- version and suggestions; the commands below are registered there. Without the options (they failed to build) the
+-- old handling below still answers.
 SLASH_EVERLOOKAUCTIONS1 = "/eah"
 SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   msg = (msg or ""):lower():match("^%s*(.-)%s*$")
+  if ns.app then ns.app:HandleSlash(msg) return end
   if ns.slash and ns.slash(msg) then return end
   if msg == "scan" then startScan(); return end
-  if msg == "debug" then
-    -- what is shown where: for bug reports about tabs and panels ("I click Selling and nothing changes")
-    local ah = _G.AuctionHouseFrame
-    say(("debug: AuctionHouseFrame %s, mode %s, tab %s"):format(ah and (ah:IsShown() and "shown" or "hidden") or "missing",
-      tostring(ah and ah.GetDisplayMode and select(2, pcall(ah.GetDisplayMode, ah))), tostring(ah and ah.selectedTab)))
-    for _, name in ipairs({ "EverlookAuctionsBar", "EverlookAuctionsSelling", "EverlookAuctionsShopping", "EverlookAuctionsQueryResults",
-        "EverlookAuctionsSellingTab", "EverlookAuctionsShoppingTab", "EverlookAuctionsCrafting", "EverlookAuctionsRecipeList" }) do
-      local f = _G[name]
-      if not f then
-        print(("  %s: not made"):format(name))
-      else
-        local w, h = f:GetSize()
-        print(("  %s: %s (visible %s), %dx%d, strata %s level %d, alpha %.2f, parent %s"):format(name,
-          f:IsShown() and "shown" or "hidden", tostring(f:IsVisible()), w or 0, h or 0, f:GetFrameStrata(),
-          f:GetFrameLevel(), f:GetEffectiveAlpha(), tostring(f:GetParent() and f:GetParent():GetName())))
-      end
-    end
-    if ns.ahq then for _, line in ipairs(ns.ahq.debugLines()) do print("  " .. line) end end
-    if ns.craftDebug and ns.craftDebug() then
-      print(("  crafting box: %d px right of the profession window (clear of its tab buttons)"):format(ns.craftDebug()))
-    end
-    for i, t in ipairs(ah and ah.Tabs or {}) do
-      print(("  Blizzard tab %d: %s, id %s"):format(i, plain(t:GetText()), tostring(t:GetID())))
-    end
-    -- labels on screen that don't fit their button or tag
-    local cut = ns.UI and ns.UI.cutOff and ns.UI.cutOff() or {}
-    print(#cut == 0 and "  no cut-off labels on screen" or ("  %d cut-off labels on screen:"):format(#cut))
-    for i = 1, math.min(15, #cut) do print("    " .. cut[i]) end
-    return
-  end
-  if msg == "test" then
-    db.reloadAfterScan = not db.reloadAfterScan
-    say(db.reloadAfterScan and "test mode on: the UI reloads after the next full scan, so it is saved at once."
-      or "test mode off.")
-    return
-  end
+  if msg == "debug" then ns.debugReport() return end
+  if msg == "test" then ns.toggleTestMode() return end
   if msg == "auto off" or msg == "auto on" then
     db.auto = msg == "auto on"
     if ns.optionsRefresh then ns.optionsRefresh() end   -- the options window shows the change if it is open
@@ -1279,6 +1288,7 @@ function showStatus()
   end
   print("  /eah help lists the commands.")
 end
+ns.showStatus = function() showStatus() end
 
 -- The full scan, for Advanced search's Below vendor: how old the last one is, whether one can start now (else in how
 -- many seconds), and starting one.

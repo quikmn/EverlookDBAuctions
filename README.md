@@ -13,7 +13,7 @@ Auction house prices, selling and shopping lists for WoW Forever, from the maker
 - **Shopping tab:** named lists of searches. Run a whole list in one click and see each search's results under it, with live prices. Save in Advanced search adds a search to a list. Lists import and export as plain text (`# name`, then one search per line).
 - **Crafting cost:** beside the profession window, for the recipe you pick: each material and its lowest auction price, what the materials cost together, what the result sells for (and what disenchanting it is worth, for gear), and the profit after the auction house's 5% cut. It uses your saved prices, so it works away from the auction house.
 - **Shopping list from a recipe:** the Shopping list button under the crafting cost lists the recipe's materials with how many you have and how many to buy (ticked when you have too few; change the amounts or the number of crafts). Create list saves them as a shopping list named after the recipe, so at the auction house you can search each one with one click.
-- **Options:** type `/eah` for the settings window (it is also in the game's Settings under AddOns). Every setting is a command too: `/eah settings` lists them, `/eah duration 24` changes one.
+- **Options:** type `/eah` for the settings window (it is also in the game's Settings under AddOns). Every setting is a command too: `/eah get` lists them, `/eah duration 24` changes one.
 - Prices are kept per realm and per auction house (Alliance, Horde, and the neutral houses in Booty Bay, Gadgetzan and Everlook).
 
 Sellers, bidders and other players are never saved. Nothing is ever posted, bought or cancelled without your click.
@@ -50,13 +50,15 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 
 ## Commands
 
-- `/eah` opens the options; `/eah help` lists the commands
-- `/eah status` shows what's saved and which auction house API the game has
+`/eah` follows the same pattern as every EverlookDB addon; a mistyped command suggests the nearest one.
+
+- `/eah` opens the options; `/eah help` (or `?`) lists the commands
+- `/eah status` shows the version, what's saved and which auction house API the game has; `/eah version`
 - `/eah scan` starts a full scan while the auction house is open
 - `/eah sell` opens the Quick sell tab, `/eah shop` the Shopping tab, `/eah run <list>` runs a shopping list
 - `/eah undercut 1s` sets how far under the cheapest auction to price: `1c`, `50c`, `1g`, `5%`, or `0` to match it
-- `/eah options` opens the options
-- `/eah settings` lists every setting with its value; `/eah <setting> <value>` changes one (for example `/eah duration 24` or `/eah tipvendor on`), says so in chat and updates the open window
+- `/eah get` lists every setting with its value (`/eah get duration` one); `/eah <setting> <value>` or `/eah set <setting> <value>` changes one (for example `/eah duration 24` or `/eah tipvendor on`), says so in chat and updates the open window. `/eah settings` still lists them too
+- `/eah search <words>` opens the options with the search box filled
 - `/eah debug` lists what is shown where, the addon's auction house searches and any cut-off labels (for bug reports)
 - `/eah feedback` (or the Feedback button in the options) shows a link for reporting bugs and ideas
 - `/eah test` reloads the UI after every full scan, so the scan is saved to disk at once (for testing)

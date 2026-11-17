@@ -1822,6 +1822,30 @@ def ux_flows():
           "a wrong value is refused with an example")
     check(ns.slash("skin off") is True and ns.db().skin is False, "/eah skin off")
     check(ns.slash("scan") is False, "a command that isn't a setting is left to the core")
+
+    # /eah goes through the shared EverlookUI command pattern once the options are built
+    app = ns.app
+    check(app is not None, "the app is ns.app, so the core routes /eah to it")
+    started = []
+    ns.startScan = lambda *a: started.append(1)
+    app.HandleSlash(app, "scan")
+    check(started == [1], "/eah scan starts a scan")
+    G.CHAT = lua.table()
+    app.HandleSlash(app, "help")
+    out = "\n".join(str(G.CHAT[i]) for i in range(1, len(G.CHAT) + 1))
+    for want in ("/eah scan", "/eah sell", "/eah run <list>", "/eah get [setting]", "/eah search <words>", "/eah status"):
+        check(want in out, f"help lacks {want}: {out}")
+    check("/eah undercut|r" not in out, "the old undercut command is not listed twice")
+    app.HandleSlash(app, "set duration 48")
+    check(sell.duration == 3, f"/eah set duration 48: {sell.duration}")
+    app.HandleSlash(app, "get duration")
+    check("48" in G.CHAT[len(G.CHAT)], f"/eah get duration: {G.CHAT[len(G.CHAT)]}")
+    app.HandleSlash(app, "auto off")
+    check(ns.db().auto is False, "/eah auto off still works")
+    app.HandleSlash(app, "sacn")
+    check("Did you mean /eah scan?" in G.CHAT[len(G.CHAT)], f"a typo suggests the nearest: {G.CHAT[len(G.CHAT)]}")
+    app.HandleSlash(app, "tipvendr off")
+    check("Did you mean /eah tipvendor off?" in G.CHAT[len(G.CHAT)], f"a setting typo keeps the value: {G.CHAT[len(G.CHAT)]}")
     return failures
 
 
