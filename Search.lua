@@ -5,6 +5,9 @@
 -- Columns: name, quality, ilvl, reqlevel, slot, category, type, sell, stack, price (lowest buyout), median, qty,
 -- auctions, stats str, agi, sta, int, spi, armor, ap, sp, healing, mp5, defense, dps, hit, crit, spellhit,
 -- spellcrit, block, fire_res (and holy, nature, frost, shadow, arcane), and `stats` (all stats as text).
+-- effect: every Equip:, Use: and Chance on hit: line, joined with " / " (Data.lua, as on EverlookDB.com). text:
+-- everything on the item's tooltip (read once per item version from the game and kept for the session). `has` without
+-- a column searches text: `has "fire damage" and slot is trinket`, as on the site.
 -- From EverlookDB's data (Data.lua): slots (bag size), source (vendor, crafted, drop, quest, skinning,
 -- pickpocket), profession (that makes it), skill (needed to make it) and droprate (best drop chance, %).
 -- Steps: sort by <col> [asc|desc] (no column: price), top <n> [by <col>], count; a | between steps is optional.
@@ -86,6 +89,8 @@ local KIND = {   -- text, number, enum or money
 }
 for k in pairs(STATS) do KIND[k] = "number" end
 KIND.stats = "text"   -- every stat on the item as text, e.g. "Stamina 5, Agility 3": `stats has agility`
+KIND.effect = "text"  -- "Equip: ... / Use: ...": `effect has "run speed"`
+KIND.text = "text"    -- everything on the tooltip: `text has "fire damage"`, or `has "fire damage"` on its own
 local ALIAS = {
   rarity = "quality", subtype = "type", subclass = "type", itemclass = "category", level = "reqlevel", lvl = "reqlevel",
   req = "reqlevel", reqlvl = "reqlevel", lvlreq = "reqlevel", levelreq = "reqlevel", minlevel = "reqlevel", vendor = "sell", low = "price", lowest = "price",
@@ -94,6 +99,7 @@ local ALIAS = {
   ac = "armor", armour = "armor", firres = "fire_res", fireres = "fire_res", frostres = "frost_res",
   drop = "droprate", dropchance = "droprate", chance = "droprate", bagslots = "slots", size = "slots", prof = "profession", craftedby = "profession", from = "source",
   vendorprofit = "profit", flip = "profit", totalprofit = "dealprofit", dealsprofit = "dealprofit", stack_profit = "stackprofit", perstack = "stackprofit",
+  effects = "effect", tooltip = "text",
   natureres = "nature_res", shadowres = "shadow_res", arcaneres = "arcane_res", blockvalue = "block", attackpower = "ap", spellpower = "sp", heal = "healing", def = "defense",
 }
 local function column(word)
@@ -170,7 +176,7 @@ local EG = "type has wand and reqlevel le 29 sort by price"   -- the example mos
 
 -- An example value for a column, for error messages: "reqlvl le what? e.g. reqlvl le 29"
 local EXAMPLE = { quality = "rare", slot = "trinket", type = "wand", category = '"Trade Goods"', name = '"of the bear"',
-  stats = "spirit", source = "vendor", profession = "tailoring" }
+  stats = "spirit", source = "vendor", profession = "tailoring", effect = '"run speed"', text = '"fire damage"' }
 local function example(col)
   return EXAMPLE[col] or KIND[col] == "money" and "5g" or KIND[col] == "text" and "wand" or "29"
 end
@@ -288,6 +294,7 @@ function Parser:atStep()
   if not STEP[w] then return false end
   local n = self:peek(1)
   local nw = n and n.v:lower()
+  if w == "where" and (nw == "has" or nw == "contains") then return true end   -- "where has speed"
   if n and n.t == "op" and n.v ~= "|" then return false end   -- "count >= 5"
   if nw and OPS[nw] then return false end                     -- "count gt 5"
   if w == "sort" or w == "order" then
@@ -324,6 +331,13 @@ function Parser:primary()
   if t.t == "word" and V.WORDS[t.v:lower()] and not (nxt and OPS[nxt.v:lower()]) then
     self.vendor = true
     return { k = "below" }
+  end
+  -- has without a column searches everything on the tooltip: `has "fire damage"` is `text has "fire damage"` (as on
+  -- EverlookDB.com). At the end, or before a | or ), it stays a word.
+  local tw = t.t == "word" and t.v:lower()
+  if (tw == "has" or tw == "contains") and nxt and not (nxt.t == "op" and (nxt.v == "|" or nxt.v == ")")) then
+    self.pos = self.pos - 1
+    return self:comparison("text")
   end
   local col = t.t == "word" and column(t.v)
   if col and nxt and (OPS[nxt.v:lower()] or nxt.v:lower() == "not" or nxt.v == "!") then
@@ -482,6 +496,148 @@ local function statsOf(row)
   return s
 end
 
+-- The effect and text columns, as on EverlookDB.com.
+-- effect: on an English client from Data.lua (the site's own lines: instant, no tooltip needed, the same results as
+-- the site); an item Data.lua has no line for uses its tooltip's Equip/Use/Chance on hit lines once the tooltip has
+-- been read. On other languages always from the tooltip, so effect words are in the client's language.
+-- text: everything the game's tooltip for the item version says (read with C_TooltipInfo once per version and kept
+-- for the session, never per search), plus its name and effect lines. Until a tooltip can be read it is the name and
+-- effect lines. Reading starts in the background when Advanced search opens, a few items per frame.
+local ENGLISH = not GetLocale or (GetLocale() or "enUS"):sub(1, 2) == "en"
+local tipText, tipEffect = {}, {}   -- "id:suffix" -> the tooltip's lines, and its own effect lines, joined " / "
+local effectCache = {}               -- item id -> Data.lua's effect lines joined, or false
+
+local function dataEffect(id)
+  local c = effectCache[id]
+  if c ~= nil then return c or nil end
+  local e = ns.EFFECT and ns.EFFECT[id]
+  local lines = ns.EFFECTLINES or {}
+  if type(e) == "number" then
+    c = lines[e]
+  elseif type(e) == "table" then
+    local t = {}
+    for _, k in ipairs(e) do t[#t + 1] = lines[k] end
+    c = table.concat(t, " / ")
+  end
+  effectCache[id] = c or false
+  return c
+end
+
+-- One tooltip line as the site keeps it: no colour or grammar codes (|4Sec:Sec; -> Sec), single spaces.
+local function tidy(s)
+  s = s:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|4([^:;]*):[^;]*;", "%1")
+  return (s:gsub("%s+", " "):match("^ ?(.-) ?$"))
+end
+
+local function triggers()
+  return { (ITEM_SPELL_TRIGGER_ONEQUIP or "Equip:") .. " ", (ITEM_SPELL_TRIGGER_ONUSE or "Use:") .. " ",
+    (ITEM_SPELL_TRIGGER_ONPROC or "Chance on hit:") .. " " }
+end
+
+local function itemLink(row)
+  return "item:" .. row.id .. (row.suffix ~= 0 and ("::::::::::::1:" .. row.suffix) or "")
+end
+
+-- Reads an item version's tooltip once: true when it is (now) known, false while the game is still loading it.
+local function readTip(row)
+  local key = row.key
+  if tipText[key] then return true end
+  local api = C_TooltipInfo
+  if not api then return false end
+  -- not in the game's memory: ask for it, read it next time (the tooltip would only say it is retrieving)
+  if C_Item.IsItemDataCachedByID and not C_Item.IsItemDataCachedByID(row.id) then
+    if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(row.id) end
+    return false
+  end
+  local ok, data
+  if row.suffix ~= 0 and api.GetHyperlink then ok, data = pcall(api.GetHyperlink, itemLink(row)) end
+  if not (ok and type(data) == "table") and api.GetItemByID then ok, data = pcall(api.GetItemByID, row.id) end
+  if not ok or type(data) ~= "table" or type(data.lines) ~= "table" or #data.lines == 0 then return false end
+  local retrieving = RETRIEVING_ITEM_INFO or "Retrieving item information"
+  local trig = triggers()
+  local teaches = trig[2] .. "Teaches"   -- a recipe's own "Use: Teaches ..." line can come after the made item
+  local all, eff, embedded = {}, {}, false
+  for _, l in ipairs(data.lines) do
+    for side = 1, 2 do
+      local raw = side == 1 and l.leftText or l.rightText
+      if type(raw) == "string" and raw ~= "" then
+        -- a recipe shows the item it makes below a line starting with a line break: those effects aren't its own
+        if side == 1 and raw:sub(1, 1) == "\n" then embedded = true end
+        local line = tidy(raw)
+        if line == retrieving then return false end
+        if line ~= "" then
+          all[#all + 1] = line
+          if side == 1 and (not embedded or line:sub(1, #teaches) == teaches) then
+            for _, p in ipairs(trig) do
+              if line:sub(1, #p) == p then eff[#eff + 1] = line; break end
+            end
+          end
+        end
+      end
+    end
+  end
+  tipText[key], tipEffect[key] = table.concat(all, " / "), table.concat(eff, " / ")
+  return true
+end
+
+local function effectOf(row)
+  if ENGLISH then
+    local e = dataEffect(row.id)
+    if e then return e end
+    return tipEffect[row.key] or ""
+  end
+  readTip(row)
+  return tipEffect[row.key] or ""
+end
+
+-- The name, the tooltip's lines and the effect lines, each line once (like the site's text column).
+local textCache = {}
+local function textOf(row)
+  local c = textCache[row.key]
+  if c then return c end
+  local known = readTip(row)
+  local lines, seen = {}, {}
+  local function add(s)
+    if not s or s == "" then return end
+    local i = 1
+    while true do
+      local j = s:find(" / ", i, true)
+      local line = s:sub(i, (j or 0) - 1)
+      if line ~= "" and not seen[line] then seen[line] = true; lines[#lines + 1] = line end
+      if not j then break end
+      i = j + 3
+    end
+  end
+  add(row.name)
+  add(tipText[row.key])
+  add(effectOf(row))
+  c = table.concat(lines, " / ")
+  if known then textCache[row.key] = c else Q.tipsPending = (Q.tipsPending or 0) + 1 end
+  return c
+end
+
+-- Reads the tooltips of the whole scan a few per frame while Advanced search is open, so a text search finds them
+-- read already; one run at a time.
+local tipWarming
+local function warmTips(rows)
+  if tipWarming or not rows or not C_TooltipInfo then return end
+  tipWarming = true
+  local k = 1
+  local function step()
+    local done = 0
+    while k <= #rows and done < 20 do
+      if not tipText[rows[k].key] then readTip(rows[k]); done = done + 1 end
+      k = k + 1
+    end
+    if k <= #rows and Q.frame and Q.frame:IsShown() then
+      C_Timer.After(0.1, step)
+    else
+      tipWarming = nil
+    end
+  end
+  step()
+end
+
 local LIVE_TTL = 300   -- a live check counts for 5 minutes
 
 Q.live = {}   -- "id:suffix" -> { price, qty, n, at, gone } from the live check; survives re-running the query
@@ -528,6 +684,8 @@ local function get(row, col)
     if v ~= nil then return v end
   end
   if col == "stats" then return statsOf(row).stats end
+  if col == "effect" then return effectOf(row) end
+  if col == "text" then return textOf(row) end
   if col == "scanprice" then return row.price end
   return row[col]
 end
@@ -706,6 +864,7 @@ local function run(text)
     return nil, type(steps) == "table" and steps.query or tostring(steps)
   end
   local rows, scanned, missing = dataset()
+  Q.tipsPending = 0
   if not rows then return nil, "No full scan of this auction house yet: open it and let the scan finish first." end
   -- a below-vendor search: each item's auctions under vendor price from the scan, those making at least 10s (any
   -- amount when the search says how much profit it wants); biggest total first unless it orders itself
@@ -754,7 +913,8 @@ local function run(text)
   head = head .. (" in the full scan %s"):format(ns.ago(scanned.at))
   Q.deals = deals
   Q.ordered = ordered
-  return counted and {} or out, head, missing, steps.vendor and true or false
+  -- tooltips the game is still loading count as items still to learn: the search runs again as they arrive
+  return counted and {} or out, head, (missing or 0) + Q.tipsPending, steps.vendor and true or false
 end
 
 ns.queryRun = function(text) return run(text) end
@@ -985,6 +1145,9 @@ local EXAMPLES = {
   { "quality ge rare and price lt 10g sort by ilvl desc", "Blue or better under 10 gold" },
   { "type is cloth and int ge 8 and reqlevel le 35 sort by price", "Cloth with 8+ intellect up to 35" },
   { "fire_res ge 5 sort by fire_res desc, price", "Fire resistance gear" },
+  { 'has "fire damage" and slot is trinket', "Trinkets that mention fire damage anywhere on the tooltip" },
+  { 'slot is feet and effect has "speed"', "Boots with a speed effect" },
+  { 'effect has "chance on hit" and category is Weapon top 10 by dps', "Weapons with a proc" },
 }
 
 local GUIDE = table.concat({
@@ -994,7 +1157,7 @@ local GUIDE = table.concat({
   C_PLACE .. "Conditions|r   join them with " .. C_INFO .. "and|r, " .. C_INFO .. "or|r, " .. C_INFO .. "not|r and ( )",
   C_INFO .. "is|r, " .. C_INFO .. "is not|r   " .. C_INFO .. "gt|r, " .. C_INFO .. "ge|r (at least), " .. C_INFO .. "lt|r, " .. C_INFO .. "le|r (at most)   " .. C_INFO .. "has|r (contains)",
   C_INFO .. "like|r \"*of the bear\"  (* = anything)   " .. C_INFO .. "between|r (20 .. 30)   " .. C_INFO .. "in|r (head, chest)",
-  "A word on its own searches names:  " .. C_GOOD .. "wand|r",
+  "A word on its own searches names:  " .. C_GOOD .. "wand|r   " .. C_INFO .. "has|r on its own searches the whole tooltip:  " .. C_GOOD .. "has \"fire damage\"|r",
   "",
   C_PLACE .. "Steps|r   at the end:  " .. C_GOOD .. "type has wand and reqlevel le 29 sort by price|r",
   C_INFO .. "sort by|r price   " .. C_INFO .. "sort by|r ilvl desc, price   " .. C_INFO .. "sort desc|r (no column: by price)   " .. C_INFO .. "top|r 10 " .. C_INFO .. "by|r sta   " .. C_INFO .. "count|r",
@@ -1017,6 +1180,11 @@ local GUIDE = table.concat({
   C_PLACE .. "Stats|r",
   "str, agi, sta, int, spi, armor, ap, sp, healing, mp5, defense, dps, hit, crit, block",
   "fire_res, frost_res, nature_res, shadow_res, arcane_res, and " .. C_INFO .. "stats|r (every stat as text: stats has spirit)",
+  "",
+  C_PLACE .. "What an item does, and anything on its tooltip|r",
+  C_INFO .. "effect|r holds every " .. C_INFO .. "Equip:|r, " .. C_INFO .. "Use:|r and " .. C_INFO .. "Chance on hit:|r line, as the tooltip shows it, several joined with /. A recipe says what it teaches:  " .. C_GOOD .. "effect has \"run speed\"|r",
+  C_INFO .. "text|r holds everything on the tooltip: name, stats, binds, effect lines, the set and its bonuses, the flavour text. " .. C_INFO .. "has|r without a column searches it:  " .. C_GOOD .. "has \"fire damage\" and slot is trinket|r  means  " .. C_GOOD .. "text has \"fire damage\" and slot is trinket|r",
+  "A quoted word on its own still searches names. Effects are worded as the game words them: movement is run speed, movement speed or mount speed; attack speed and casting speed are something else.",
   "",
   C_PLACE .. "Examples|r   click one to run it",
 }, "\n")
@@ -1530,6 +1698,7 @@ local function show(text)
   vendorButton()
   liveHead()
   liveStep()
+  if results then warmTips((dataset())) end   -- tooltips for text searches, read a few per frame
   -- while items are still loading, run the query again a few times as they arrive
   if results and (missing or 0) > 0 then
     rerunToken = rerunToken + 1

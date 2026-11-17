@@ -1,5 +1,10 @@
 # EverlookDB Auctions
 
+## Unreleased
+
+- Advanced search finds what an item does, like EverlookDB.com: `effect` holds every Equip:, Use: and Chance on hit: line (`slot is feet and effect has "speed"`, `effect has "chance on hit" and category is Weapon top 10 by dps`), and `text` everything on the item's tooltip: name, stats, binds, effects, set bonuses, flavour text. `has` without a column searches the tooltip: `has "fire damage" and slot is trinket`, also after and, or, not and (, and with `has any (a, b)`. A quoted word on its own still searches names. The guide lists the new columns with examples.
+- Effect lines come with the addon (from EverlookDB.com, English) so effect searches need nothing from the game; the tooltip text is read from the game once per item while Advanced search is open and kept until you log out. On a non-English client effect lines are read from the game's tooltips too, so they are in your language.
+
 ## v0.7.0 (2026-11-17)
 
 - Quick sell's post panel is sectioned into three bands with one look: the item on a raised strip with two matching stat blocks (Sells to vendor, 30-day low with its chart under it); Your auction as a two-column grid (Quantity and Unit price left, Duration and Undercut by right, labels lined up with their boxes, where the price comes from right under it); and a summary strip with Deposit, Total price and You get (after the AH cut) as three equal blocks beside Post. Big amounts shrink to fit instead of being cut off; a long item name ends in "..." (its tooltip has all of it).

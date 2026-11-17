@@ -100,6 +100,7 @@ def main() -> int:
     failures += buy_panel()
     failures += buy_decisions()
     failures += ux_flows()
+    failures += tooltip_text()
 
     if failures:
         for f in failures:
@@ -1751,6 +1752,214 @@ def ux_flows():
     check(ns.slash("skin off") is True and ns.db().skin is False, "/eah skin off")
     check(ns.slash("scan") is False, "a command that isn't a setting is left to the core")
     return failures
+
+
+TEXT_SETUP = """
+local ns, locale = ...
+local db = {
+  scans = { { realm = "Test", side = "Alliance", at = 0, rows = {
+    ["1:0"] = "100,100,100,1,1", ["2:0"] = "200,200,200,1,1", ["3:0"] = "300,300,300,1,1", ["4:0"] = "400,400,400,1,1",
+    ["5:0"] = "500,500,500,1,1", ["6:0"] = "600,600,600,1,1", ["7:0"] = "700,700,700,1,1",
+    ["8:0"] = "800,800,800,1,1", ["8:1200"] = "900,900,900,1,1",
+  } } },
+  -- { name, quality, ilvl, reqlevel, category, type, equipLoc, icon, sell, stack }
+  itemInfo = {
+    [1] = { "Copper Rod", 1, 5, 0, "Trade Goods", "Parts", "", 1, 0, 1 },
+    [2] = { "Runed Copper Rod", 2, 10, 0, "Trade Goods", "Parts", "", 1, 0, 1 },
+    [3] = { "Thunderfury", 5, 80, 60, "Weapon", "Swords", "INVTYPE_WEAPON", 1, 0, 1 },
+    [4] = { "Lesser Magic Wand", 2, 13, 8, "Weapon", "Wands", "INVTYPE_RANGEDRIGHT", 1, 0, 1 },
+    [5] = { "Recipe: Elixir", 1, 20, 0, "Recipe", "Alchemy", "", 1, 0, 1 },
+    [6] = { "Slow Item", 1, 20, 0, "Armor", "Cloth", "INVTYPE_FEET", 1, 0, 1 },
+    [7] = { "Cheese", 1, 5, 0, "Consumable", "Food", "", 1, 0, 1 },
+    [8] = { "Bandit Cloak", 2, 20, 15, "Armor", "Cloth", "INVTYPE_CLOAK", 1, 0, 1 },
+  },
+  itemStats = {},
+}
+ns.db = function() return db end
+ns.house = function() return "Test-Alliance" end
+ns.money = function(c) return tostring(c) .. "c" end
+ns.num = function(n) return tostring(n) end
+ns.ago = function() return "just now" end
+ns.ok = function(v) return v end
+ns.say = function() end
+function GetRealmName() return "Test" end
+function time() return 1000 end
+function GetTime() return 100 end
+function GetLocale() return locale end
+function strsplit(sep, s)
+  local out, i = {}, 1
+  while true do
+    local j = s:find(sep, i, true)
+    if not j then out[#out + 1] = s:sub(i); break end
+    out[#out + 1] = s:sub(i, j - 1)
+    i = j + 1
+  end
+  return unpack(out)
+end
+C_Item.GetItemInfoInstant = function(id) return id, "", "", "", 1, 0 end
+C_Item.GetItemInfo = function() return nil end
+-- Data.lua's effect lines: the Runed Copper Rod's run speed (as on the site)
+ns.EFFECTLINES = { "Use: Increases run speed by 8%.", "Equip: Increases your fire damage." }
+ns.EFFECT = { [2] = 1, [6] = { 1, 2 } }
+-- the game's tooltips, by item id (and by link for a random-stat version)
+TIPS = {
+  [1] = { "Copper Rod" },
+  [2] = { "Runed Copper Rod", "Use: Increases run speed by 8%." },
+  [3] = { "Thunderfury", { "One-Hand", "Sword" }, "Speed 1.90", "Chance on hit: Blasts your enemy with lightning." },
+  [4] = { "Lesser Magic Wand" },
+  [5] = { "Recipe: Elixir", "\\nElixir", "Use: Drink to win.", "Use: Teaches you how to craft Elixir." },
+  [6] = { "Slow Item", "Equip: Increases run speed by 8%.", "Equip: Increases your fire damage." },
+  [7] = { "Cheese", "|cff00ff00Use: Restores 20 health. (1 |4Sec:Sec; Cooldown)|r", '"Smelly."' },
+  [8] = { "Bandit Cloak", "+5 Stamina" },
+  ["item:8::::::::::::1:1200"] = { "Bandit Cloak of the Bear", "+5 Strength", "+5 Stamina" },
+}
+TIPCALLS = 0
+local function data(lines)
+  if not lines then return nil end
+  local out = { lines = {} }
+  for _, l in ipairs(lines) do
+    if type(l) == "table" then out.lines[#out.lines + 1] = { leftText = l[1], rightText = l[2] }
+    else out.lines[#out.lines + 1] = { leftText = l } end
+  end
+  return out
+end
+C_TooltipInfo = {
+  GetItemByID = function(id) TIPCALLS = TIPCALLS + 1; return data(TIPS[id]) end,
+  GetHyperlink = function(link) TIPCALLS = TIPCALLS + 1; return data(TIPS[link]) end,
+}
+if locale == "deDE" then
+  ITEM_SPELL_TRIGGER_ONEQUIP, ITEM_SPELL_TRIGGER_ONUSE, ITEM_SPELL_TRIGGER_ONPROC = "Anlegen:", "Benutzen:", "Trefferchance:"
+  TIPS[2] = { "Runenverzierte Kupferrute", "Benutzen: Erhoeht das Lauftempo um 8%." }
+end
+"""
+
+
+def tooltip_text():
+    """The effect and text columns and has without a column, as on EverlookDB.com (Quarry's crates/core tests
+    bare_has_searches_text and text_gets_name_effect_and_set_on_load, crates/build itemtext tests): Data.lua's effect
+    lines, the game's tooltip read once per item version, and has on its own searching text."""
+    failures = []
+
+    def load(locale):
+        lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+        lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+        ns = lua.table()
+        run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+        run(TEXT_SETUP, "setup", ns, locale)
+        for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
+            run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        return lua, ns
+
+    def check(cond, what):
+        if not cond:
+            failures.append("text: " + what)
+
+    def ids_of(ns):
+        def ids(text):
+            rows, head, _m, _v = ns.queryRun(text + " | sort by price")
+            if rows is None:
+                return head
+            return [rows[i].id * (1 if rows[i].suffix == 0 else 100) for i in range(1, len(rows) + 1)]
+        return ids
+
+    lua, ns = load("enUS")
+    P = ns.queryParse
+    G = lua.globals()
+    ids = ids_of(ns)
+
+    # parsing: has without a column is text has (the site's bare_has_searches_text)
+    e = P("items has speed")[1].e
+    check(e.k == "cmp" and e.col == "text" and e.op == "has" and e["values"][1] == "speed", "items has speed is text has")
+    st = P('where has "fire damage" and slot is trinket')
+    check(len(st) == 1 and st[1].e.k == "and" and st[1].e.a.col == "text" and st[1].e.a["values"][1] == "fire damage",
+          "where has ... and ...")
+    check(P("items | where has speed")[1].e.col == "text", "| where has")
+    check(P("contains speed")[1].e.col == "text", "contains is has")
+    e = P("slot is feet or has speed")[1].e
+    check(e.k == "or" and e.b.col == "text", "has after or")
+    e = P("not has speed")[1].e
+    check(e.k == "not" and e.e.col == "text", "has after not")
+    check(P("(has speed)")[1].e.col == "text", "has after (")
+    e = P("has any (run, wand)")[1].e
+    check(e.col == "text" and e["values"][2] == "wand" and not e.all, "has any (a, b)")
+    check(P('"speed"')[1].e.col == "name", "a quoted word alone still searches names")
+    check(P("has")[1].e.col == "name", "has alone stays a word")
+    check(P("name has rod")[1].e.col == "name" and P("stats has spirit")[1].e.col == "stats", "a column has stays")
+    check(P("effects has speed")[1].e.col == "effect" and P("tooltip has speed")[1].e.col == "text", "aliases")
+    perr = lua.eval("function(P, t) local ok, e = pcall(P, t); if ok then return nil end; "
+                    "return type(e) == 'table' and e.query or tostring(e) end")
+    got = perr(P, "effect has") or ""
+    check('effect has "run speed"' in got, f"effect has what? with an example: {got}")
+
+    # the site's searches
+    got = ids('items | where has "run speed"')
+    check(got == [2, 6], f'has "run speed": {got}')
+    check(ids("items | where has speed and ilvl gt 50") == [3], "has speed and ilvl gt 50")
+    got = ids("items | where quality is uncommon and has any (run, wand)")
+    check(got == [2, 4], f"uncommon and has any (run, wand): {got}")
+    got = ids("items | where not has speed and ilvl lt 15")
+    check(got == [1, 4, 7], f"not has speed: {got}")
+    check(ids("items | where name has rod") == [1, 2], "name has rod")
+
+    # effect: Data.lua's lines (as on the site), several joined with " / "
+    check(ids("effect has fire") == [6], "effect from Data.lua")
+    check(ids('effect has "8%. / Equip: Increases your fire"') == [6], "several lines joined with /")
+    check(ids('slot is feet and effect has "speed"') == [6], "boots with a speed effect")
+    # text: the name, the tooltip (left and right) and the effect lines, each line once
+    check(ids('has "Thunderfury / One-Hand / Sword / Speed 1.90"') == [3], "name, tooltip left and right text, with /")
+    check(ids('has "Slow Item / Equip: Increases run speed by 8%. / Equip: Increases your fire damage."') == [6],
+          "each line once: the tooltip's effect lines aren't added twice")
+    # an item Data.lua has no lines for: its tooltip's, once read
+    check(ids('effect has "chance on hit"') == [3], "effect from the tooltip when Data.lua has none")
+    check(ids('effect has "Use: Restores 20 health. (1 Sec Cooldown)"') == [7], "colour and |4 codes are tidied")
+    check(ids("has smelly") == [7], "flavour text")
+    # a recipe: the made item's effects aren't its own, its Teaches line is (itemtext captured_skips_the_crafted_item)
+    check(ids("effect has teaches") == [5] and ids("effect has drink") == [], "recipe: its own lines only")
+    check(ids("has drink") == [5], "text has everything")
+    # a random-stat version reads its own tooltip
+    got = ids("has strength")
+    check(got == [800], f"the version's own tooltip: {got}")
+    check(ids("has stamina") == [8, 800], "both versions")
+
+    # tooltips are read once per item version, never per search
+    before = G.TIPCALLS
+    ids('has "fire damage"')
+    ids("has speed and not has wand")
+    check(G.TIPCALLS == before, f"no tooltip reads in later searches: {G.TIPCALLS - before}")
+
+    # an item the game is still loading: its name and effect lines until the tooltip comes
+    lua2, ns2 = load("enUS")
+    ids2 = ids_of(ns2)
+    G2 = lua2.globals()
+    G2.TIPS[3] = lua2.eval('{ "Retrieving item information" }')
+    check(ids2("has lightning") == [], "not known yet")
+    check(ids2("has thunderfury") == [3], "the name is always in text")
+    G2.TIPS[3] = lua2.eval('{ "Thunderfury", "Chance on hit: Blasts your enemy with lightning." }')
+    check(ids2("has lightning") == [3], "found once the tooltip is there")
+    # not in the game's memory: asked for, not read, and the search says items are still coming (it runs again)
+    lua2, ns2 = load("enUS")
+    ids2, G2 = ids_of(ns2), lua2.globals()
+    G2.CACHED, G2.LOADS = False, 0
+    lua2.execute("C_Item.IsItemDataCachedByID = function() return CACHED end; "
+                 "C_Item.RequestLoadItemDataByID = function() LOADS = LOADS + 1 end; TIPS[4] = { 'Lesser Magic Wand', 'Sparkly' }")
+    before = G2.TIPCALLS
+    _rows, _h, missing, _v = ns2.queryRun("has sparkly")
+    check(G2.TIPCALLS == before and G2.LOADS > 0 and missing > 0, f"uncached: asked to load, {missing} still coming")
+    G2.CACHED = True
+    check(ids2("has sparkly") == [4], "read once the game has it")
+
+    # an English client needs no tooltip for Data.lua's effects
+    lua3, ns3 = load("enGB")
+    check(ids_of(ns3)('effect has "run speed"') == [2, 6] and lua3.globals().TIPCALLS == 0,
+          "effect from Data.lua reads no tooltips")
+
+    # another language: effect lines from the game's tooltip, in its words
+    lua4, ns4 = load("deDE")
+    ids4 = ids_of(ns4)
+    check(ids4('effect has "Lauftempo"') == [2], "German client: effect from the tooltip")
+    check(ids4('effect has "run speed"') == [], "German client: not Data.lua's English lines")
+    return failures
+
 
 if __name__ == "__main__":
     sys.exit(main())
