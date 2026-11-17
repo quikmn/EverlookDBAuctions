@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.9.0 (2026-11-17)
 
 - Full scans for EverlookDB.com are kept for 7 days instead of only the newest 4, so none are lost when they can't be uploaded for a while (up to 60 scans, about 20 MB). Only the newest scan of each auction house is kept as it was; older ones are packed into a compressed line of text, about a quarter of the size.
 - The price bar says when scans wait to be saved: the game only writes them to disk at /reload, logout or a character switch, so after half an hour it shows "3 scans waiting to upload · /reload saves them". /eah status lists them too, and how many scans are kept.
