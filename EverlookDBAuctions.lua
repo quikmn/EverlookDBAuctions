@@ -207,7 +207,7 @@ local function refreshPanel()
     panel.text:SetText(flash.text)
     panel.text:SetTextColor(unpack(flash.color or T.text))
   elseif bad then
-    panel.text:SetText("The last price update didn't finish.")
+    panel.text:SetText("The last price update was cut off by a reload or closing the AH. Try again.")
     panel.text:SetTextColor(unpack(T.bad))
   else
     flash = nil
