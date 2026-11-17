@@ -102,6 +102,7 @@ def main() -> int:
     failures += ux_flows()
     failures += tooltip_text()
     failures += tooltip_reads_last()
+    failures += shared_tooltip()
     failures += reload_logged()
     failures += scan_storage()
 
@@ -877,18 +878,20 @@ def core_and_lists():
 
     now = 100 * 86400
     line = ns.auctionLine
-    left, price, fresh = line("AH", "", lua.table(None, 4, 2, now), None, now - 3600, now, now)
-    check(price is None and "bids only" in left and "4 up" in left, f"bid-only auctions aren't 'none up': {left}")
-    left, price, fresh = line("AH", "", None, None, now - 7200, now, now)
-    check(price is None and "none up" in left and "2 h ago" in left, f"'none up' says how old the scan is: {left}")
-    left, price, fresh = line("AH", "", lua.table(500, 3, 1, now - 2 * 86400), None, None, now, now)
-    check(price == 500 and fresh is False and "2 days ago" in left, f"an old price is marked old: {left}")
+    left, note, price, fresh, word = line("Auction house", "", lua.table(None, 4, 2, now), None, now - 3600, now, now)
+    check(price is None and "bids only" in note and "4 listed" in note and word == "no buyout",
+          f"bid-only auctions aren't 'none listed': {note} / {word}")
+    left, note, price, fresh, word = line("Auction house", "", None, None, now - 7200, now, now)
+    check(price is None and word == "none listed" and "2 h ago" in note, f"'none listed' says how old the scan is: {note}")
+    left, note, price, fresh, word = line("Auction house", "", lua.table(500, 3, 1, now - 2 * 86400), None, None, now, now)
+    check(price == 500 and fresh is False and "2 days ago" in note, f"an old price is marked old: {note}")
     row = lua.table(low=900, qty=2, at=now - 60)
-    left, price, fresh = line("AH", " x20", lua.table(500, 3, 1, now), row, None, now, now)
-    check(price == 900 and fresh and "this version" in left and " x20" in left, f"random-stat version priced: {left}")
-    left, price, fresh = line("AH", "", lua.table(500, 3, 1, now), False, None, now, now)
-    check(price == 500 and "any version" in left, f"a version missing from the scan says it's any version's: {left}")
-    check(line("AH", " x20", None, None, None, now, now) is None, "nothing known: no line")
+    left, note, price, fresh, word = line("Auction house", " x20", lua.table(500, 3, 1, now), row, None, now, now)
+    check(price == 900 and fresh and "this version" in note and left == "Auction house x20", f"random-stat version priced: {left} {note}")
+    left, note, price, fresh, word = line("Auction house", "", lua.table(500, 3, 1, now), False, None, now, now)
+    check(price == 500 and "any version" in note, f"a version missing from the scan says it's any version's: {note}")
+    check("(" not in left + note, "no brackets in the auction line")
+    check(line("Auction house", " x20", None, None, None, now, now) is None, "nothing known: no line")
 
     G.PRINTED = lua.table()
     G.SlashCmdList.EVERLOOKAUCTIONS("foo|bar")
@@ -2051,6 +2054,78 @@ def tooltip_reads_last():
     got = [rows[i].id for i in range(1, len(rows) + 1)] if rows is not None else head
     if got != [3]:
         failures.append(f"tooltip last: or found {got}")
+    return failures
+
+
+def shared_tooltip():
+    """The tooltip lines go through the shared EverlookTooltip layout: auction house, its 30-day line, disenchant and
+    vendor in that order, money with coin icons, details behind Shift when set so, and a secret item id adds nothing."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("shared tooltip: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    lua.execute(CORE_SETUP)
+    lua.execute("""
+        SHIFT = false
+        function IsShiftKeyDown() return SHIFT end
+        function issecretvalue(v) return type(v) == "table" and v.secret == true end
+        ERRORS = {}
+        function geterrorhandler() return function(e) ERRORS[#ERRORS + 1] = e end end
+        Enum = { TooltipDataType = { Item = 0, Unit = 2 } }
+        HOOKS = {}
+        TooltipDataProcessor = { AddTooltipPostCall = function(t, fn) HOOKS[t] = fn end }
+        C_Item.GetItemInfo = function(id) if id == 2589 then return "Linen Cloth", nil, 1, 5, 1, "Trade Goods", "", 200, "", 0, 13 end end
+        C_Item.GetItemMaxStackSizeByID = function() return 20 end
+        local h = EverlookAuctionsDB.houses["Test-Alliance"]
+        h.items[2589] = { 95, 3365, 40, MOCK_TIME - 76 * 60 }
+        h.days[2589] = { [99] = 93, [98] = 95, [97] = 120 }
+        h.scanned = MOCK_TIME - 76 * 60
+        EverlookAuctionsDB.tip = { vendor = true }
+    """)
+    for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookTooltip.lua"):
+        run((ROOT / lib).read_text(encoding="utf-8"), lib)
+    ns = lua.table()
+    run((ROOT / "EverlookDBAuctions.lua").read_text(encoding="utf-8"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
+    ns.disenchantValue = lua.eval("function(id) if id == 2589 then return 12345, 600 end end")
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    fire("ADDON_LOADED", "EverlookDBAuctions")
+    show = lua.eval("""function(id)
+      local tip = { lines = {} }
+      function tip:AddLine(l) self.lines[#self.lines + 1] = (l:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+      function tip:AddDoubleLine(l, r)
+        local function s(x) return (x:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T[^|]-UI%-(%a)%a+Icon[^|]*|t",function(c) return c:lower() end)) end
+        self.lines[#self.lines + 1] = s(l) .. " = " .. s(r)
+      end
+      HOOKS[0](tip, { id = id })
+      return tip.lines
+    end""")
+    G = lua.globals()
+    lines = show(2589)
+    got = [lines[i] for i in range(1, len(lines) + 1)]
+    want = [" ",
+            "Auction house  3,365 listed · 76 min ago = 95c",
+            "    30-day low / median = 93c / 95c",
+            "Disenchant  estimate · prices 10 min ago = 1g 23s",
+            "Vendor = 13c"]
+    check(got == want, f"lines and order: {got}")
+    G.SHIFT = True
+    lines = show(2589)
+    check(lines[2].endswith("= 19s") and "x20" in lines[2], f"Shift: a full stack's price: {lines[2]}")
+    G.SHIFT = False
+    ns.tipDetail("shift")
+    lines = show(2589)
+    check(len(lines) == 4 and "30-day" not in "".join(lines[i] for i in range(1, len(lines) + 1)),
+          "details hidden without Shift when set so")
+    check(G.EverlookAuctionsDB.tip.detail == "shift", "the detail setting is saved")
+    ns.tipDetail("always")
+    lines = show(lua.eval("{ secret = true }"))
+    check(len(lines) == 0, "a secret item id adds no lines")
+    check(len(G.ERRORS) == 0, f"no errors: {list(G.ERRORS.values()) if G.ERRORS else ''}")
     return failures
 
 

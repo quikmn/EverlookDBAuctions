@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Tooltip lines now share one tidy layout with the other EverlookDB addons: labels left, prices right, in a fixed order (auction house, 30-day low and median, disenchant, vendor), after a blank line. The auction line reads "Auction house  3,365 listed · 76 min ago" instead of "AH (3365 up, 76 min ago)"; the 30-day line sits indented under it. Money everywhere rounds the same way: copper dropped from 1g, silver from 1,000g.
+- New option, Tooltips page: show tooltip details (the 30-day low and median) always, as before, or only while Shift is held.
 - The settings window has a search box at the top: type to find any setting.
 
 ## v0.9.0 (2026-11-17)

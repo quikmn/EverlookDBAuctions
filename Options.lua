@@ -73,6 +73,15 @@ local function build()
     })
   end
 
+  app:Setting({
+    key = "tipdetail", type = "choice", label = "Tooltip details (30-day low and median)", width = 200,
+    chatLabel = "Tooltip details", keywords = { "tooltip", "shift", "detail", "history", "median" },
+    desc = "Show the finer print under a price always, or only while you hold Shift. The other EverlookDB addons' tooltip details follow it too.",
+    choices = { { value = "always", text = "Always" }, { value = "shift", text = "While Shift is held" } },
+    get = function() return ns.tipDetail() end,
+    set = function(v) ns.tipDetail(v) end,
+  })
+
   -- general
   app:Setting({
     key = "auto", type = "bool", label = "Update prices by themselves while the auction house is open (every 15 minutes)",
@@ -100,6 +109,7 @@ local function build()
   app:Section("tooltips", "Tooltips", function(stack)
     UI.Header(stack, "Tooltips", "Lines added to item tooltips. Every price says how old it is; prices over a day old are grey.")
     for _, t in ipairs(TIP_LINES) do app:Widget(stack, t[1]) end
+    app:Widget(stack, "tipdetail")
   end)
   app:Section("general", "General", function(stack)
     UI.Header(stack, "General")

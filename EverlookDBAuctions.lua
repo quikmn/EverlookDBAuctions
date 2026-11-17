@@ -959,28 +959,45 @@ local function stackSize(id)
   return info[1] and info[9] or 1
 end
 
+-- The shared tooltip layout (Libs/EverlookUI/EverlookTooltip.lua): labels left, prices right, one order for every
+-- EverlookDB addon's lines.
+local Tip = LibStub and LibStub("EverlookTooltip-1", true)
+
+-- The parts of a note joined with " · ", skipping empty ones.
+local function join(...)
+  local out = {}
+  for i = 1, select("#", ...) do
+    local p = select(i, ...)
+    if type(p) == "string" and p ~= "" then out[#out + 1] = p end
+  end
+  return table.concat(out, " \194\183 ")
+end
+local function listed(n) return (n and (Tip and Tip.Count(n) or num(n)) or "?") .. " listed" end
+
 -- What the tooltip's auction line says for one auction house. stack = " x20" while Shift shows a full stack's price
 -- (only on lines with a price). it = the saved price { low, quantity, auctions, time }
 -- or nil; row = the newest full scan's row for this random-stat version ("of the Bear") or nil; scanned = when the
--- last full scan finished. Returns the left text, the price (nil for a text-only line) and whether it is current.
+-- last full scan finished. Returns the label, the muted note after it ("3,365 listed · 76 min ago"), the price (nil
+-- for a line without one), whether it is current, and for a line without a price the word on the right.
 -- Every line says how old it is: a price is never shown as if it were live.
 function ns.auctionLine(label, stack, it, row, scanned, now, serverNow)
   if row and row.low then
     local at = now - (serverNow - (row.at or serverNow))
-    return ("%s%s, this version (%s up, %s)"):format(label, stack, row.qty or "?", ago(at)), row.low, now - at < STALE
+    return label .. stack, join("this version", listed(row.qty), ago(at)), row.low, now - at < STALE, nil
   end
   if it and it[1] then
-    return ("%s%s%s (%s up, %s)"):format(label, stack, row == false and ", any version" or "", it[2] or "?", ago(it[4])), it[1],
-      now - (it[4] or 0) < STALE
+    return label .. stack, join(row == false and "any version" or nil, listed(it[2]), ago(it[4])), it[1],
+      now - (it[4] or 0) < STALE, nil
   end
   if it and (it[2] or 0) > 0 then
     -- the last full scan found some, but only with a bid and no buyout
-    return ("%s: %s up with bids only, no buyout (%s)"):format(label, it[2], ago(it[4])), nil, false
+    return label, join(listed(it[2]) .. " with bids only", ago(it[4])), nil, false, "no buyout"
   end
-  if scanned then return ("%s: none up in the full scan %s"):format(label, ago(scanned)), nil, false end
+  if scanned then return label, join("full scan " .. ago(scanned)), nil, false, "none listed" end
 end
 
-local function priceLines(tooltip, id)
+-- The auction house lines and their 30-day low and median, for the tooltip's item id.
+local function auctionLines(t, id, tooltip)
   if not db then return end
   local stack = IsShiftKeyDown() and tipOn("stack") and stackSize(id) or 1
   local function each(p) return stack > 1 and (p * stack) or p end
@@ -990,26 +1007,23 @@ local function priceLines(tooltip, id)
   if db.houses[neutral] then keys[#keys + 1] = neutral end
   -- random-stat gear: the tooltip's own version ("of the Bear") has its own price in the full scan
   local vkey
-  if tooltip.GetItem then
+  if tooltip and tooltip.GetItem then
     local okItem, _, link = pcall(tooltip.GetItem, tooltip)
-    local key, sfx = variantOf(id, okItem and link or nil)
+    local key, sfx = variantOf(id, okItem and ok(link) or nil)
     if key and sfx and sfx ~= 0 then vkey = key end
   end
   for _, key in ipairs(keys) do
     local h = db.houses[key]
     local it = h and h.items[id]
     local side = key:match("%-(%a+)$")
-    local label = side == "Neutral" and "Neutral AH" or "AH"
+    local label = side == "Neutral" and "Neutral auction house" or "Auction house"
     if tipOn("auction") and h then
       -- false: a version that isn't in the newest scan, so the line says the price is for any version
       local row = vkey and (ns.scanRowFor(vkey, side) or false) or nil
-      local left, price, fresh = ns.auctionLine(label, suffix, it, row, h.scanned and h.days[id] and h.scanned,
+      local left, note, price, fresh, word = ns.auctionLine(label, suffix, it, row, h.scanned and h.days[id] and h.scanned,
         time(), GetServerTime and GetServerTime() or time())
-      if left and price then
-        local r, g, b = fresh and 1 or 0.6, fresh and 0.82 or 0.6, fresh and 0 or 0.6
-        tooltip:AddDoubleLine(left, money(each(price)), r, g, b, 1, 1, 1)
-      elseif left then
-        tooltip:AddLine(left, 0.6, 0.6, 0.6)
+      if left then
+        t:Line(left, price and Tip.Money(each(price)) or word, { note = note, stale = not fresh })
       end
     end
     local d = h and h.days[id]
@@ -1019,35 +1033,56 @@ local function priceLines(tooltip, id)
       table.sort(list)
       if #list > 0 then
         local low, med = list[1], list[math.floor((#list + 1) / 2)]
-        tooltip:AddDoubleLine("  " .. HISTORY_DAYS .. "-day low" .. (#list > 2 and " / median" or ""),
-          money(each(low)) .. (#list > 2 and (" / " .. money(each(med))) or ""), 0.6, 0.6, 0.6, 0.8, 0.8, 0.8)
+        t:Detail(HISTORY_DAYS .. "-day low" .. (#list > 2 and " / median" or "") .. suffix,
+          Tip.Money(each(low)) .. (#list > 2 and (" / " .. Tip.Money(each(med))) or ""))
       end
     end
   end
-  if tipOn("disenchant") and ns.disenchantValue then
-    local value, oldest = ns.disenchantValue(id)
-    if value then
-      -- how old the oldest material price is, so an old estimate doesn't pass for today's
-      local fresh = (oldest or 0) < STALE
-      tooltip:AddDoubleLine(("Disenchant (estimate, prices %s)"):format(ago(time() - (oldest or 0))), money(value),
-        0.6, 0.6, 0.6, fresh and 1 or 0.6, fresh and 1 or 0.6, fresh and 1 or 0.6)
-    end
-  end
-  if tipOn("vendor") then
-    local info = { pcall(C_Item.GetItemInfo, id) }
-    local sell = info[1] and info[12]
-    if sell and sell > 0 then tooltip:AddDoubleLine("Vendor" .. suffix, money(each(sell)), 0.6, 0.6, 0.6, 1, 1, 1) end
+end
+
+local function disenchantLine(t, id)
+  if not db or not tipOn("disenchant") or not ns.disenchantValue then return end
+  local value, oldest = ns.disenchantValue(id)
+  if value then
+    -- how old the oldest material price is, so an old estimate doesn't pass for today's
+    t:Line("Disenchant", Tip.Money(value), { note = join("estimate", "prices " .. ago(time() - (oldest or 0))),
+      stale = (oldest or 0) >= STALE })
   end
 end
 
-local function hookTooltips()
-  if TooltipDataProcessor and Enum.TooltipDataType then
-    TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tooltip, data)
-      local id = data and ok(data.id)
-      if id then priceLines(tooltip, id) end
-    end)
+local function vendorLine(t, id)
+  if not db or not tipOn("vendor") then return end
+  local stack = IsShiftKeyDown() and tipOn("stack") and stackSize(id) or 1
+  local info = { pcall(C_Item.GetItemInfo, id) }
+  local sell = ok(info[1] and info[12])
+  if sell and sell > 0 then
+    t:Line("Vendor" .. (stack > 1 and (" x" .. stack) or ""), Tip.Money(sell * stack))
   end
 end
+
+-- Whether 30-day lows and medians need Shift held (db.tip.detail = "shift"; shown always by default). The setting is
+-- shared by every EverlookDB addon's detail lines on the tooltip.
+function ns.tipDetail(mode)
+  if mode ~= nil and db then
+    db.tip = db.tip or {}
+    db.tip.detail = mode == "shift" and "shift" or nil
+  end
+  local m = db and db.tip and db.tip.detail or "always"
+  if Tip then Tip:SetDetail(m) end
+  return m
+end
+
+local function hookTooltips()
+  if not Tip then return end
+  ns.tipDetail()
+  Tip:Register({ id = "EverlookDBAuctions.auction", kind = "item", order = Tip.ORDER.auction,
+    add = function(t, ctx) if ctx.id then auctionLines(t, ctx.id, ctx.tooltip) end end })
+  Tip:Register({ id = "EverlookDBAuctions.disenchant", kind = "item", order = Tip.ORDER.disenchant,
+    add = function(t, ctx) if ctx.id then disenchantLine(t, ctx.id) end end })
+  Tip:Register({ id = "EverlookDBAuctions.vendor", kind = "item", order = Tip.ORDER.vendor,
+    add = function(t, ctx) if ctx.id then vendorLine(t, ctx.id) end end })
+end
+ns.tooltipLines = { auction = auctionLines, disenchant = disenchantLine, vendor = vendorLine }
 
 ---------------------------------------------------------------------------------------------------------------------
 -- Events and commands

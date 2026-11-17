@@ -8,6 +8,7 @@
 
 Libs\LibStub\LibStub.lua
 Libs\EverlookUI\EverlookUI.lua
+Libs\EverlookUI\EverlookTooltip.lua
 EverlookDBAuctions.lua
 Skin.lua
 Data.lua
