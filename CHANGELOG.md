@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Quick sell: a long item name beside the Sells to vendor and 30-day low boxes steps down a font size or two before it is cut off.
 - Price bar: the waiting line is short enough to read whole ("Asking the server for every auction… 0:42 · usually within a minute"), a line that would still be cut off drops one font size, and after every auction is read it says it is loading item details instead of sitting at "read 45,000 of 45,000".
 - /eah status: an update cut off by a reload or logout shows in the update log too.
 - Advanced search: a tooltip search next to a cheaper condition (`has "fire damage" and slot is trinket`) reads only the tooltips of items the other condition leaves open, so the first such search over a whole scan no longer stalls the game while it reads every tooltip.

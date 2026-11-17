@@ -1416,6 +1416,16 @@ local function makeFrame()
   f.name = UI.text(P, "big")   -- one line: a long name ends in "...", the tooltip has all of it
   f.name:SetPoint("TOPLEFT", 62, -15)
   f.name:SetWordWrap(false)
+  -- beside the two stat blocks the name has about 145 px: a longer one ("Elixir of the Mongoose", "Bandit Cloak of the
+  -- Monkey") steps down to the body size before it is cut off
+  hooksecurefunc(f.name, "SetText", function(fs)
+    for _, kind in ipairs({ "big", "title", "body" }) do
+      fs:SetFontObject(UI.fontObject(kind))
+      local w = fs:GetWidth() or 0
+      local need = fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth() or fs:GetStringWidth() or 0
+      if w <= 0 or need <= w then return end
+    end
+  end)
   f.sub = UI.text(P, "dim")
   f.sub:SetPoint("TOPLEFT", f.name, "BOTTOMLEFT", 0, -6)
   f.sub:SetWordWrap(true)
