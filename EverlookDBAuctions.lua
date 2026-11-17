@@ -193,6 +193,16 @@ function ns.unfinishedText(h)
   return ("The last price update %s. Prices are unchanged."):format(why)
 end
 
+-- The bar's line in the body size, one size down when it would be cut off (the line beside the money is about 440 px;
+-- "The last price update got no answer from the server. Prices are unchanged." is about that long).
+local function fitBarText()
+  local fs = panel.text
+  fs:SetFontObject(ns.UI.fontObject("body"))
+  local w = fs:GetWidth() or 0
+  local need = fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth() or fs:GetStringWidth() or 0
+  if w > 0 and need > w then fs:SetFontObject(ns.UI.fontObject("small")) end
+end
+
 local function refreshPanel()
   if not panel or not house then return end
   local T = ns.T
@@ -203,14 +213,19 @@ local function refreshPanel()
     local text
     if not scan.reading then
       -- nothing has come back yet: say so, with the time waited, not a made-up percentage
-      text = ("Asking the server for the full auction list… %d:%02d (it answers within about a minute, or not at all)")
+      -- (short enough for the bar beside the money: the rest is in the tooltip)
+      text = ("Asking the server for every auction… %d:%02d · usually within a minute")
         :format(math.floor(took / 60), took % 60)
     elseif yielding() then
       text = "Updating prices… paused while you buy, post or cancel"
+    elseif (scan.done or 0) >= (scan.total or 0) then
+      -- every auction read; the ones whose item wasn't loaded yet are read again for a few seconds
+      text = ("Updating prices… read all %s auctions, loading item details"):format(num(scan.total or 0))
     else
       text = ("Updating prices… read %s of %s auctions · keep browsing"):format(num(scan.done or 0), num(scan.total or 0))
     end
     panel.text:SetText(text)
+    fitBarText()
     panel.text:SetTextColor(unpack(T.text))
     panel.button:Hide()
     local bar = panel.bar
@@ -223,13 +238,16 @@ local function refreshPanel()
   panel.bar:Hide()
   panel.button:Show()
   local bad = unfinished(h)
+  -- (each branch below sets the text, then fitBarText; the colour after, as a font change resets it)
   if flash and GetTime() < flash.till then
     panel.text:SetText(flash.text)
+    fitBarText()
     panel.text:SetTextColor(unpack(flash.color or T.text))
   elseif bad then
     -- not alarm red: nothing is lost, the prices are as they were; red is kept for real problems. Says why when that
     -- is known (h.why, set where the update stopped); none known means a reload cut it off.
     panel.text:SetText(ns.unfinishedText(h))
+    fitBarText()
     panel.text:SetTextColor(unpack(T.places.prices))
   else
     flash = nil
@@ -237,6 +255,7 @@ local function refreshPanel()
     for _ in pairs(h.items) do n = n + 1 end
     panel.text:SetText(("%s%s|r · %s items priced · %s"):format(ns.UI.hex(T.places.prices), house:match("%-(%a+)$") or "?",
       num(n), h.scanned and ("updated " .. ago(h.scanned)) or "no update yet"))
+    fitBarText()
     panel.text:SetTextColor(unpack(T.text))
   end
   local wait = scanWait(h)
@@ -905,6 +924,13 @@ function events.ADDON_LOADED(name)
   for _, h in pairs(db.houses) do
     h.items, h.days = h.items or {}, h.days or {}
     pruneDays(h)
+    -- an update that was running when the UI reloaded or the game closed ended without a word: log it once
+    if h.tried and (not h.scanned or h.scanned < h.tried) and not h.why then
+      h.why = "reload"
+      h.log = h.log or {}
+      table.insert(h.log, 1, { at = h.tried, how = "cut off by a reload or logout" })
+      while #h.log > 20 do table.remove(h.log) end
+    end
   end
   hookTooltips()
 end

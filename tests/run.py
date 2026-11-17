@@ -102,6 +102,7 @@ def main() -> int:
     failures += ux_flows()
     failures += tooltip_text()
     failures += tooltip_reads_last()
+    failures += reload_logged()
 
     if failures:
         for f in failures:
@@ -1984,6 +1985,32 @@ def tooltip_reads_last():
     got = [rows[i].id for i in range(1, len(rows) + 1)] if rows is not None else head
     if got != [3]:
         failures.append(f"tooltip last: or found {got}")
+    return failures
+
+
+def reload_logged():
+    """An update cut off by a reload or logout shows in /eah status's update log once, as the bar already says."""
+    failures = []
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    lua.execute(CORE_SETUP)
+    lua.execute("local h = EverlookAuctionsDB.houses['Test-Alliance']; h.tried = MOCK_TIME - 50; h.scanned = MOCK_TIME - 5000; "
+                "EverlookAuctionsDB.houses['Done-Horde'] = { items = {}, days = {}, tried = 10, scanned = 20 }")
+    ns = lua.table()
+    run((ROOT / "EverlookDBAuctions.lua").read_text(encoding="utf-8"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    fire("ADDON_LOADED", "EverlookDBAuctions")
+    fire("ADDON_LOADED", "EverlookDBAuctions")
+    G = lua.globals()
+    h = G.EverlookAuctionsDB.houses["Test-Alliance"]
+    log = h.log
+    if h.why != "reload" or log is None or len(log) != 1 or "reload" not in log[1].how:
+        failures.append(f"reload: an update cut off by a reload is logged once ({h.why}, {log and len(log)})")
+    if G.EverlookAuctionsDB.houses["Done-Horde"].log is not None:
+        failures.append("reload: a finished update is not logged as cut off")
+    if "reload" not in ns.unfinishedText(h):
+        failures.append("reload: the bar still says a reload cut it off")
     return failures
 
 
