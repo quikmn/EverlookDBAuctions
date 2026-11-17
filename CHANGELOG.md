@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Quick sell's post panel is sectioned into three bands with one look: the item on a raised strip with two matching stat blocks (Sells to vendor, 30-day low with its chart under it); Your auction as a two-column grid (Quantity and Unit price left, Duration and Undercut by right, labels lined up with their boxes, where the price comes from right under it); and a summary strip with Deposit, Total price and You get (after the AH cut) as three equal blocks beside Post. Big amounts shrink to fit instead of being cut off; a long item name ends in "..." (its tooltip has all of it).
 - Quick sell: hovering the picked item's icon or name shows its tooltip; a big "Sells to vendor" box next to the 30-day low shows what a vendor pays and whether the auction house pays more after its cut.
 
 - Tab text stays in the middle of the tab when the tab is selected (it dropped to the bottom edge).

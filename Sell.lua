@@ -22,6 +22,7 @@ local C_MUTE = UI.hex(T.mute)
 local SORTS = { { sortOrder = 0, reverseSort = false } }   -- by price (Enum.AuctionHouseSortOrder.Price)
 local DURATIONS = { { 1, "12h" }, { 2, "24h" }, { 3, "48h" } }
 local BAG_ROW, LIST_ROW = 26, 22
+local SPARK_PITCH, SPARK_H = 4, 12   -- the 30-day chart: a 3 px bar every 4 px, at most 12 px tall
 local CHECK_AGAIN = 120          -- seconds before an item's live auctions are looked up again for Your auctions
 
 local S = { groups = {}, mode = "all", filter = "", view = "cur", owned = {} }
@@ -680,8 +681,8 @@ local function updateTotals()
   local cut = ns.ahCut and ns.ahCut() or 0.05
   local net = math.floor(unit * (1 - cut))
   if f.net then
-    f.net:SetText((unit > 0 and qty > 0)
-      and ("You get %s after the %d%% AH cut."):format(money(net * qty), cut * 100) or "")
+    f.net:SetText((unit > 0 and qty > 0) and money(net * qty) or "-")
+    f.netNote:SetText(("after the %d%% AH cut"):format(cut * 100))
   end
   if f.vendorPrice then
     local v = g.vendor
@@ -882,7 +883,7 @@ local function drawHistory()
     local b = sp.bars[h[1] - first + 1]
     if b then
       local frac = hi > lo and (h[2] - lo) / (hi - lo) or 0.5
-      b:SetHeight(3 + math.floor(frac * 22 + 0.5))
+      b:SetHeight(2 + math.floor(frac * (SPARK_H - 2) + 0.5))
       b:SetColorTexture(unpack(h[1] == today and T.accent or T.edgeHi))
       b:Show()
     end
@@ -1335,24 +1336,97 @@ local function makeFrame()
   f.bags:SetPoint("BOTTOMRIGHT", -3, 4)
 
   ------------------------------------------------------------------------------------------------ post panel
+  -- Three bands in one visual language. On top, the item on a raised strip: what it is, and two stat blocks (what a
+  -- vendor pays, the 30-day low). In the middle, your auction: a two-column grid, labels left of their controls.
+  -- At the bottom, the summary on a raised strip: Deposit, Total price and You get as stat blocks, then Post.
+  -- A stat block is always the same: a small grey caps label, a big value, a small note under it.
   local P = UI.panel(CreateFrame("Frame", nil, f), UI.tint(T.surface, PLACE, UI.WASH_INNER), UI.tint(T.edge, PLACE, UI.WASH_EDGE))
   P:SetPoint("TOPLEFT", left, "TOPRIGHT", 8, 0)
   P:SetPoint("TOPRIGHT", -8, -28)
-  P:SetHeight(270)   -- room under Deposit and Total for what you get after the cut
+  local TOP_H, FOOT_H = 76, 62               -- the item band and the summary band
+  local SECT, ROW1, ROW2 = -86, -102, -146   -- the section title, then the tops of the two rows of 24 px controls
+  local LAB_X, CTL_X = 12, 84                -- left column: labels, then controls
+  local RLAB_W = 80                          -- right column: its labels start this far left of its controls
+  local STAT_W, FOOT_W = 136, 112            -- stat blocks in the item band and in the summary band
+  P:SetHeight(280)
   f.needItem = {}
   local function needs(w) f.needItem[#f.needItem + 1] = w; return w end
 
-  f.icon = UI.icon(P, 44)
-  f.icon:SetPoint("TOPLEFT", 12, -12)
-  f.name = UI.text(P, "big")
-  f.name:SetPoint("TOPLEFT", 66, -16)
-  f.name:SetPoint("RIGHT", P, "RIGHT", -310, 0)
+  -- the two raised strips, a touch of Quick sell's green in them like the panel, each with a line on its inner side
+  local bandFill = UI.tint(T.raised, PLACE, UI.WASH_INNER)
+  local topBand = P:CreateTexture(nil, "BACKGROUND", nil, -7)
+  topBand:SetPoint("TOPLEFT", 1, -1)
+  topBand:SetPoint("TOPRIGHT", -1, -1)
+  topBand:SetHeight(TOP_H - 1)
+  UI.shade(topBand, bandFill, UI.LIFT)
+  local topLine = UI.line(P, true)
+  topLine:SetPoint("TOPLEFT", 1, -TOP_H)
+  topLine:SetPoint("TOPRIGHT", -1, -TOP_H)
+  local footBand = P:CreateTexture(nil, "BACKGROUND", nil, -7)
+  footBand:SetPoint("BOTTOMLEFT", 1, 1)
+  footBand:SetPoint("BOTTOMRIGHT", -1, 1)
+  footBand:SetHeight(FOOT_H - 1)
+  UI.shade(footBand, bandFill, UI.LIFT)
+  local footLine = UI.line(P, true)
+  footLine:SetPoint("BOTTOMLEFT", 1, FOOT_H)
+  footLine:SetPoint("BOTTOMRIGHT", -1, FOOT_H)
+
+  -- A money value starts big and steps down a size until all of it fits its block: never cut off, even in
+  -- thousands of gold.
+  local FIT = { "big", "title", "body", "small" }
+  local function fit(fs)
+    for _, kind in ipairs(FIT) do
+      fs:SetFontObject(UI.fontObject(kind))
+      local w = fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth() or fs:GetStringWidth()
+      if (w or 0) <= fs.edbFitW then return end
+    end
+  end
+  -- label 10 px at the top, value 15 px from 14 px down, note 11 px from 34 px down (two lines at most)
+  local function stat(text, w)
+    local b = CreateFrame("Frame", nil, P)
+    b:SetSize(w, 58)
+    b.label = UI.label(b, text)
+    b.label:SetPoint("TOPLEFT", 0, 0)
+    b.value = UI.text(b, "big")
+    b.value:SetPoint("TOPLEFT", 0, -14)
+    b.value:SetWidth(w)
+    b.value.edbFitW = w
+    hooksecurefunc(b.value, "SetText", fit)
+    b.note = UI.text(b, "mute")
+    b.note:SetPoint("TOPLEFT", 0, -34)
+    b.note:SetWidth(w)
+    b.note:SetWordWrap(true)
+    if b.note.SetMaxLines then b.note:SetMaxLines(2) end
+    return b
+  end
+
+  ---------------------------------------------------------------- the item band
+  -- the 30-day low at the right edge, what a vendor pays left of it: the first two things to weigh before posting
+  local sp = needs(stat("30-DAY LOW", STAT_W))
+  sp:SetPoint("TOPRIGHT", -12, -12)
+  local vb = needs(stat("SELLS TO VENDOR", STAT_W))
+  vb:SetPoint("TOPRIGHT", sp, "TOPLEFT", -12, 0)
+  f.vendorPrice, f.vendorNote = vb.value, vb.note
+  vb:EnableMouse(true)
+  UI.tip(vb, "Sells to vendor", "What a vendor pays for one, right now and with no fee. If it is close to what the "
+    .. "auction house gets you after its cut, selling to a vendor is the safer choice: no deposit to lose, no wait.")
+
+  f.icon = UI.icon(P, 40)
+  f.icon:SetPoint("TOPLEFT", 12, -14)
+  f.name = UI.text(P, "big")   -- one line: a long name ends in "...", the tooltip has all of it
+  f.name:SetPoint("TOPLEFT", 62, -15)
   f.name:SetWordWrap(false)
   f.sub = UI.text(P, "dim")
-  f.sub:SetPoint("TOPLEFT", f.name, "BOTTOMLEFT", 0, -7)
-  f.sub:SetPoint("RIGHT", P, "RIGHT", -310, 0)
+  f.sub:SetPoint("TOPLEFT", f.name, "BOTTOMLEFT", 0, -6)
   f.sub:SetWordWrap(true)
-  if f.sub.SetMaxLines then f.sub:SetMaxLines(2) end
+  if f.sub.SetMaxLines then f.sub:SetMaxLines(3) end
+  -- the name and the line under it stop before the stat blocks, or run the whole width when there's no item
+  local function nameRoom(on)
+    f.name:SetPoint("RIGHT", on and vb or P, on and "LEFT" or "RIGHT", -12, 0)
+    f.sub:SetPoint("RIGHT", on and vb or P, on and "LEFT" or "RIGHT", -12, 0)
+  end
+  nameRoom(true)
+  hooksecurefunc(vb, "SetShown", function(_, on) nameRoom(on) end)
 
   -- the picked item's tooltip on the icon and the name, like anywhere else in the game (vendor price included)
   local hover = needs(CreateFrame("Frame", nil, P))
@@ -1368,47 +1442,24 @@ local function makeFrame()
   end)
   hover:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-  -- what a vendor pays, big and next to the 30-day low: the first thing to weigh before posting at all
-  local vb = needs(CreateFrame("Frame", nil, P))
-  vb:SetPoint("TOPRIGHT", -176, -10)
-  vb:SetSize(120, 48)
-  local vl = UI.label(vb, "SELLS TO VENDOR")
-  vl:SetPoint("TOPLEFT", 0, 0)
-  f.vendorPrice = UI.text(vb, "big")
-  f.vendorPrice:SetPoint("TOPLEFT", vl, "BOTTOMLEFT", 0, -6)
-  f.vendorNote = UI.text(vb, "small")
-  f.vendorNote:SetPoint("TOPLEFT", f.vendorPrice, "BOTTOMLEFT", 0, -3)
-  f.vendorNote:SetPoint("RIGHT", vb, "RIGHT", 0, 0)
-  f.vendorNote:SetJustifyH("LEFT")
-  vb:EnableMouse(true)
-  UI.tip(vb, "Sells to vendor", "What a vendor pays for one, right now and with no fee. If it is close to what the "
-    .. "auction house gets you after its cut, selling to a vendor is the safer choice: no deposit to lose, no wait.")
-
-  -- 30-day price chart
-  local sp = needs(CreateFrame("Frame", nil, P))
-  sp:SetPoint("TOPRIGHT", -12, -10)
-  sp:SetSize(150, 48)
-  local spl = UI.label(sp, "30-DAY LOW")
-  spl:SetPoint("TOPLEFT", 0, 0)
+  -- the 30-day chart is the low's note: one 3 px bar per day on a base line, in the note's 12 px
   local base = UI.line(sp, true)
-  base:SetPoint("BOTTOMLEFT", 0, 12)
-  base:SetPoint("BOTTOMRIGHT", 0, 12)
+  base:SetPoint("TOPLEFT", 0, -46)
+  base:SetWidth(30 * SPARK_PITCH - 1)
   sp.bars = {}
   for i = 1, 30 do
     local b = sp:CreateTexture(nil, "ARTWORK")
-    b:SetWidth(4)
-    b:SetPoint("BOTTOMLEFT", (i - 1) * 5, 13)
+    b:SetWidth(SPARK_PITCH - 1)
+    b:SetPoint("BOTTOMLEFT", sp, "TOPLEFT", (i - 1) * SPARK_PITCH, -46)
     b:Hide()
     sp.bars[i] = b
   end
-  sp.stats = UI.text(sp, "mute")
-  sp.stats:SetPoint("BOTTOMLEFT", 0, -2)
-  sp.stats:SetPoint("RIGHT", sp, "RIGHT", 0, 0)
+  sp.stats = sp.value
   sp:EnableMouse(true)
   -- hovering shows the day under the pointer (its bar lights up) and the 30-day low, median and high
   local function hovered(self)
     local x = GetCursorPosition() / self:GetEffectiveScale() - (self:GetLeft() or 0)
-    local i = math.floor(x / 5) + 1
+    local i = math.floor(x / SPARK_PITCH) + 1
     local first = ns.today() - 29
     for _, h in ipairs(self.data or {}) do
       if h[1] - first + 1 == i then return h, i end
@@ -1449,23 +1500,23 @@ local function makeFrame()
   end)
   f.spark = sp
 
-  local div = UI.line(P, true)
-  div:SetPoint("TOPLEFT", 1, -66)
-  div:SetPoint("TOPRIGHT", -1, -66)
-
-  -- The post block, in the order of Blizzard's own Sell frame: Quantity, Unit price, Duration, Deposit, Total price,
-  -- Post. Labels on the left of their boxes; two columns so it fits under the item.
-  local function lab(text, x, y)
+  ---------------------------------------------------------------- your auction
+  -- In the order of Blizzard's own Sell frame, as a grid: Quantity and Unit price on the left, Duration and Undercut
+  -- by on the right. Every label is the same dim text, centred on its control's row.
+  local section = needs(UI.label(P, "YOUR AUCTION"))
+  section:SetPoint("TOPLEFT", LAB_X, SECT)
+  section:SetTextColor(unpack(PLACE))
+  local function lab(text, anchor, x, y)
     local l = needs(UI.text(P, "dim"))
-    l:SetPoint("TOPLEFT", x, y)
+    l:SetPoint("LEFT", anchor, anchor == P and "TOPLEFT" or "LEFT", x, y or 0)
     l:SetText(text)
     return l
   end
 
   -- quantity: a box and Max (everything of it in your bags)
-  lab("Quantity", 12, -80)
+  lab("Quantity", P, LAB_X, ROW1 - 12)
   f.qty = needs(UI.input(P, 64, 24, { numeric = true, right = true, max = 6 }))
-  f.qty:SetPoint("TOPLEFT", 92, -74)
+  f.qty:SetPoint("TOPLEFT", CTL_X, ROW1)
   f.qty:HookScript("OnTextChanged", function(self, user)
     if not user then return end
     local n = tonumber(self:GetText())
@@ -1481,12 +1532,10 @@ local function makeFrame()
   UI.tip(f.all, "Max", function() return ("Sell all %s in your bags."):format(num(S.avail or 0)) end)
   -- one short line, for stackable goods only: they go up as one listing that buyers take any amount of
   f.qtyNote = UI.text(P, "mute")
-  f.qtyNote:SetPoint("TOPLEFT", 92, -102)
+  f.qtyNote:SetPoint("TOPLEFT", CTL_X, ROW1 - 28)
 
   -- unit price: gold, silver and copper boxes, each with its coin inside, like Blizzard's money input
-  lab("Unit price", 12, -122)
-  local per = lab("per item", 12, -135)
-  per:SetFontObject(UI.fontObject("mute"))
+  lab("Unit price", P, LAB_X, ROW2 - 12)
   local function coinBox(w, max, file)
     local e = needs(UI.input(P, w, 24, { numeric = true, right = true, max = max }))
     e:SetTextInsets(7, 22, 0, 0)   -- the digits stop short of the coin
@@ -1497,7 +1546,7 @@ local function makeFrame()
     return e
   end
   f.gold = coinBox(84, 7, "Interface\\MoneyFrame\\UI-GoldIcon")
-  f.gold:SetPoint("TOPLEFT", 92, -118)
+  f.gold:SetPoint("TOPLEFT", CTL_X, ROW2)
   f.silver = coinBox(50, 2, "Interface\\MoneyFrame\\UI-SilverIcon")
   f.silver:SetPoint("LEFT", f.gold, "RIGHT", 4, 0)
   -- copper: shown only where the auction house takes copper (showCopper); not in needs, showCopper decides
@@ -1519,43 +1568,30 @@ local function makeFrame()
   f.silver:SetScript("OnTabPressed", function() if f.copper:IsShown() then f.copper:SetFocus() else f.gold:SetFocus() end end)
   f.copper:SetScript("OnTabPressed", function() f.gold:SetFocus() end)
 
-  -- back to the automatic price: a small text link, shown only once you've set your own (updateTotals)
-  local back = CreateFrame("Button", nil, P)
-  back:SetPoint("TOPLEFT", 92, -146)
-  back:SetHeight(14)
-  back.text = UI.text(back, "small")
-  back.text:SetPoint("LEFT")
-  back.text:SetText("Undercut cheapest")
-  back.text:SetTextColor(unpack(PLACE))
-  back:SetWidth(math.max(60, math.ceil(back.text:GetStringWidth() or 0) + 2))
-  back:SetScript("OnClick", function()
-    S.userPrice = false
-    applySuggestion()
-  end)
-  back:HookScript("OnEnter", function() back.text:SetTextColor(unpack(T.text)) end)
-  back:HookScript("OnLeave", function() back.text:SetTextColor(unpack(PLACE)) end)
-  UI.tip(back, "Undercut cheapest", function()
-    return ("Sets the price to the cheapest live auction minus your undercut (%s)."):format(undercutText())
-  end)
-  back:Hide()
-  f.suggest = back
+  -- where the price comes from, right under it: up to three lines (a deposit warning is long), red when it warns
+  f.source = needs(UI.text(P, "mute"))
+  f.source:SetPoint("TOPLEFT", CTL_X, ROW2 - 29)
+  f.source:SetPoint("RIGHT", P, "RIGHT", -12, 0)
+  f.source:SetWordWrap(true)
+  if f.source.SetMaxLines then f.source:SetMaxLines(3) end
 
-  -- duration
-  lab("Duration", 300, -80)
+  -- duration: three buttons ending at the right edge; the picked one lights up in Quick sell's colour (a choice, not
+  -- a money action)
   f.durs = {}
   for k, d in ipairs(DURATIONS) do
     local b = needs(UI.button(P, d[2], 40, 24, "small"))
-    b:SetPoint("TOPLEFT", 372 + (k - 1) * 44, -74)
-    UI.place(b, "sell")   -- the picked one lights up in Quick sell's colour: a choice, not a money action
+    b:SetPoint("TOPRIGHT", -12 - (#DURATIONS - k) * 44, ROW1)
+    UI.place(b, "sell")
     b.dur = d[1]
     b:SetScript("OnClick", function() setDur(d[1]) end)
     f.durs[k] = b
   end
+  lab("Duration", f.durs[1], -RLAB_W)
 
-  -- undercut
-  lab("Undercut by", 300, -124)
+  -- undercut, under the first duration button
   f.cut = needs(UI.input(P, 76, 24, { hint = "1s or 5%", max = 10 }))
-  f.cut:SetPoint("TOPLEFT", 372, -118)
+  f.cut:SetPoint("TOPLEFT", f.durs[1], "TOPLEFT", 0, ROW2 - ROW1)
+  lab("Undercut by", f.cut, -RLAB_W)
   f.cut:SetText(undercutShort())
   f.cut:SetScript("OnEnterPressed", function(self)
     local okSet, why = setUndercut(self:GetText())
@@ -1575,28 +1611,45 @@ local function makeFrame()
       .. (priceStep() > 1 and " This auction house only takes whole silver, so prices round down to it." or "")
   end)
 
-  -- where the price comes from, then deposit and total
-  f.source = needs(UI.text(P, "mute"))   -- two lines at most: the lone-auction note or a warning can be long
-  f.source:SetPoint("TOPLEFT", 12, -168)
-  f.source:SetPoint("RIGHT", P, "RIGHT", -12, 0)
-  f.source:SetWordWrap(true)
-  if f.source.SetMaxLines then f.source:SetMaxLines(2) end
-  lab("Deposit", 12, -214)
-  f.deposit = needs(UI.text(P, "body"))
-  f.deposit:SetPoint("TOPLEFT", 12, -232)
-  -- far enough right of the deposit, with room for a total in thousands of gold before Post
-  lab("Total price", 150, -214)
-  f.total = needs(UI.text(P, "big"))
-  f.total:SetPoint("TOPLEFT", 150, -230)
-  -- what you actually get when it sells: the total minus the auction house's cut. Its own line under Deposit and
-  -- Total, stopping short of Post (a total in thousands of gold still fits)
-  f.net = needs(UI.text(P, "mute"))
-  f.net:SetPoint("TOPLEFT", 12, -254)
+  -- back to the automatic price: a small text link at the right of the section's title, shown only once you've set
+  -- your own (updateTotals)
+  local back = CreateFrame("Button", nil, P)
+  back:SetPoint("RIGHT", P, "TOPRIGHT", -12, SECT - 5)
+  back:SetHeight(14)
+  back.text = UI.text(back, "small")
+  back.text:SetPoint("RIGHT")
+  back.text:SetJustifyH("RIGHT")
+  back.text:SetText("Undercut cheapest")
+  back.text:SetTextColor(unpack(PLACE))
+  back:SetWidth(math.max(60, math.ceil(back.text:GetStringWidth() or 0) + 2))
+  back:SetScript("OnClick", function()
+    S.userPrice = false
+    applySuggestion()
+  end)
+  back:HookScript("OnEnter", function() back.text:SetTextColor(unpack(T.text)) end)
+  back:HookScript("OnLeave", function() back.text:SetTextColor(unpack(PLACE)) end)
+  UI.tip(back, "Undercut cheapest", function()
+    return ("Sets the price to the cheapest live auction minus your undercut (%s)."):format(undercutText())
+  end)
+  back:Hide()
+  f.suggest = back
 
-  f.post = UI.button(P, "Post", 150, 30, "primary")
-  f.post:SetPoint("BOTTOMRIGHT", -12, 12)
+  ---------------------------------------------------------------- the summary band
+  -- Deposit, Total price and You get as three equal stat blocks, Post at the right, all centred in the band
+  local function summary(text, k)
+    local b = needs(stat(text, FOOT_W))
+    b:SetPoint("TOPLEFT", P, "BOTTOMLEFT", 12 + (k - 1) * (FOOT_W + 12), FOOT_H / 2 + 23)
+    return b
+  end
+  f.deposit = summary("DEPOSIT", 1).value
+  f.total = summary("TOTAL PRICE", 2).value
+  -- what you actually get when it sells: the total minus the auction house's cut, the cut in the note
+  local net = summary("YOU GET", 3)
+  f.net, f.netNote = net.value, net.note
+
+  f.post = UI.button(P, "Post", 120, 30, "primary")
+  f.post:SetPoint("RIGHT", P, "BOTTOMRIGHT", -12, FOOT_H / 2)
   f.post:SetScript("OnClick", post)
-  f.net:SetPoint("RIGHT", f.post, "LEFT", -10, 0)
 
   -- the server's "are you sure" about a post
   local cf = UI.panel(CreateFrame("Frame", nil, P), T.raised, T.accent)
