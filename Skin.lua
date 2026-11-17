@@ -394,12 +394,15 @@ end
 -- A tooltip on hover: a white title and an optional grey line (either can be a function returning the text).
 function UI.tip(f, title, body)
   f:HookScript("OnEnter", function(self)
-    local head = type(title) == "function" and title() or title
-    if not head then return end
+    -- not `f and f() or f`: a function returning nil would fall through to the function itself, and SetText errors
+    local head = title
+    if type(head) == "function" then head = head() end
+    if type(head) ~= "string" or head == "" then return end
     GameTooltip:SetOwner(self, "ANCHOR_TOP")
     GameTooltip:SetText(head, 1, 1, 1)
-    local text = type(body) == "function" and body() or body
-    if text then GameTooltip:AddLine(text, T.dim[1], T.dim[2], T.dim[3], true) end
+    local text = body
+    if type(text) == "function" then text = text() end
+    if type(text) == "string" and text ~= "" then GameTooltip:AddLine(text, T.dim[1], T.dim[2], T.dim[3], true) end
     GameTooltip:Show()
   end)
   f:HookScript("OnLeave", function() GameTooltip:Hide() end)
