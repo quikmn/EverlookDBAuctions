@@ -6,6 +6,8 @@
 ## SavedVariables: EverlookAuctionsDB
 ## IconTexture: Interface\AddOns\EverlookDBAuctions\Media\icon
 
+Libs\LibStub\LibStub.lua
+Libs\EverlookUI\EverlookUI.lua
 EverlookDBAuctions.lua
 Skin.lua
 Data.lua

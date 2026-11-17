@@ -1208,6 +1208,7 @@ function ns.slash(msg)
     local db = ns.db()
     if msg == "skin" then db.skin = db.skin == false else db.skin = msg == "skin on" end
     ns.say(("EverlookDB look is %s. Type /reload to apply."):format(db.skin and "on" or "off"))
+    if ns.optionsRefresh then ns.optionsRefresh() end   -- the settings window shows it if it is open
     return true
   end
   if msg == "skin errors" then
