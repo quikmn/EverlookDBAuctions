@@ -99,6 +99,7 @@ def main() -> int:
     failures += audit_search()
     failures += buy_panel()
     failures += buy_decisions()
+    failures += ux_flows()
 
     if failures:
         for f in failures:
@@ -1641,6 +1642,115 @@ def quick_sell():
     check(ns.ownedState(owned)[0] == "Lowest", f"cheapest is yours: {ns.ownedState(owned)[0]}")
     return failures
 
+
+
+def ux_flows():
+    """The flow-by-flow audit: the bar says why an update didn't finish, a shopping list's name is kept when you click
+    away (for the list it belongs to) and Escape puts it back, and the settings window on EverlookUI takes
+    /eah <setting> <value>."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("ux: " + what)
+
+    def fresh_lua():
+        lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+        lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+        run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+        return lua, run
+
+    # --- the bar: why the last update didn't finish
+    lua, run = fresh_lua()
+    lua.execute(CORE_SETUP)
+    ns = lua.table()
+    run((ROOT / "EverlookDBAuctions.lua").read_text(encoding="utf-8"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
+    text = ns.unfinishedText
+    check("reload" in text(lua.table()), "no reason known: a reload cut it off")
+    check("no answer" in text(lua.table(why="noanswer")) and "reload" not in text(lua.table(why="noanswer")),
+          "a server that didn't answer isn't called a reload")
+    check("empty list" in text(lua.table(why="empty")), "an empty list says so")
+    check("closed" in text(lua.table(why="closed")), "closing the auction house says so")
+    check(all("unchanged" in text(lua.table(why=w)) for w in ("noanswer", "empty", "closed")), "prices are said to be unchanged")
+
+    # --- Shopping: the list name
+    lua, run = fresh_lua()
+    ns = lua.table()
+    run(VENDOR_SETUP, "setup", ns)
+    run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
+    run((ROOT / "Shopping.lua").read_text(encoding="utf-8"), "Shopping.lua", "EverlookDBAuctions", ns)
+    lua.execute("AuctionHouseFrame = CreateFrame('Frame', 'AuctionHouseFrame')")
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    db = ns.db()
+    db.lists = lua.eval('{ { name = "Herbs", queries = { "x" } }, { name = "Ore", queries = {} } }')
+    db.listSel = 1
+    fire("AUCTION_HOUSE_SHOW")
+    f = lua.globals().EverlookAuctionsShopping
+    check(f is not None, "the Shopping panel is made")
+    if f is not None:
+        f.Show(f)
+        # the scrolling lists need more of the game than the fake has; only the name box is tested here
+        lua.eval("function(f) f.lists.SetItems = function() end; f.queries.SetItems = function() end end")(f)
+        ns.shoppingRefresh()
+        box = f.name
+        check(box.text == "Herbs", f"the picked list's name is in the box: {box.text!r}")
+        box.scripts.OnEditFocusGained(box)
+        box.text = "Herbs and || flowers"
+        box.scripts.OnEditFocusLost(box)   # clicked into Add a search
+        check(db.lists[1].name == "Herbs and | flowers", f"the name is kept on clicking away: {db.lists[1].name!r}")
+        box.scripts.OnEditFocusGained(box)
+        box.text = "Typo"
+        db.listSel = 2                     # another list picked while typing
+        box.scripts.OnEditFocusLost(box)
+        check(db.lists[1].name == "Typo" and db.lists[2].name == "Ore", "the typed name goes to the list it was typed for")
+        db.listSel = 1
+        box.scripts.OnEditFocusGained(box)
+        box.text = "Nope"
+        box.scripts.OnEscapePressed(box)
+        box.scripts.OnEditFocusLost(box)
+        check(db.lists[1].name == "Typo", "Escape puts the old name back")
+        box.scripts.OnEditFocusGained(box)
+        box.text = "   "
+        box.scripts.OnEditFocusLost(box)
+        check(db.lists[1].name == "Typo", "an empty name isn't saved")
+
+    # --- the settings window on EverlookUI: /eah <setting> <value>
+    lua, run = fresh_lua()
+    lua.execute("""
+        CHAT = {}
+        DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) CHAT[#CHAT + 1] = m end }
+        STANDARD_TEXT_FONT = "font"
+    """)
+    for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua"):
+        run((ROOT / lib).read_text(encoding="utf-8"), lib)
+    ns = lua.table()
+    run(VENDOR_SETUP, "setup", ns)
+    run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
+    lua.execute("""
+        local ns = ...
+    """)
+    sell = lua.table()
+    ns.sellSettings = lua.eval("function(t) return function() return t end end")(sell)
+    ns.tipOn = lua.eval("""function(ns) return function(k)
+        local t = ns.db().tip
+        if not t or t[k] == nil then return k ~= "vendor" end
+        return t[k]
+      end end""")(ns)
+    ns.undercutShort = lua.eval("function() return '1s' end")
+    ns.setUndercut = lua.eval("function() return true end")
+    run((ROOT / "Options.lua").read_text(encoding="utf-8"), "Options.lua", "EverlookDBAuctions", ns)
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    fire("ADDON_LOADED", "EverlookDBAuctions")
+    check(ns.optionsError is None, f"the settings window builds: {ns.optionsError}")
+    G = lua.globals()
+    check(ns.slash("duration 24") is True and sell.duration == 2, f"/eah duration 24: {sell.duration}")
+    check("24" in (G.CHAT[len(G.CHAT)] or ""), "the change is said in chat")
+    check(ns.slash("tipvendor on") is True and ns.db().tip.vendor is True, "/eah tipvendor on")
+    check(ns.slash("duration 30") is True and sell.duration == 2 and "Example" in G.CHAT[len(G.CHAT)],
+          "a wrong value is refused with an example")
+    check(ns.slash("skin off") is True and ns.db().skin is False, "/eah skin off")
+    check(ns.slash("scan") is False, "a command that isn't a setting is left to the core")
+    return failures
 
 if __name__ == "__main__":
     sys.exit(main())

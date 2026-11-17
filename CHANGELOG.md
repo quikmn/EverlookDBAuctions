@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `/eah` opens a real settings window in the same look as Lattice and the other EverlookDB addons (it is also in the game's Settings under AddOns). Every setting is a command too: `/eah settings` lists them and `/eah duration 24`, `/eah tipvendor on` or `/eah skin off` changes one, says so in chat and updates the open window. `/eah undercut` updates the open window and Quick sell's price as well.
+- Quick sell and Shopping tabs are as wide as Blizzard's tabs, so their names no longer run to the edges, and the window's title says where you are (Quick sell, Shopping lists) instead of keeping the last Blizzard tab's title.
+- Closing the auction house with Quick sell or Shopping open no longer leaves the next visit with no tab selected.
+- The bar says why the last price update didn't finish: no answer from the server, an empty list, the auction house closed, or a reload. It used to blame a reload every time.
+- Quick sell: "Usual price at the last full scan" (was "Typical"); what you get after the cut has its own line and no longer runs off the panel; the 30-day strip shows the low (the median and highest are in its tooltip) so it isn't cut off; a post or cancel the auction house doesn't answer says so; Your auctions says it is asking instead of "You have no auctions up" until the auction house answers.
+- Shopping: a list's new name is kept when you click elsewhere (it was only kept with Enter, so New list, type a name, click Add a search lost it); Escape puts the old name back. List names show `|` as typed.
+
 - Quick sell shows what you actually get when it sells: the total minus the auction house's cut (5%, or 15% at the neutral houses), with the deposit back. The vendor and disenchant comparisons and the crafting box's profit use the same cut.
 - Each place has its own colour so you can tell where you are: Advanced search and its buy panel blue, Quick sell green, Shopping violet, the price-update bar cyan-grey. It shows in the panel's border, its title, its tab, its section headers and the box you're typing in. Gold stays for the one main action (Buy, Post, Search, New list); Blizzard's own views keep their look.
 - The bar's Update prices / Try again is a small quiet button in the bar's colour, and "the last price update was cut off" is no longer alarm red: red is kept for real problems. The progress bar is in the bar's colour too.

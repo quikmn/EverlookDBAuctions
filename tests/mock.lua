@@ -33,7 +33,12 @@ local function frame(kind, name)
   function methods.GetName() return name end
   function methods.SetPoint(self, ...) self.point = { ... } end
   function methods.ClearAllPoints(self) self.point = nil end
-  return setmetatable(f, { __index = function(_, k) return methods[k] or function() end end })
+  -- unknown methods do nothing; the addon's own fields (edb...) start empty, as on a real frame
+  return setmetatable(f, { __index = function(_, k)
+    if methods[k] then return methods[k] end
+    if type(k) == "string" and k:sub(1, 3) == "edb" then return nil end
+    return function() end
+  end })
 end
 MOCK_FRAMES = {}
 function CreateFrame(kind, name, parent)
