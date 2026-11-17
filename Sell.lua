@@ -434,12 +434,13 @@ ns.sellSummarize = summarize
 -- An answer we can go by: complete, or (sorted by price) at least showing a priced auction. A part answer with no
 -- price in it says nothing about who is selling.
 local function usable(e)
-  return e ~= nil and (e.full or e.lowestOther ~= nil or e.lowestMine ~= nil)
+  return type(e) == "table" and (e.full == true or e.lowestOther ~= nil or e.lowestMine ~= nil)
 end
 ns.sellUsable = usable
 
 local function liveFor(c, itemID, commodity)
-  local e = (c and Live.cache[c]) or (commodity and itemID and Live.byId[itemID])
+  local e = c and Live.cache[c] or nil
+  if not e and commodity and itemID then e = Live.byId[itemID] end
   return usable(e) and e or nil
 end
 
@@ -510,11 +511,16 @@ local function request(k, commodity, front)
     end,
   }, function(_, _, final)
     store(k, c, commodity)
-    if final and Live.jobs[c] == job then Live.jobs[c] = nil end
+    if final then
+      if Live.jobs[c] == job then Live.jobs[c] = nil end
+      -- the last page came and still says nothing (incomplete, no price in it): as good as no answer
+      if not usable(Live.cache[c]) then Live.failed[c] = time() end
+    end
     if onLive then onLive(c) end
   end)
   Live.jobs[c] = job   -- answers only come with events, never inside Q.items itself
 end
+ns.sellLive, ns.sellRequest = Live, request   -- for the offline tests
 
 ---------------------------------------------------------------------------------------------------------------------
 -- Your auctions

@@ -92,6 +92,7 @@ def main() -> int:
     failures += query_language()
     failures += search_queue()
     failures += undercut()
+    failures += quick_sell()
     failures += deals()
     failures += core_and_lists()
     failures += audit_search()
@@ -1435,6 +1436,119 @@ def buy_decisions():
     f.buy.scripts.OnClick(f.buy)
     ev.scripts.OnEvent(ev, "COMMODITY_PRICE_UPDATED", 10, 52)
     check(f.buy.text == "Confirm 52c", f"within 5%: {f.buy.text}")
+    return failures
+
+
+def quick_sell():
+    """Quick sell (Sell.lua): strict undercut values, the price and quantity lines, the deposit warning, forgetting
+    old remembered prices, and a missing or empty answer from the auction house never read as "nobody is selling"."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("quick sell: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute("""
+        time = os.time
+        wipe = wipe or function(t) for k in pairs(t) do t[k] = nil end return t end
+        MOCK_AH = { n = 0, full = false, rows = {} }
+        C_AuctionHouse = {
+          SupportsCopperValues = function() return true end,
+          GetNumItemSearchResults = function() return MOCK_AH.n end,
+          HasFullItemSearchResults = function() return MOCK_AH.full end,
+          GetItemSearchResultInfo = function(_, i) return MOCK_AH.rows[i] end,
+        }
+    """)
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    db = run(CRAFT_SETUP, "setup", ns)
+    ns.num = lua.eval("tostring")
+    ns.ago = lua.eval("function() return 'a while ago' end")
+    for name in ["Skin.lua", "Sell.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+
+    # undercut values: only gold, silver and copper amounts, a percent, or 0
+    for bad in ("1.5s", "1s banana", "50", "s"):
+        okSet, why = ns.setUndercut(bad)
+        check(okSet is False and "for example" in why, f"{bad!r} is refused with an example")
+    check(ns.setUndercut("1g50s") is True and db.undercut.copper == 15000, "1g50s is 15000c")
+    check(ns.setUndercut("1c") is True and ns.undercutPrice(121) == 120, "1c under 1s21c")
+
+    # the price line says how far under and the cheapest's price
+    check(ns.underText(121) == "1c under the cheapest auction, 121c.", ns.underText(121))
+    ns.setUndercut("0")
+    check(ns.underText(121) == "Matches the cheapest auction, 121c.", ns.underText(121))
+    ns.setUndercut("5%")
+    check(ns.underText(200, "the auction you picked") == "5% under the auction you picked, 200c.", ns.underText(200, "the auction you picked"))
+    ns.setUndercut("1c")
+
+    # the line under How many to sell
+    t = ns.sellQtyNote(True, 40, 120)
+    check(t.startswith("Sells as one listing of 40 at 120c each, 4800c in all.") and "no need to split" in t, t)
+    check(ns.sellQtyNote(True, 40, 0).startswith("Sells as one listing of 40."), "commodity without a price yet")
+    check(ns.sellQtyNote(False, 1, 500) == "Posts one auction at 500c.", ns.sellQtyNote(False, 1, 500))
+    t = ns.sellQtyNote(False, 3, 500)
+    check(t.startswith("Posts 3 separate auctions, one item each, at 500c each, 1500c in all."), t)
+    check(ns.sellQtyNote(True, 0, 100) == "", "nothing to sell: no line")
+
+    # the deposit warning: 1s deposit on 3 at 24c
+    w = ns.depositWarning(100, 72, 15)
+    check(w == "The deposit (100c) is more than this sells for (72c). If it doesn't sell you lose 100c."
+          " Selling more at once spreads the deposit.", f"deposit over the sale: {w}")
+    w = ns.depositWarning(100, 72, 90)
+    check(w is not None and w.endswith("A vendor pays 90c for them."), f"a vendor pays more than the sale: {w}")
+    check(ns.depositWarning(50, 72, 0) is None, "a deposit under the sale: no warning")
+    check(ns.depositWarning(72, 72, 0) is None, "a deposit equal to the sale: no warning")
+    check(ns.depositWarning(0, 72, 0) is None and ns.depositWarning(100, 0, 0) is None, "no deposit or no price: no warning")
+
+    # remembered prices older than 180 days are dropped
+    now = 1_800_000_000
+    mem = lua.eval("function(now) return { a = { p = 1, at = now - 10 }, b = { p = 2, at = now - 200 * 86400 }, c = { p = 3 } } end")(now)
+    gone = ns.pruneSellMemory(mem, now)
+    check(gone == 2 and mem.a is not None and mem.b is None and mem.c is None, f"old prices forgotten: {gone}")
+
+    # a usable answer: complete, or with a price in it
+    tbl = lua.eval("function(t) return t end")
+    check(ns.sellUsable(lua.table(full=False)) is False, "an incomplete answer with no price says nothing")
+    check(ns.sellUsable(lua.table(full=True)) is True, "a complete empty answer: nobody is selling")
+    check(ns.sellUsable(lua.table(full=False, lowestOther=50)) is True, "an incomplete answer with a price (sorted by price)")
+    check(ns.sellUsable(None) is False, "no answer")
+
+    # through the shared queue: no answer, then an empty incomplete answer, then a real one
+    jobs = []
+    Q = lua.table(list=lua.table())
+
+    def items(key, opts, cb):
+        job = lua.table(opts=opts, cb=cb)
+        jobs.append(job)
+        return job
+    Q.items = items
+    ns.ahq = Q
+    key = lua.table(itemID=4242, itemLevel=20, itemSuffix=0)
+    owned = lua.table(ckey="4242:20:0", itemID=4242, commodity=False, unit=500)
+    ns.sellRequest(key, False, True)
+    check(len(jobs) == 1 and jobs[0].opts.owner == "sell", "the search goes through the shared queue")
+    ns.sellRequest(key, False, True)
+    check(len(jobs) == 1, "asked once while the first is out")
+    check(ns.ownedState(owned)[0] == "Checking", f"waiting: {ns.ownedState(owned)[0]}")
+    jobs[0].opts.onFail("noanswer")
+    check(ns.ownedState(owned)[0] == "No answer", f"no answer is not Lowest: {ns.ownedState(owned)[0]}")
+    ns.sellRequest(key, False, True)
+    check(len(jobs) == 2, "asked again")
+    jobs[1].cb(key, False, True)   # last page, incomplete, no rows
+    check(ns.ownedState(owned)[0] == "No answer", f"an empty incomplete answer is not Lowest: {ns.ownedState(owned)[0]}")
+    ns.sellRequest(key, False, True)
+    lua.execute("MOCK_AH.n = 2; MOCK_AH.full = true; MOCK_AH.rows = { { quantity = 1, buyoutAmount = 450 }, { quantity = 1, buyoutAmount = 500, containsOwnerItem = true } }")
+    jobs[2].cb(key, True, True)
+    state, _c, lower, frm = ns.ownedState(owned)
+    check(state == "Undercut" and lower == 450 and frm == "live", f"someone else at 450c: {state} {lower} {frm}")
+    lua.execute("MOCK_AH.rows[1].buyoutAmount = 600")
+    ns.sellLive.cache["4242:20:0"] = None
+    ns.sellRequest(key, False, True)
+    jobs[3].cb(key, True, True)
+    check(ns.ownedState(owned)[0] == "Lowest", f"cheapest is yours: {ns.ownedState(owned)[0]}")
     return failures
 
 
