@@ -696,8 +696,10 @@ local function updateTotals()
       f.vendorPrice:SetText(money(v))
       if unit <= 0 then
         f.vendorNote:SetText("")
-      elseif v >= net then
+      elseif v > net then
         f.vendorNote:SetText(UI.hex(T.bad) .. "pays more than the AH|r")
+      elseif v == net then
+        f.vendorNote:SetText(UI.hex(T.dim) .. "same as the AH after its cut|r")
       else
         f.vendorNote:SetText(UI.hex(T.good) .. "AH pays " .. money(net - v) .. " more|r")
       end
