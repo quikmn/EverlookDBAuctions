@@ -862,7 +862,7 @@ local function dataset()
   if not scanned then return nil end
   if Q.cacheFor == scanned then return Q.cache, scanned, Q.missing end
   local rows, missing = {}, 0
-  for key, line in pairs(scanned.rows) do
+  for key, line in pairs(scanned.rows or {}) do
     local id, suffix = key:match("^(%d+):(%-?%d+)$")
     id, suffix = tonumber(id), tonumber(suffix)
     local f = { strsplit(",", line) }

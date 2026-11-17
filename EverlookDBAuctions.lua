@@ -7,7 +7,9 @@
 -- Everlook). Each full scan is also kept as a summary for EverlookDB.com: region, realm, which auction house, the
 -- server time, and per item version (item + random suffix) the lowest, 10th-percentile and median price per unit,
 -- quantity, auctions, bid-only auctions, auctions with bids, time left and lowest bid. Sellers, bidders and other
--- players are never kept.
+-- players are never kept. The scans of the last 7 days are kept (up to 60, about 20 MB), so none is lost while the
+-- uploader or the site is down; all but the newest per house are packed into one compressed string each.
+-- The game writes saved variables only at /reload, logout or a character switch: the bar says when scans wait for one.
 -- /eah for status, /eah scan to start a full scan while the auction house is open.
 
 local ADDON, ns = ...
@@ -18,7 +20,14 @@ local BATCH = 1000              -- auctions read per frame, so a big scan doesn'
 local LOADS_PER_STEP = 15       -- item-detail requests per frame: a flood of them delays the player's own buys and posts
 local YIELD_FOR = 4             -- seconds a running scan pauses after the player buys, bids, posts or cancels
 local HISTORY_DAYS = 30
-local MAX_SCANS = 4             -- full scans kept for upload to EverlookDB.com (newest; about 300 KB each)
+-- Full scans kept for upload to EverlookDB.com (it dedupes on house and time, so sending one twice is harmless): every
+-- scan of the last KEEP_DAYS, up to MAX_SCANS and about MAX_SCAN_BYTES of saved text. Only the newest scan per house
+-- keeps its rows as a table (Search, Below vendor and tooltips read it); older ones are packed into one string.
+local KEEP_DAYS = 7
+local MAX_SCANS = 60
+local MAX_SCAN_BYTES = 20 * 1024 * 1024
+local ROW_BYTES = 76            -- what one row of a scan still kept as a table takes in the saved file (measured)
+local UNSAVED_AFTER = 30 * 60   -- scans not yet on disk this long: the bar says /reload saves them
 local STALE = 24 * 3600         -- older prices are shown grey
 -- Zones whose auction house is the neutral one (Classic UiMapIDs): Stranglethorn Vale, Tanaris, Winterspring
 local NEUTRAL_ZONES = { [1434] = true, [1446] = true, [1452] = true }
@@ -93,6 +102,8 @@ end
 --     items   = { [itemID] = { unit buyout (copper, lowest), quantity up, auctions (nil from searches), time } },
 --     days    = { [itemID] = { [day number] = lowest unit buyout that day } },
 --   }
+--   db.scans = { oldest first: { region, realm, side, at (server time), ..., and either rows = { ["id:suffix"] = row }
+--     (the newest per house, with deals) or, packed, z = base64 zlib text (zm = "zlib-b64") or packed = text, and nrows } }
 
 local function zoneMapID()
   local map = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
@@ -253,8 +264,15 @@ local function refreshPanel()
     flash = nil
     local n = 0
     for _ in pairs(h.items) do n = n + 1 end
-    panel.text:SetText(("%s%s|r · %s items priced · %s"):format(ns.UI.hex(T.places.prices), house:match("%-(%a+)$") or "?",
-      num(n), h.scanned and ("updated " .. ago(h.scanned)) or "no update yet"))
+    local side = ("%s%s|r"):format(ns.UI.hex(T.places.prices), house:match("%-(%a+)$") or "?")
+    local updated = h.scanned and ("updated " .. ago(h.scanned)) or "no update yet"
+    local waiting = ns.unsavedText()
+    if waiting then
+      -- scans the game hasn't written to disk yet: a quiet note in place of the item count, so the line still fits
+      panel.text:SetText(("%s · %s · %s%s|r"):format(side, updated, ns.UI.hex(T.mute), waiting))
+    else
+      panel.text:SetText(("%s · %s items priced · %s"):format(side, num(n), updated))
+    end
     fitBarText()
     panel.text:SetTextColor(unpack(T.text))
   end
@@ -491,6 +509,132 @@ local function topUnlinked(unlinked)
   return out
 end
 
+-- Older scans, packed: one line per item version, "id:suffix=row" (the row exactly as saved), sorted by key. Stored
+-- zlib-compressed in base64 (sc.z, sc.zm = "zlib-b64") when the game can compress and the round trip gives the same
+-- text back, else as the plain text (sc.packed). The newest scan per house keeps its rows table.
+local function packRows(rows)
+  local keys = {}
+  for key in pairs(rows) do keys[#keys + 1] = key end
+  table.sort(keys)
+  local lines = {}
+  for i, key in ipairs(keys) do lines[i] = key .. "=" .. rows[key] end
+  return table.concat(lines, "\n"), #keys
+end
+
+local function zip(packed)
+  local E = C_EncodingUtil
+  local method = Enum and Enum.CompressionMethod and Enum.CompressionMethod.Zlib
+  if not (E and method and E.CompressString and E.DecompressString and E.EncodeBase64 and E.DecodeBase64) then return nil end
+  local level = Enum.CompressionLevel and Enum.CompressionLevel.OptimizeForSize
+  local fine, z = pcall(function()
+    local raw
+    if level then raw = E.CompressString(packed, method, level) else raw = E.CompressString(packed, method) end
+    return E.EncodeBase64(raw)
+  end)
+  if not fine or type(z) ~= "string" or z == "" then return nil end
+  local same, back = pcall(function() return E.DecompressString(E.DecodeBase64(z), method) end)
+  if not same or back ~= packed then return nil end
+  return z
+end
+
+local function compactScan(sc)
+  if not sc.rows then return end
+  local packed, n = packRows(sc.rows)
+  local z = zip(packed)
+  if z then sc.z, sc.zm = z, "zlib-b64" else sc.packed = packed end
+  sc.nrows = n
+  sc.rows, sc.deals, sc.linkSamples = nil, nil, nil
+end
+ns.compactScan = compactScan
+
+local function houseOf(sc) return tostring(sc.realm) .. "-" .. tostring(sc.side) end
+
+-- The newest scan of each house: { [scan] = true }.
+local function newestPerHouse(scans)
+  local keep, seen = {}, {}
+  for i = #scans, 1, -1 do
+    local key = houseOf(scans[i])
+    if not seen[key] then seen[key], keep[scans[i]] = true, true end
+  end
+  return keep
+end
+
+local function scanBytes(sc)
+  if sc.z then return #sc.z end
+  if sc.packed then return #sc.packed end
+  local n = sc.nrows
+  if not n then n = 0; for _ in pairs(sc.rows or {}) do n = n + 1 end end
+  return n * ROW_BYTES
+end
+
+-- Packs every scan but the newest per house, then drops scans older than KEEP_DAYS (server time); over MAX_SCANS or
+-- MAX_SCAN_BYTES it drops a scan with a newer one of its house in the same server hour first (the site keeps one per
+-- hour), oldest first, then the oldest. The newest scan per house is never dropped. Returns how many were dropped.
+local function trimScans(scans, now)
+  local keep = newestPerHouse(scans)
+  for _, sc in ipairs(scans) do if not keep[sc] then compactScan(sc) end end
+  local dropped = 0
+  local cutoff = now - KEEP_DAYS * 86400
+  for i = #scans, 1, -1 do
+    local sc = scans[i]
+    if not keep[sc] and (sc.at or 0) < cutoff then table.remove(scans, i); dropped = dropped + 1 end
+  end
+  local bytes = 0
+  for _, sc in ipairs(scans) do bytes = bytes + scanBytes(sc) end
+  while #scans > MAX_SCANS or bytes > MAX_SCAN_BYTES do
+    local pick
+    for i, sc in ipairs(scans) do
+      if not keep[sc] then
+        local hour, key = math.floor((sc.at or 0) / 3600), houseOf(sc)
+        for j = i + 1, #scans do
+          local o = scans[j]
+          if houseOf(o) == key and (o.at or 0) > (sc.at or 0) and math.floor((o.at or 0) / 3600) == hour then
+            pick = i
+            break
+          end
+        end
+        if pick then break end
+      end
+    end
+    if not pick then
+      for i, sc in ipairs(scans) do if not keep[sc] then pick = i; break end end
+    end
+    if not pick then break end
+    bytes = bytes - scanBytes(scans[pick])
+    table.remove(scans, pick)
+    dropped = dropped + 1
+  end
+  return dropped
+end
+ns.trimScans = trimScans
+
+-- Scans finished this session are only in memory until the game writes saved variables (/reload, logout, character
+-- switch): { { scan = scan, finished = server time } }, oldest first.
+local unsavedScans = {}
+
+-- How many scans wait for a /reload, and the server time the oldest of them finished (only scans still kept count).
+local function unsavedInfo()
+  local kept = {}
+  for _, sc in ipairs(db and db.scans or {}) do kept[sc] = true end
+  local n, oldest = 0, nil
+  for _, u in ipairs(unsavedScans) do
+    if kept[u.scan] then
+      n = n + 1
+      if not oldest or u.finished < oldest then oldest = u.finished end
+    end
+  end
+  return n, oldest
+end
+ns.unsavedInfo = unsavedInfo
+
+-- The bar's quiet note once the oldest unsaved scan is UNSAVED_AFTER old, else nil.
+function ns.unsavedText(now)
+  local n, oldest = unsavedInfo()
+  if n == 0 or (now or GetServerTime()) - oldest <= UNSAVED_AFTER then return nil end
+  return ("%d %s waiting to upload · /reload saves %s"):format(n, n == 1 and "scan" or "scans", n == 1 and "it" or "them")
+end
+function ns.noteUnsaved(sc, finished) unsavedScans[#unsavedScans + 1] = { scan = sc, finished = finished } end
+
 local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
   local list = {}
   for key in pairs(vars) do list[#list + 1] = key end
@@ -531,7 +675,7 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
     logScan(h, "done")
     pruneDays(h)
     local build = select(2, GetBuildInfo())
-    table.insert(db.scans, {
+    local sc = {
       region = ok(GetCurrentRegionName and GetCurrentRegionName()),
       regionID = ok(GetCurrentRegion and GetCurrentRegion()),
       realm = ok(GetRealmName()),
@@ -549,8 +693,10 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       linkSamples = linkSamples,          -- up to 30 links of random-stat items (unique ID, level and spec blanked)
       rows = rows,
       deals = deals,                      -- auctions under vendor price, or the cheapest ones of items not loaded
-    })
-    while #db.scans > MAX_SCANS do table.remove(db.scans, 1) end
+    }
+    table.insert(db.scans, sc)
+    trimScans(db.scans, GetServerTime())   -- packs the house's previous scan, drops what is past keeping
+    ns.noteUnsaved(sc, GetServerTime())
     linkSamples = nil
     if ns.onScan then ns.onScan() end
     if db.reloadAfterScan then
@@ -1087,6 +1233,15 @@ function showStatus()
     any = true
   end
   if not any then print("  no prices yet: open the auction house and let it update prices, or just search.") end
+  local packed = 0
+  for _, sc in ipairs(db.scans) do if not sc.rows then packed = packed + 1 end end
+  print(("  full scans kept for EverlookDB.com: %d (%d packed); the last %d days, up to %d"):format(#db.scans, packed,
+    KEEP_DAYS, MAX_SCANS))
+  local n, oldest = unsavedInfo()
+  if n > 0 then
+    print(("  %d %s from this session not on disk yet (oldest %d min): /reload, logging out or switching characters saves %s")
+      :format(n, n == 1 and "scan" or "scans", math.floor((GetServerTime() - oldest) / 60), n == 1 and "it" or "them"))
+  end
   print("  /eah help lists the commands.")
 end
 
