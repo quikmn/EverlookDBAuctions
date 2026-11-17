@@ -1572,8 +1572,13 @@ function ns.makeTab(name, text, onClick, onBlizzard)
   tab:SetScript("OnClick", onClick)
   if templated then pcall(PanelTemplates_DeselectTab, tab) end
   ns.lastTab = tab
-  -- Blizzard's tabs (and anything that switches its view) close ours
-  for _, t in ipairs(tabsList) do t:HookScript("OnClick", onBlizzard) end
+  -- Blizzard's tabs (and anything that switches its view) close ours. The tab template adds every new tab, ours too,
+  -- to ah.Tabs, so only tabs that aren't ours get the hook: hooking our own made each click open and close at once.
+  ns.ourTabs = ns.ourTabs or {}
+  ns.ourTabs[tab] = true
+  for _, t in ipairs(tabsList) do
+    if not ns.ourTabs[t] then t:HookScript("OnClick", onBlizzard) end
+  end
   if ah.SetDisplayMode then hooksecurefunc(ah, "SetDisplayMode", onBlizzard) end
   if ns.applySkin then ns.applySkin() end
   return tab
