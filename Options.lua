@@ -62,7 +62,7 @@ local function refresh()
   if not p or not db then return end
   p.cut:SetText(ns.undercutShort())
   local s = ns.sellSettings()
-  for _, b in ipairs(p.durs) do b:EdbActive(b.dur == (s.duration or 2)) end
+  for _, b in ipairs(p.durs) do b:EdbActive(b.dur == (s.duration or 1)) end
   for _, c in ipairs(p.tips) do c:EdbChecked(ns.tipOn(c.key)) end
   p.auto:EdbChecked(db.auto ~= false)
   p.skin:EdbChecked(db.skin ~= false)

@@ -906,7 +906,7 @@ local function selectGroup(g)
   S.userPrice = false
   S.avail = available(g)
   local mem = s and s.memory[g.key]
-  S.dur = (mem and mem.d) or (s and s.duration) or 2
+  S.dur = (mem and mem.d) or (s and s.duration) or 1   -- 12 hours unless set in the options
   S.qty = clamp((mem and mem.q) or (g.commodity and S.avail or 1), 1, math.max(1, S.avail))
   if S.frame.confirm:IsShown() then S.frame.confirm:Hide(); S.warned = nil end
   updatePost()
