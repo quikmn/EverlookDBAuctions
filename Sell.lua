@@ -1096,7 +1096,16 @@ local function buildBagRow(L)
     local g = self.item
     if not g or not g.slots[1] then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    GameTooltip:SetBagItem(g.slots[1][1], g.slots[1][2])
+    -- the item's own tooltip, so a name cut short in the row is shown in full; when it has moved in the bags since,
+    -- its link, or at least its name
+    local shown = pcall(GameTooltip.SetBagItem, GameTooltip, g.slots[1][1], g.slots[1][2])
+      and C_Container.GetContainerItemID and C_Container.GetContainerItemID(g.slots[1][1], g.slots[1][2]) == g.id
+    if not shown then
+      GameTooltip:ClearLines()
+      if not (g.link and pcall(GameTooltip.SetHyperlink, GameTooltip, g.link)) then
+        GameTooltip:SetText(qualityHex(g.quality) .. g.name .. "|r", 1, 1, 1, 1, true)
+      end
+    end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine("Click to sell. Right-click: favourite. Shift+right-click: hide.", T.info[1], T.info[2], T.info[3], true)
     GameTooltip:Show()
