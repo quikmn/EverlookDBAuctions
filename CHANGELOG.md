@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Advanced search: `source is vendor` now finds every item a vendor sells, also ones you can get other ways too (it only found items whose only way was a vendor), as on EverlookDB.com. `is`, `has`, `in` and `is not` compare whole ways, so `source has drop` no longer finds world drops (`source is "world drop"` does). The guide lists all 13 ways; `from` is another word for source, `worlddrop` means world drop and `profession` means crafted, and a way that isn't one (`source is trainer`) says which ways there are.
+- The item data covers more ways to get an item: fishing, herbalism, mining, object, world drop, container and disenchant are new.
 - Quick sell: when a vendor pays exactly what the auction house gets you after its cut, the Sells to vendor box says so instead of "pays more than the AH".
 - Quick sell: a long item name beside the Sells to vendor and 30-day low boxes steps down a font size or two before it is cut off.
 - Price bar: the waiting line is short enough to read whole ("Asking the server for every auction… 0:42 · usually within a minute"), a line that would still be cut off drops one font size, and after every auction is read it says it is loading item details instead of sitting at "read 45,000 of 45,000".
