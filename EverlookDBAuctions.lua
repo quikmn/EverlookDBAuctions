@@ -174,6 +174,16 @@ local function expected(h)
   return math.min(math.max(h.took or 30, 10), 120)
 end
 
+-- What the bar says about an update that didn't finish: why, when that is known (h.why is set where it stopped; none
+-- means a reload cut it off), and that the prices are as they were.
+function ns.unfinishedText(h)
+  local why = h.why == "noanswer" and "got no answer from the server"
+    or h.why == "empty" and "got an empty list from the server"
+    or h.why == "closed" and "stopped when the AH closed"
+    or "was cut off by a reload"
+  return ("The last price update %s. Prices are unchanged."):format(why)
+end
+
 local function refreshPanel()
   if not panel or not house then return end
   local T = ns.T
@@ -184,7 +194,7 @@ local function refreshPanel()
     local pct = math.min(0.95, took / est)
     local text
     if yielding() then
-      text = "Updating prices… waiting for your purchase"
+      text = "Updating prices… paused while you buy, post or cancel"
     elseif est - took >= 2 then
       text = ("Updating prices… about %d seconds left · keep browsing"):format(est - took)
     else
@@ -207,8 +217,9 @@ local function refreshPanel()
     panel.text:SetText(flash.text)
     panel.text:SetTextColor(unpack(flash.color or T.text))
   elseif bad then
-    -- not alarm red: nothing is lost, the prices are as they were; red is kept for real problems
-    panel.text:SetText("The last price update was cut off by a reload or closing the AH. Try again.")
+    -- not alarm red: nothing is lost, the prices are as they were; red is kept for real problems. Says why when that
+    -- is known (h.why, set where the update stopped); none known means a reload cut it off.
+    panel.text:SetText(ns.unfinishedText(h))
     panel.text:SetTextColor(unpack(T.places.prices))
   else
     flash = nil
@@ -547,6 +558,7 @@ local function processList(total, first, read)
   if total <= 0 then
     -- an empty answer (refused or not loaded): never let it wipe the saved prices
     scan = nil
+    if house then getHouse(house).why = "empty" end
     setStatus("The server sent an empty list. Prices were left as they were.", ns.T.bad)
     say("the server sent an empty auction list; prices were left as they were.")
     refreshPanel()
@@ -570,6 +582,7 @@ local function processList(total, first, read)
     if scan.aborted then
       -- the auction house closed while reading: keep the old prices rather than half a scan
       scan = nil
+      h.why = "closed"
       say("the full scan stopped because the auction house closed; prices were left as they were.")
       return true
     end
@@ -669,13 +682,14 @@ function startScan(auto)
     say("this client has no auction house API I know. Type /eah status and send that to EverlookDB.")
     return
   end
-  h.tried = time()
+  h.tried, h.why = time(), nil
   setStatus(nil)
   refreshPanel()
   local mine = scan
   C_Timer.After(SCAN_TIMEOUT, function()
     if scan == mine and not mine.reading then
       scan = nil
+      h.why = "noanswer"
       setStatus("No answer from the server. Prices were left as they were.", ns.T.bad)
       say("the server didn't send the auction list (it may limit full scans). Try again later.")
       refreshPanel()
@@ -869,7 +883,12 @@ function events.AUCTION_HOUSE_SHOW() onShow() end
 
 function events.AUCTION_HOUSE_CLOSED()
   if scan then
-    if scan.reading then scan.aborted = true else scan = nil end
+    if scan.reading then
+      scan.aborted = true
+    else
+      scan = nil
+      if house then getHouse(house).why = "closed" end
+    end
   end
   house = nil
   awaiting = 0
