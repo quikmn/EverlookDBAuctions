@@ -84,6 +84,18 @@ local function commodityRows()
   return rows
 end
 
+-- The picked auction in a fresh list (the rows are new tables each time), or nil when it isn't up any more.
+function B.buyMatch(rows, sel)
+  for _, r in ipairs(rows or {}) do
+    if r.auctionID == sel.auctionID then
+      if B.dealSel == sel then B.dealSel = r end
+      return r
+    end
+  end
+  if B.dealSel == sel then B.dealSel = nil end
+  return nil
+end
+
 local function byPrice(a, b)
   if a.unit and b.unit then return a.unit < b.unit end
   return a.unit ~= nil and b.unit == nil
@@ -105,20 +117,33 @@ function send()
   ns.ahq.cancel("buy")
   B.rows, B.loaded, B.state = {}, false, "waiting"
   local function retrying() if gen == B.gen then B.state = "retry"; render() end end
-  local function noAnswer() if gen == B.gen then B.state = "noanswer"; render() end end
+  local function noAnswer()
+    if gen ~= B.gen then return end
+    B.state = "noanswer"
+    if #(B.rows or {}) > 0 then
+      setStatus("Some of the auctions didn't come: the list may be missing some. Press Refresh to ask again.", T.bad)
+    end
+    render()
+  end
   local function queryKeys()
     if gen ~= B.gen then return end
     local got, left = {}, #B.keys
+    B.partial = false
     for _, key in ipairs(B.keys) do
       ns.ahq.items(key, { owner = "buy", front = true, commodity = B.commodity, onRetry = retrying, onFail = noAnswer },
-        function(k, _, final)
+        function(k, full, final)
           if gen ~= B.gen then return end
           got[ns.ahq.keyText(k)] = B.commodity and commodityRows() or itemRows(k)
-          if final then left = left - 1 end
+          if final then
+            left = left - 1
+            if not full then B.partial = true end
+          end
           local rows = {}
           for _, list in pairs(got) do for _, r in ipairs(list) do rows[#rows + 1] = r end end
           table.sort(rows, byPrice)
           B.rows = rows
+          B.sel = B.sel and B.sel.auctionID and B.buyMatch(rows, B.sel) or nil
+          if not B.sel then B.armed = nil end
           if left <= 0 then B.loaded, B.state = true, nil end
           render()
           if left <= 0 and B.deal then dealPick() end
@@ -159,8 +184,23 @@ local function estimate(qty)
   return qty - left, cost
 end
 
+-- The line beside Buy for stackable goods: what that many would cost, or why Buy can't be pressed.
+function B.summaryText(qty, loaded)
+  if not loaded then return "" end
+  if qty < 1 then return "Type how many to buy." end
+  local got, cost = estimate(qty)
+  if got <= 0 then return "None for sale from other sellers." end
+  if got < qty then return ("Only %s for sale (about %s)."):format(num(got), money(cost)) end
+  return ("%s for about %s"):format(num(got), money(cost))
+end
+
 ---------------------------------------------------------------------------------------------------------------------
 -- Buying: Buy arms Confirm; Confirm buys once.
+
+local function cancelQuote()
+  if (B.quote or B.starting) and AH.CancelCommoditiesPurchase then pcall(AH.CancelCommoditiesPurchase) end
+  B.quote, B.starting, B.asking = nil, nil, nil
+end
 
 local function disarm()
   B.armed = nil
@@ -177,20 +217,22 @@ end
 local function buyItem()
   local r = B.sel
   if not r or not r.buyout or not r.auctionID or r.mine then return end
-  if not B.armed and not B.deal then arm(); return end
+  -- Start buying: one click buys the auction it picked (under vendor price); any other auction you pick takes Confirm
+  if not B.armed and not (B.deal and B.dealSel == r) then arm(); return end
   B.armed = nil
   if GetMoney() < r.buyout then setStatus("Not enough money.", T.bad); render(); return end
   if not AH.PlaceBid then setStatus("This client can't buy auctions.", T.bad); return end
   local okCall, err = pcall(AH.PlaceBid, r.auctionID, r.buyout)
   if okCall then
     local id = r.auctionID
-    B.pending = id
+    B.pending, B.late = id, nil
     B.buying = { qty = r.qty, cost = r.buyout }
     setStatus(("Buying for %s..."):format(money(r.buyout)), T.dim)
-    -- no word back in time: look again
+    -- no word back in time: say so (it may still go through) and look again
     C_Timer.After(5, function()
       if B.pending == id then
-        B.pending, B.sel = nil, nil
+        B.pending, B.sel, B.late = nil, nil, id
+        setStatus("No word from the auction house about that purchase yet. Check your mailbox before you buy again; looking at the auctions again.", T.bad)
         if ns.buyOpen then send() end
         render()
       end
@@ -207,16 +249,22 @@ local function buyCommodity()
   if B.quote then
     -- second click: pay the quoted price
     local quote = B.quote
+    if GetMoney() < quote.total then
+      cancelQuote()
+      setStatus(("Not enough money: that costs %s and you have %s."):format(money(quote.total), money(GetMoney())), T.bad)
+      render()
+      return
+    end
     B.quote = nil
     B.buying = { qty = quote.qty, cost = quote.total }
-    if GetMoney() < quote.total then setStatus("Not enough money.", T.bad); render(); return end
     if not AH.ConfirmCommoditiesPurchase then setStatus("This client can't buy commodities.", T.bad); return end
     local okCall, err = pcall(AH.ConfirmCommoditiesPurchase, B.id, quote.qty)
     if okCall then
-      B.pending = "commodity"
+      B.pending, B.late = "commodity", nil
       C_Timer.After(8, function()
         if B.pending == "commodity" then
-          B.pending = nil
+          B.pending, B.late = nil, "commodity"
+          setStatus("No word from the auction house about that purchase yet. Check your mailbox before you buy again; looking at the auctions again.", T.bad)
           if ns.buyOpen then send() end
           render()
         end
@@ -231,17 +279,21 @@ local function buyCommodity()
   if not AH.StartCommoditiesPurchase then setStatus("This client can't buy commodities.", T.bad); return end
   local okCall, err = pcall(AH.StartCommoditiesPurchase, B.id, qty)
   if okCall then
-    B.starting = qty
+    local ask = {}
+    B.starting, B.asking = qty, ask
     setStatus("Asking the auction house for the price...", T.dim)
+    -- no price in time: let go, so the button works again
+    C_Timer.After(8, function()
+      if B.asking == ask and B.starting then
+        cancelQuote()
+        setStatus("The auction house didn't send a price, so nothing was bought. Press Buy to ask again.", T.bad)
+        render()
+      end
+    end)
   else
     setStatus("Couldn't start the purchase: " .. tostring(err), T.bad)
   end
   render()
-end
-
-local function cancelQuote()
-  if (B.quote or B.starting) and AH.CancelCommoditiesPurchase then pcall(AH.CancelCommoditiesPurchase) end
-  B.quote, B.starting = nil, nil
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -251,12 +303,13 @@ local function buildRow(L)
   local b = UI.row(L, ROW)
   b.price = UI.text(b, "body")
   b.price:SetPoint("LEFT", 12, 0)
-  b.tag = UI.text(b, "small")
-  b.tag:SetPoint("LEFT", b.price, "RIGHT", 10, 0)
-  b.tag:SetTextColor(unpack(T.accent))
+  -- the green below-vendor tag right after the price, then "yours" / the version's name, which stops short of the
+  -- buyout column (anchored in fillRow)
   b.vendor = UI.badge(b, 60, 16)
-  b.vendor:SetPoint("LEFT", b.tag, "RIGHT", 6, 0)
+  b.vendor:SetPoint("LEFT", b.price, "RIGHT", 10, 0)
   b.vendor:Hide()
+  b.tag = UI.text(b, "small")
+  b.tag:SetTextColor(unpack(T.accent))
   b.left = UI.text(b, "dim")
   b.left:SetPoint("RIGHT", -10, 0)
   b.left:SetWidth(80)
@@ -269,6 +322,7 @@ local function buildRow(L)
   b.total:SetPoint("RIGHT", b.qty, "LEFT", -10, 0)
   b.total:SetWidth(120)
   b.total:SetJustifyH("RIGHT")
+  b.tag:SetPoint("RIGHT", b.total, "LEFT", -10, 0)
   b:SetScript("OnClick", function(self)
     if B.commodity or not self.item then return end
     B.sel = self.item
@@ -280,7 +334,7 @@ local function buildRow(L)
     if not r then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     if r.link then pcall(GameTooltip.SetHyperlink, GameTooltip, r.link) else pcall(GameTooltip.SetItemByID, GameTooltip, B.id) end
-    local p = ns.vendor and r.unit and ns.vendor.flip(B.id, r.unit)
+    local p = not r.mine and ns.vendor and r.unit and ns.vendor.flip(B.id, r.unit)
     if p then
       GameTooltip:AddLine(("Below vendor price: buy and vendor it for %s each, %s for all %d."):format(
         money(p), money(p * r.qty), r.qty), T.good[1], T.good[2], T.good[3], true)
@@ -294,19 +348,33 @@ local function buildRow(L)
   return b
 end
 
+-- A version's own part of its name ("of the Bear" from "Dwarven Magestaff of the Bear"), short enough for its row.
+function B.versionName(full, base)
+  if type(full) ~= "string" then return "" end
+  if base and base ~= "" and full:sub(1, #base) == base then
+    local rest = full:sub(#base + 1):gsub("^%s+", "")
+    if rest ~= "" then return rest end
+  end
+  return full
+end
+
 local function fillRow(b, r)
   b.price:SetText(r.unit and money(r.unit) or (C_MUTE .. "bids only|r"))
   local tag = r.mine and "yours" or ""
-  if B.showAll and r.vname then tag = (r.mine and "yours, " or "") .. r.vname end
+  if B.showAll and r.vname then tag = (r.mine and "yours, " or "") .. B.versionName(r.vname, baseName()) end
   b.tag:SetText(tag)
   -- below vendor price: a green tag with what buying and vendoring makes, each
   local p = not r.mine and ns.vendor and r.unit and ns.vendor.flip(B.id, r.unit)
+  b.tag:ClearAllPoints()
+  b.tag:SetPoint("RIGHT", b.total, "LEFT", -10, 0)
   if p then
     b.vendor:EdbSet("vendor +" .. money(p), T.good)
     b.vendor:SetWidth(b.vendor.text:GetStringWidth() + 12)
     b.vendor:Show()
+    b.tag:SetPoint("LEFT", b.vendor, "RIGHT", 6, 0)
   else
     b.vendor:Hide()
+    b.tag:SetPoint("LEFT", b.price, "RIGHT", 10, 0)
   end
   b.qty:SetText(num(r.qty))
   b.total:SetText((not B.commodity and r.buyout and r.qty > 1) and money(r.buyout) or "")
@@ -317,18 +385,18 @@ end
 function render()
   local f = B.frame
   if not f or not f:IsShown() then return end
-  -- the vendor price joins the line under the name once the item's details are there
-  if not B.subVendor and B.bits and ns.vendor then
-    local sell, c = ns.vendor.sellOf(B.id)
-    if sell then
-      B.subVendor = true
-      if sell > 0 and not ns.vendor.isQuest(B.id, c and c[5]) then
-        f.sub:SetText(table.concat(B.bits, "   ") .. "   vendor " .. money(sell))
-      end
-    end
+  -- the line under the name: how it's sold (the auction house's own key can change our guess), the usual price, and
+  -- the vendor price once the item's details are there
+  if B.bits then
+    B.bits[1] = B.commodity and "sold by amount: type how many" or "pick an auction to buy"
+    local text = table.concat(B.bits, "   ")
+    local sell, c = ns.vendor and ns.vendor.sellOf(B.id)
+    if sell and sell > 0 and not ns.vendor.isQuest(B.id, c and c[5]) then text = text .. "   a vendor pays " .. money(sell) end
+    f.sub:SetText(text)
   end
   local empty = "Waiting for the auction house..."
-  if B.loaded then empty = "Nobody is selling this right now."
+  if B.loaded and B.partial then empty = "The auction house didn't send its whole list. Press Refresh to ask again."
+  elseif B.loaded then empty = "Nobody is selling this right now."
   elseif B.state == "retry" then empty = "The auction house didn't answer. Retrying..."
   elseif B.state == "noanswer" then empty = "The auction house didn't answer. Press Refresh to try again."
   elseif B.state == "partial" then empty = "The auction house didn't send its whole list for this name. Try Show in Blizzard search." end
@@ -337,10 +405,10 @@ function render()
   f.qtyLabel:SetShown(B.commodity)
   f.qty:SetShown(B.commodity)
   f.max:SetShown(B.commodity)
+  if f.stackHead then f.stackHead:SetShown(not B.commodity) end
   local btn = f.buy
   if B.commodity then
-    local got, cost = estimate(B.qty or 0)
-    f.summary:SetText(B.loaded and (got > 0 and ("%s for about %s"):format(num(got), money(cost)) or "none for sale") or "")
+    f.summary:SetText(B.summaryText(B.qty or 0, B.loaded))
     if B.quote then
       btn:SetText("Confirm " .. money(B.quote.total))
       btn:EdbActive(true)
@@ -348,12 +416,21 @@ function render()
     else
       btn:SetText(B.starting and "Getting price..." or "Buy")
       btn:EdbActive(false)
+      local got = estimate(B.qty or 0)
       btn:SetEnabled(B.loaded and not B.starting and not B.pending and got > 0 and got == (B.qty or 0))
     end
   else
     local r = B.sel
-    f.summary:SetText(r and r.buyout and ("%s x%d, %s"):format(r.mine and "your auction" or "picked", r.qty, money(r.buyout))
-      or (B.loaded and #B.rows > 0 and "Pick an auction." or ""))
+    local text = ""
+    if r and r.buyout then
+      text = ("%s: %s for %s"):format(r.mine and "Your auction" or "Picked", num(r.qty), money(r.buyout))
+      if not r.mine and GetMoney() < r.buyout then text = text .. "  " .. UI.hex(T.bad) .. "not enough money|r" end
+    elseif r then
+      text = "Bids only: no buyout. Bid in Blizzard search."
+    elseif B.loaded and #B.rows > 0 then
+      text = "Pick an auction."
+    end
+    f.summary:SetText(text)
     if B.armed and r and r.buyout then
       btn:SetText("Confirm " .. money(r.buyout))
       btn:EdbActive(true)
@@ -385,10 +462,14 @@ local function makeFrame()
   UI.panel(f, T.bg, T.bg)
   f:EnableMouse(true)
   f:Hide()
-  -- also when Advanced search closes: let go of a quoted price and let its live check go on
-  f:SetScript("OnHide", function()
+  -- also when Advanced search closes (or another auction house tab hides it): let go of a quoted price, stop a
+  -- buying run, drop answers on their way, and stay closed, so it never comes back later with old auctions
+  f:SetScript("OnHide", function(self)
     cancelQuote()
-    B.armed = nil
+    B.armed, B.pending, B.deal = nil, nil, nil
+    B.gen = (B.gen or 0) + 1
+    if ns.ahq then ns.ahq.cancel("buy") end
+    if self:IsShown() then self:Hide() end
     ns.buyOpen = false
     if ns.searchCrumb then ns.searchCrumb(nil) end
     if ns.liveStep then ns.liveStep() end
@@ -405,8 +486,8 @@ local function makeFrame()
   f.name:SetPoint("TOPLEFT", f.icon, "TOPRIGHT", 10, -2)
   f.name:SetPoint("RIGHT", f, "RIGHT", -296, 0)
   f.sub = UI.text(f, "dim")
-  f.sub:SetPoint("TOPLEFT", f.name, "BOTTOMLEFT", 0, -5)
-  f.sub:SetPoint("RIGHT", f, "RIGHT", -296, 0)
+  f.sub:SetPoint("TOPLEFT", f, "TOPLEFT", 58, -38)   -- under the buttons, so it can use the whole width
+  f.sub:SetPoint("RIGHT", f, "RIGHT", -12, 0)
 
   local back = UI.button(f, "Back", 60, 22, "small")
   back:SetPoint("TOPRIGHT", -10, -12)
@@ -433,26 +514,32 @@ local function makeFrame()
   local function col(text, x, right)
     local l = UI.label(band, text)
     if right then l:SetPoint("RIGHT", band, "RIGHT", x, 0); l:SetJustifyH("RIGHT") else l:SetPoint("LEFT", band, "LEFT", x, 0) end
+    return l
   end
+  -- right edges as in the rows: a row ends 18 px from the right (the list's 2 + the scroll bar's 16)
   col("PRICE EACH", 12)
-  col("BUYOUT", -196, true)
-  col("AVAILABLE", -106, true)
-  col("TIME LEFT", -26, true)
+  f.stackHead = col("WHOLE AUCTION", -198, true)
+  col("AVAILABLE", -118, true)
+  col("TIME LEFT", -28, true)
 
   f.list = UI.list(f, ROW, buildRow, fillRow)
   f.list:SetPoint("TOPLEFT", 0, -76)
-  f.list:SetPoint("BOTTOMRIGHT", -2, 46)
+  f.list:SetPoint("BOTTOMRIGHT", -2, 82)
 
   -- bottom bar
   local line = UI.line(f, true)
   line:SetPoint("BOTTOMLEFT", 0, 44)
   line:SetPoint("BOTTOMRIGHT", 0, 44)
-  f.buy = UI.button(f, "Buy", 160, 28, "primary")
+  f.buy = UI.button(f, "Buy", 190, 28, "primary")
   f.buy:SetPoint("BOTTOMRIGHT", -10, 8)
   f.buy:SetScript("OnClick", function()
     if B.commodity then buyCommodity() else buyItem() end
   end)
-  UI.tip(f.buy, function() return B.armed and "Click again to pay" or nil end)
+  UI.tip(f.buy, function()
+    if B.armed or B.quote then return "Click again to pay" end
+    if B.deal and not B.commodity and B.sel and B.sel == B.dealSel then return "One click buys this auction" end
+    return nil
+  end)
   f.qtyLabel = UI.label(f, "QUANTITY")
   f.qtyLabel:SetPoint("BOTTOMLEFT", 12, 16)
   f.qty = UI.input(f, 60, 24, { numeric = true, right = true, max = 6 })
@@ -468,17 +555,23 @@ local function makeFrame()
   f.max:SetScript("OnClick", function()
     cancelQuote()
     local total = 0
-    for _, r in ipairs(B.rows or {}) do total = total + r.others end
+    for _, r in ipairs(B.rows or {}) do total = total + (r.others or 0) end
+    total = math.min(total, 999999)   -- what the box holds
     B.qty = total
     f.qty:SetText(tostring(total))
     render()
   end)
   f.summary = UI.text(f, "body")
   f.summary:SetPoint("RIGHT", f.buy, "LEFT", -12, 0)
+  f.summary:SetPoint("LEFT", f, "BOTTOMLEFT", 196, 23)   -- clear of the quantity box and Max
   f.summary:SetJustifyH("RIGHT")
+  -- the status line: up to two lines between the list and the bottom bar
   f.status = UI.text(f, "dim")
-  f.status:SetPoint("BOTTOMLEFT", 12, 52)
+  f.status:SetPoint("BOTTOMLEFT", 12, 50)
   f.status:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+  f.status:SetJustifyV("BOTTOM")
+  f.status:SetWordWrap(true)
+  if f.status.SetMaxLines then f.status:SetMaxLines(2) end
   return f
 end
 
@@ -487,7 +580,7 @@ local function open(row, deal)
   local f = makeFrame()
   if not f or not row or not row.id then return false end
   cancelQuote()
-  B.deal, B.row, B.buying = deal, row, nil
+  B.deal, B.row, B.buying, B.dealSel, B.dealWait, B.late = deal, row, nil, nil, nil, nil
   B.id, B.suffix, B.vkey, B.name = row.id, row.suffix or 0, row.key, row.name
   local stack = ns.itemInfo and ns.itemInfo(row.id)
   B.commodity = (stack and (stack[10] or 1) or 1) > 1   -- until the auction house's own key says
@@ -499,11 +592,10 @@ local function open(row, deal)
   f.icon:EdbSet(row.icon, quality)
   local c = quality and ITEM_QUALITY_COLORS[quality]
   f.name:SetText((c and c.hex or "|cffffffff") .. row.name .. "|r")
-  local bits = { B.commodity and "commodity: buy any amount" or "item: pick an auction" }
-  if row.median then bits[#bits + 1] = "typical " .. money(row.median) end
+  local bits = { B.commodity and "sold by amount: type how many" or "pick an auction to buy" }
+  if row.median then bits[#bits + 1] = "usual price at the last scan " .. money(row.median) end
   B.bits = bits
   f.sub:SetText(table.concat(bits, "   "))
-  B.subVendor = false
   if deal then
     setStatus("Start buying: looking for its auctions under vendor price.  " .. ns.vendor.tallyText(deal.tally, money), T.mute)
   else
@@ -523,14 +615,18 @@ function ns.openBuy(row) return open(row, nil) end
 function nextDeal()
   local deal = B.deal
   if not deal then return end
-  local row = deal.list[1]
+  -- headers (a shopping list's query lines) and rows without an item are skipped
+  local row
+  for _, r in ipairs(deal.list) do
+    if r.id and not r.header then row = r; break end
+  end
   if not row then
     B.deal = nil
     close()
     if ns.say then ns.say("nothing under vendor price is left in the list. " .. ns.vendor.tallyText(deal.tally, money)) end
     return
   end
-  open(row, deal)
+  if not open(row, deal) then B.deal = nil end
 end
 
 -- The live auctions are in: pick the cheapest one under vendor price, or, when there is none any more, drop the item
@@ -539,6 +635,20 @@ function dealPick()
   local deal = B.deal
   if not deal then return end
   local sell = ns.vendor.sellOf(B.id)
+  if not sell then
+    -- the vendor price isn't loaded yet: wait for it (it is asked for) instead of dropping the item as if it had no deals
+    local id, row = B.id, B.row
+    B.dealWait = (B.dealWait or 0) + 1
+    if B.dealWait > 20 then
+      B.dealWait = nil
+      setStatus("The game didn't send this item's vendor price, so it can't be checked. Press Refresh to try again.", T.bad)
+      return
+    end
+    setStatus("Waiting for the game to send the item's vendor price...", T.mute)
+    C_Timer.After(0.5, function() if B.deal == deal and B.id == id and B.row == row then dealPick() end end)
+    return
+  end
+  B.dealWait = nil
   local pick = ns.vendor.nextDeal(B.rows, sell, B.commodity)
   if not pick then
     if ns.dropResult and B.row then ns.dropResult(B.row) end
@@ -555,7 +665,7 @@ function dealPick()
     setStatus(("%d under vendor price for %s (vendor pays %s). Buy, then Confirm.  %s"):format(
       pick.qty, money(pick.cost), money(sell * pick.qty), tally), T.accent)
   else
-    B.sel = pick
+    B.sel, B.dealSel = pick, pick
     setStatus(("Picked: %s, vendor pays %s. One click on Buy buys it.  %s"):format(
       money(pick.buyout), money(sell * pick.qty), tally), T.accent)
   end
@@ -575,29 +685,54 @@ local events = {}
 
 function events.COMMODITY_PRICE_UPDATED(unit, total)
   if not ns.buyOpen or not B.starting then return end
-  B.quote = { qty = B.starting, unit = okv(unit), total = okv(total) or 0 }
-  B.starting = nil
+  total = okv(total)
+  if type(total) ~= "number" or total <= 0 then
+    -- a price we can't read is never paid
+    cancelQuote()
+    setStatus("The auction house's price couldn't be read, so nothing was bought. Press Buy to ask again.", T.bad)
+    render()
+    return
+  end
+  local quote = { qty = B.starting, unit = okv(unit), total = total }
+  B.quote, B.starting, B.asking = quote, nil, nil
   local sell = B.deal and ns.vendor.sellOf(B.id)
-  if sell and B.quote.total > sell * B.quote.qty then
+  if B.deal and (not sell or quote.total > sell * quote.qty) then
     setStatus(("The auction house quotes %s, more than a vendor pays (%s). Not bought; Refresh to look again."):format(
-      money(B.quote.total), money(sell * B.quote.qty)), T.bad)
+      money(quote.total), sell and money(sell * quote.qty) or "unknown"), T.bad)
     cancelQuote()
     render()
     return
   end
-  setStatus(("The auction house quotes %s (%s each). Confirm to pay."):format(money(B.quote.total), money(B.quote.unit or 0)), T.accent)
+  -- the quote holds for a short while; then it's gone and Buy asks again
+  local secs = try(AH.GetQuoteDurationRemaining)
+  if type(secs) ~= "number" or secs <= 0 then secs = 30 end
+  C_Timer.After(secs, function()
+    if B.quote == quote then
+      cancelQuote()
+      setStatus("The price quote ran out, so nothing was bought. Press Buy to ask again.", T.mute)
+      render()
+    end
+  end)
+  local each = money(quote.unit or math.floor(quote.total / math.max(1, quote.qty)))
+  local _, listed = estimate(quote.qty)
+  if listed > 0 and quote.total > listed * 1.05 then
+    setStatus(("The auction house quotes %s (%s each), more than the %s listed: the cheapest went meanwhile. Confirm within %d seconds to pay it anyway."):format(
+      money(quote.total), each, money(listed), secs), T.bad)
+  else
+    setStatus(("The auction house quotes %s (%s each). Confirm within %d seconds to pay."):format(money(quote.total), each, secs), T.accent)
+  end
   render()
 end
 
 function events.COMMODITY_PRICE_UNAVAILABLE()
-  if not ns.buyOpen then return end
-  B.starting, B.quote = nil, nil
-  setStatus("That many aren't for sale at the moment.", T.bad)
+  if not ns.buyOpen or not (B.starting or B.quote) then return end
+  B.starting, B.quote, B.asking = nil, nil, nil
+  setStatus("That many aren't for sale right now (some sold meanwhile). Nothing was bought; try a smaller amount.", T.bad)
   render()
 end
 
 local function bought(text)
-  B.pending, B.sel, B.armed = nil, nil, nil
+  B.pending, B.sel, B.armed, B.dealSel, B.late = nil, nil, nil, nil, nil
   if B.deal and B.buying then
     local sell = ns.vendor.sellOf(B.id) or 0
     B.deal.tally = ns.vendor.tally(B.deal.tally, B.buying.qty, B.buying.cost, sell)
@@ -609,19 +744,34 @@ local function bought(text)
   render()
 end
 
+-- An answer that comes after we stopped waiting (B.late) still counts.
 function events.COMMODITY_PURCHASE_SUCCEEDED()
-  if ns.buyOpen and B.pending == "commodity" then bought("Bought. It's in your mailbox.") end
+  if ns.buyOpen and (B.pending == "commodity" or B.late == "commodity") then bought("Bought. It's in your mailbox.") end
 end
 
 function events.COMMODITY_PURCHASE_FAILED()
-  if not ns.buyOpen or B.pending ~= "commodity" then return end
-  B.pending = nil
-  setStatus("The purchase failed.", T.bad)
+  if not ns.buyOpen or (B.pending ~= "commodity" and B.late ~= "commodity") then return end
+  B.pending, B.late, B.buying = nil, nil, nil
+  setStatus("The purchase didn't go through, so nothing was paid (the auctions may have changed). Looking at them again.", T.bad)
+  C_Timer.After(0.5, function() if ns.buyOpen then send() end end)
   render()
 end
 
 function events.AUCTION_HOUSE_PURCHASE_COMPLETED(auctionID)
-  if ns.buyOpen and B.pending and B.pending == auctionID then bought("Bought. It's in your mailbox.") end
+  if ns.buyOpen and auctionID ~= nil and (B.pending == auctionID or B.late == auctionID) then
+    bought("Bought. It's in your mailbox.")
+  end
+end
+
+-- The auction house refused an item purchase (sold already, not enough money...): say why and look again.
+function events.AUCTION_HOUSE_SHOW_ERROR(err)
+  if not ns.buyOpen or type(B.pending) ~= "number" then return end
+  B.pending, B.sel, B.armed, B.buying, B.dealSel = nil, nil, nil, nil, nil
+  local why = _G.AuctionHouseUtil and AuctionHouseUtil.GetErrorText and try(AuctionHouseUtil.GetErrorText, err)
+  setStatus("The auction house refused the purchase" .. ((why and why ~= "") and (": " .. why) or "") ..
+    ". Nothing was paid. Looking at the auctions again.", T.bad)
+  C_Timer.After(0.5, function() if ns.buyOpen then send() end end)
+  render()
 end
 
 function events.PLAYER_MONEY() render() end

@@ -51,9 +51,11 @@ function V.isQuest(id, category)
   end
   if classID then
     q = classID == QUEST_CLASS
-  else
+  elseif category ~= nil then
     local questName = GetItemClassInfo and GetItemClassInfo(QUEST_CLASS) or "Quest"
-    q = category ~= nil and category == questName
+    q = category == questName
+  else
+    return false   -- nothing known yet: not a quest item for now, and asked again next time
   end
   questCache[id] = q
   return q
@@ -179,18 +181,26 @@ end
 
 local MARK = T.good
 
--- The item and unit price of a row's data, whatever list it comes from.
-local function rowPrice(d)
+-- The item and unit price of a row's data, whatever list it comes from. nil for your own auctions (one auction of
+-- an item, or a commodity price whose units are all yours): there's nothing to buy there.
+function V.rowPrice(d)
   if type(d) ~= "table" then return nil end
   local ok = ns.ok or function(v) return v end
   local id = ok(d.itemID) or (type(d.itemKey) == "table" and ok(d.itemKey.itemID))
+  local own, q = ok(d.numOwnerItems), ok(d.quantity)
+  if own then
+    if q and own >= q then return nil end   -- a commodity price: every unit at it is yours
+  elseif ok(d.auctionID) and ok(d.containsOwnerItem) == true then
+    return nil                              -- one auction of an item: yours
+  end
   local unit = ok(d.unitPrice) or ok(d.minPrice)
   if not unit then
-    local buy, q = ok(d.buyoutAmount), ok(d.quantity)
+    local buy = ok(d.buyoutAmount)
     if buy then unit = math.floor(buy / math.max(1, q or 1)) end
   end
   return id, unit
 end
+local rowPrice = V.rowPrice
 
 local function markRow(row)
   if not row or (row.IsForbidden and row:IsForbidden()) then return end
