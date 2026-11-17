@@ -6,7 +6,7 @@
 --                Shift+right-click hides it.
 --   Price        the cheapest auction someone else has up, lowered by your undercut (1 silver unless you set
 --                another, in the tab or with /eah undercut). Your own auctions are matched, never undercut. When
---                nobody else is selling, your last price for the item, or else the typical price from the last
+--                nobody else is selling, your last price for the item, or else the usual price at the last
 --                full scan.
 --   Your auctions  each is checked against the live auctions and marked Undercut when someone else is cheaper.
 --   Blizzard's own Sell tab gets the same undercut when you pick an auction in its list.
@@ -234,7 +234,7 @@ end
 -- Blizzard's own Sell tab: the same undercut when you pick an auction in its list, and the scan price when nobody
 -- is selling.
 
--- Nobody is selling it right now: fill in the scan's typical price (only over Blizzard's default guess).
+-- Nobody is selling it right now: fill in the scan's usual price (only over Blizzard's default guess).
 local function fallback(frame, commodity)
   local loc = frame:GetItem()
   if not loc or not loc:IsValid() then return end
@@ -681,7 +681,7 @@ local function updateTotals()
   local net = math.floor(unit * (1 - cut))
   if f.net then
     f.net:SetText((unit > 0 and qty > 0)
-      and ("You get %s when it sells (the AH keeps %d%%), and the deposit back."):format(money(net * qty), cut * 100) or "")
+      and ("You get %s after the %d%% AH cut."):format(money(net * qty), cut * 100) or "")
   end
   local warn = (unit > 0 and qty > 0) and depositWarning(dep, unit * qty, (g.vendor or 0) * qty) or nil
   if warn then
@@ -734,7 +734,7 @@ local function suggest()
   if mem and mem.p then return mem.p, lead .. "Your last price (" .. ns.ago(mem.at) .. ")." .. tail end
   if g.scan then
     local when = g.scanAt and (", " .. ns.ago(g.scanAt)) or ""
-    return roundPrice(g.scan), lead .. "Typical price from the last full scan" .. when .. "." .. tail
+    return roundPrice(g.scan), lead .. "Usual price at the last full scan" .. when .. "." .. tail
   end
   if e then return nil, "Nobody is selling this." .. age .. " Set a price." end
   return nil, failed and "The auction house didn't answer. Click Refresh to ask again, or set a price." or "Checking live auctions..."
@@ -802,7 +802,8 @@ end
 local function renderOwned()
   local f = S.frame
   if not f then return end
-  f.own.empty:SetText("You have no auctions up.")
+  -- "none" only once the auction house has sent the list for this visit; until then it is being asked
+  f.own.empty:SetText(S.ownedLoaded and "You have no auctions up." or "Asking the auction house for your auctions...")
   f.own:SetItems(S.owned)
   if S.view == "own" then
     local n, under = 0, 0
@@ -812,7 +813,7 @@ local function renderOwned()
         if ownedState(a) == "Undercut" then under = under + 1 end
       end
     end
-    f.info:SetText(("%s up"):format(num(n)))
+    f.info:SetText(S.ownedLoaded and ("%s up"):format(num(n)) or "")
     f.cutNext:SetText(under > 0 and ("Cancel undercut (%d)"):format(under) or "None undercut")
     f.cutNext:SetEnabled(under > 0 and not S.cancelPending and nextUndercut() ~= nil)
   end
@@ -867,7 +868,7 @@ local function drawHistory()
       b:Show()
     end
   end
-  sp.stats:SetText(("low %s   median %s"):format(money(lo), money(med)))
+  sp.stats:SetText(money(lo))   -- under "30-DAY LOW"; the median and highest are in the tooltip
 end
 
 local function updatePost()
@@ -970,6 +971,11 @@ local function waitForPost(job)
     -- a multisell that is still moving gets more time; anything else is given up on after 5 seconds of silence
     if job.multi and GetTime() - (job.heard or 0) < 5 then C_Timer.After(1, check); return end
     S.posting = nil
+    -- no word back: say so (it may still have gone up), and look at Your auctions again
+    local done = job.multi and job.multi[1] or 0
+    setStatus(done > 0 and ("No word from the auction house after %d of %d. Check Your auctions before posting again."):format(done, job.multi[2])
+      or "No word from the auction house about the post. Check Your auctions before posting again.", T.bad)
+    queryOwned()
     updateTotals()
   end
   job.heard = GetTime()
@@ -1052,7 +1058,14 @@ local function cancelAuction(a)
     -- one cancel at a time: the next waits for the server's answer (or 5 seconds)
     local mine = {}
     S.cancelPending = mine
-    C_Timer.After(5, function() if S.cancelPending == mine then S.cancelPending = nil; renderOwned() end end)
+    C_Timer.After(5, function()
+      if S.cancelPending ~= mine then return end
+      S.cancelPending = nil
+      a.cancelling = nil
+      setStatus(("No word from the auction house about cancelling %s. Your auctions shows whether it went."):format(a.name), T.bad)
+      queryOwned()
+      renderOwned()
+    end)
     setStatus(("Cancelling %s..."):format(a.name), T.dim)
     renderOwned()
   else
@@ -1305,7 +1318,7 @@ local function makeFrame()
   local P = UI.panel(CreateFrame("Frame", nil, f))
   P:SetPoint("TOPLEFT", left, "TOPRIGHT", 8, 0)
   P:SetPoint("TOPRIGHT", -8, -28)
-  P:SetHeight(256)
+  P:SetHeight(270)   -- room under Deposit and Total for what you get after the cut
   f.needItem = {}
   local function needs(w) f.needItem[#f.needItem + 1] = w; return w end
 
@@ -1499,6 +1512,7 @@ local function makeFrame()
       setStatus("Undercut set to " .. undercutText() .. stepNote() .. ".", T.good)
       S.userPrice = false
       applySuggestion()
+      if ns.optionsRefresh then ns.optionsRefresh() end
     else
       setStatus(why, T.bad)
     end
@@ -1523,13 +1537,15 @@ local function makeFrame()
   lab("Total price", 150, -214)
   f.total = needs(UI.text(P, "big"))
   f.total:SetPoint("TOPLEFT", 150, -230)
-  -- what you actually get when it sells: the total minus the auction house's cut (the deposit comes back too)
+  -- what you actually get when it sells: the total minus the auction house's cut. Its own line under Deposit and
+  -- Total, stopping short of Post (a total in thousands of gold still fits)
   f.net = needs(UI.text(P, "mute"))
-  f.net:SetPoint("TOPLEFT", f.total, "BOTTOMLEFT", 0, -3)
+  f.net:SetPoint("TOPLEFT", 12, -254)
 
   f.post = UI.button(P, "Post", 150, 30, "primary")
   f.post:SetPoint("BOTTOMRIGHT", -12, 12)
   f.post:SetScript("OnClick", post)
+  f.net:SetPoint("RIGHT", f.post, "LEFT", -10, 0)
 
   -- the server's "are you sure" about a post
   local cf = UI.panel(CreateFrame("Frame", nil, P), T.raised, T.accent)
@@ -1617,7 +1633,7 @@ local function makeFrame()
   f.cur:SetPoint("TOPLEFT", 1, -58)
   f.cur:SetPoint("BOTTOMRIGHT", -3, 4)
   -- rows stop 18 px short of the band (the scroll bar): the labels sit over the columns' right edges
-  f.ownBand = band({ { "ITEM", 30 }, { "QTY", -300, true }, { "PRICE EACH", -180, true }, { "STATUS", -98, true } })
+  f.ownBand = band({ { "ITEM", 30 }, { "QUANTITY", -300, true }, { "PRICE EACH", -180, true }, { "STATUS", -98, true } })
   f.own = UI.list(Lw, LIST_ROW, buildOwnRow, fillOwnRow)
   f.own:SetPoint("TOPLEFT", 1, -58)
   f.own:SetPoint("BOTTOMRIGHT", -3, 4)
@@ -1654,11 +1670,24 @@ end
 
 ns.blizzardTabs = blizzardTabs
 
+-- The window's title while one of our tabs is open ("Quick sell", "Shopping"), and Blizzard's own back when it closes
+-- (its tab click doesn't set the title again when its view didn't change underneath ours).
+function ns.ahTitle(text)
+  local ah = _G.AuctionHouseFrame
+  if not ah then return end
+  if text then
+    if ah.SetTitle then pcall(ah.SetTitle, ah, text) end
+  elseif ah.UpdateTitle then
+    pcall(ah.UpdateTitle, ah)
+  end
+end
+
 local function closeSelling()
   if not S.frame or not S.frame:IsShown() then return end
   S.frame:Hide()
   if S.tab then pcall(PanelTemplates_DeselectTab, S.tab) end
   blizzardTabs(true)
+  ns.ahTitle(nil)
 end
 ns.closeSelling = closeSelling
 
@@ -1671,6 +1700,7 @@ local function openSelling()
   if S.tab then pcall(PanelTemplates_SelectTab, S.tab) end
   ns.raise(f)
   f:Show()
+  ns.ahTitle("Quick sell")
   if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 end
 ns.openSelling = openSelling
@@ -1707,7 +1737,14 @@ function ns.makeTab(name, text, onClick, onBlizzard, place)
   tab:SetID(100)
   if place then UI.place(tab, place) end
   tab:SetText(text)
-  if templated then pcall(PanelTemplates_TabResize, tab, 0) end
+  if templated then
+    -- sized like Blizzard's own auction house tabs (their padding and smallest width), also when the template sizes
+    -- it again on show or a screen size change, so the name never runs to the tab's edges
+    local function size(self) pcall(PanelTemplates_TabResize, self, 20, nil, 70) end
+    size(tab)
+    tab:HookScript("OnShow", size)
+    tab:HookScript("OnEvent", size)
+  end
   tab:SetPoint("LEFT", last, "RIGHT", templated and -15 or 4, 0)
   tab:SetScript("OnClick", onClick)
   if templated then pcall(PanelTemplates_DeselectTab, tab) end
@@ -1744,6 +1781,9 @@ function events.AUCTION_HOUSE_SHOW()
 end
 
 function events.AUCTION_HOUSE_CLOSED()
+  -- closed with Quick sell open: put Blizzard's tab and title back, or the next visit opens with no tab selected
+  -- (Blizzard doesn't select its tab again when its view is still the same one)
+  closeSelling()
   if S.frame then S.frame:Hide() end
   if S.tab then pcall(PanelTemplates_DeselectTab, S.tab) end
   -- live prices are only shown while fresh: the next visit asks again
@@ -1752,6 +1792,8 @@ function events.AUCTION_HOUSE_CLOSED()
   wipe(Live.jobs)
   wipe(Live.failed)
   S.posting, S.warned, S.sel, S.cancelPending, S.advance = nil, nil, nil, nil, nil
+  -- your auctions are asked for again next visit; until the answer the list says so instead of showing old ones
+  S.owned, S.ownedLoaded = {}, nil
   if S.frame then S.frame.confirm:Hide() end
 end
 
@@ -1760,6 +1802,7 @@ function events.BAG_UPDATE_DELAYED() refreshBags() end
 
 function events.OWNED_AUCTIONS_UPDATED()
   if not S.frame or not S.frame:IsShown() then return end
+  S.ownedLoaded = true
   readOwned()
   renderOwned()
   checkOwned()
@@ -1865,9 +1908,19 @@ function ns.slash(msg)
     ns.say(why)
     return true
   end
-  if S.frame then S.frame.cut:SetText(undercutShort()) end
+  if ns.undercutChanged then ns.undercutChanged() end
   ns.say("undercut set to " .. undercutText() .. stepNote() .. ".")
   return true
+end
+
+-- The undercut changed (here, by /eah undercut or in the options): the open Quick sell and options show it, and a
+-- price that wasn't typed by hand follows it.
+function ns.undercutChanged()
+  if S.frame then
+    S.frame.cut:SetText(undercutShort())
+    if S.frame:IsShown() then applySuggestion() end
+  end
+  if ns.optionsRefresh then ns.optionsRefresh() end
 end
 
 function ns.help()

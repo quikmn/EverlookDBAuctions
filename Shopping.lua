@@ -119,13 +119,13 @@ local function buildListRow(L)
     render()
   end)
   b:SetScript("OnDoubleClick", function(self) runList(self.item) end)
-  UI.tip(b, function() return b.item and b.item.name end, "Click to open. Double-click to run it.")
+  UI.tip(b, function() return b.item and plain(b.item.name) end, "Click to open. Double-click to run it.")
   return b
 end
 
 local function fillListRow(b, l, i)
   local _, sel = picked()
-  b.name:SetText(l.name)
+  b.name:SetText(plain(l.name))
   b.count:SetText(num(#l.queries))
   b:EdbSelect(i == sel)
 end
@@ -181,7 +181,8 @@ function render()
   for _, w in ipairs(f.needList) do w:SetShown(l ~= nil) end
   f.none:SetShown(l == nil)
   if not l then return end
-  if not f.name:HasFocus() then f.name:SetText(l.name) end
+  if f.name:HasFocus() and f.name.edbList ~= l then f.name:ClearFocus() end   -- saves the name for its own list
+  if not f.name:HasFocus() then f.name:SetText(plain(l.name)) end
   f.queries.empty:SetText("No searches yet. Type one above and press Add.")
   f.queries:SetItems(l.queries)
   f.del:SetText(SH.deleteArmed and "Sure?" or "Delete")
@@ -317,14 +318,26 @@ local function makeFrame()
   nl:SetPoint("TOPLEFT", 12, -10)
   f.name = needs(UI.input(R, 220, 24, { max = 60 }))
   f.name:SetPoint("TOPLEFT", 12, -24)
-  f.name:SetScript("OnEnterPressed", function(self)
-    local l = picked()
-    local newName = self:GetText():match("^%s*(.-)%s*$")
-    if l and newName ~= "" and newName ~= l.name then l.name = uniqueName(newName) end
+  -- the name is kept when you press Enter or click elsewhere (New list puts you straight in here, and the next
+  -- thing you do is type a search below); Escape puts the old name back
+  local function saveName(self)
+    local l = self.edbList   -- the list whose name was in the box, even when another one got picked meanwhile
+    self.edbList = nil
+    local newName = self:GetText():gsub("||", "|"):match("^%s*(.-)%s*$")
+    local still = false
+    for _, x in ipairs(lists()) do if x == l then still = true end end
+    if still and newName ~= "" and newName ~= l.name then l.name = uniqueName(newName) end
+  end
+  f.name:HookScript("OnEditFocusGained", function(self) self.edbList = picked() end)
+  f.name:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+  f.name:SetScript("OnEscapePressed", function(self)
+    self.edbUndo = true
     self:ClearFocus()
+  end)
+  f.name:HookScript("OnEditFocusLost", function(self)
+    if self.edbUndo then self.edbUndo = nil else saveName(self) end
     render()
   end)
-  f.name:HookScript("OnEditFocusLost", function() render() end)
 
   f.del = needs(UI.button(R, "Delete", 64, 24, "small danger"))
   f.del:SetPoint("TOPRIGHT", -12, -24)
@@ -342,7 +355,7 @@ local function makeFrame()
     SH.deleteArmed = nil
     table.remove(lists(), i)
     SH.editing = nil
-    setStatus("Deleted " .. l.name .. ".", T.dim)
+    setStatus("Deleted " .. plain(l.name) .. ".", T.dim)
     render()
   end)
   UI.tip(f.del, "Delete this list", "Click twice.")
@@ -473,6 +486,7 @@ local function closeShopping()
   SH.frame:Hide()
   if SH.tab then pcall(PanelTemplates_DeselectTab, SH.tab) end
   if ns.blizzardTabs then ns.blizzardTabs(true) end
+  if ns.ahTitle then ns.ahTitle(nil) end
 end
 
 local function openShopping()
@@ -484,6 +498,7 @@ local function openShopping()
   if SH.tab then pcall(PanelTemplates_SelectTab, SH.tab) end
   if ns.raise then ns.raise(f) end
   f:Show()
+  if ns.ahTitle then ns.ahTitle("Shopping lists") end
   if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 end
 
@@ -509,6 +524,7 @@ ev:RegisterEvent("AUCTION_HOUSE_SHOW")
 ev:RegisterEvent("AUCTION_HOUSE_CLOSED")
 ev:SetScript("OnEvent", function(_, e)
   if e == "AUCTION_HOUSE_CLOSED" then
+    closeShopping()   -- Blizzard's tab and title back for the next visit
     if SH.frame then SH.frame:Hide() end
     if SH.tab then pcall(PanelTemplates_DeselectTab, SH.tab) end
     return
