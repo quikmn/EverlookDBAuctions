@@ -1644,7 +1644,7 @@ local function makeButton()
   local ah = _G.AuctionHouseFrame
   local row = ah and ah.SearchBar
   if Q.button or not row then return end
-  local b = UI.button(row, "Advanced search", 150, 22, "primary")
+  local b = UI.button(row, "Advanced search", 150, 22)
   b:SetPoint("RIGHT", row, "LEFT", -8, 0)
   b:SetScript("OnClick", function()
     if Q.frame and Q.frame:IsShown() then hideResults() else ns.openSearch() end

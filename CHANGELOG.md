@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Quick sell (was Selling) and Shopping tabs now open when clicked: each click used to open and close the panel at once. Quick sell has a title, says how many you're selling and how, shows the undercut, takes copper prices, and warns when the deposit is more than the sale brings (on Blizzard's Sell tab too).
+- One gold button per screen: Update prices and Advanced search are plain buttons now, so the main action (Buy, Post, Search) is the only gold one.
+- Advanced search: a missing answer from the auction house is never shown as "sold out"; Now and Last scan columns; money like 1g 50s, slot words like cloak, quality words like blue.
 - Buy panel: during Start buying only the auction it picked is bought in one click, and it only picks auctions that make at least 10s (like the list); refused or unanswered purchases say so; commodity quotes run out like Blizzard's, and one more than 5% above the listed price is refused; the status line no longer covers the list. A live look in the buy panel also updates the item's row in Advanced search.
 - The Shopping tab explains itself when you have no lists yet: what lists are for, in big plain words, with a New list button in the middle.
 - Clicking a search in a shopping list puts it in the box to change, and Save now changes it in place. It used to add a second copy.

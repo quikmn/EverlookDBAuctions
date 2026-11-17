@@ -1122,7 +1122,7 @@ ev:RegisterEvent("AUCTION_HOUSE_SHOW")
 ev:SetScript("OnEvent", function(_, e, name)
   if e == "ADDON_LOADED" and name ~= "Blizzard_AuctionHouseUI" then return end
   apply()
-  -- the Selling tab is made a moment after the auction house opens
+  -- the Quick sell tab is made a moment after the auction house opens
   C_Timer.After(0.4, apply)
 end)
 if _G.AuctionHouseFrame then apply() end

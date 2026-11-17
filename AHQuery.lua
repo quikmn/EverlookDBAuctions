@@ -152,7 +152,7 @@ function Q.pump()
   if Q.blizzard and now() >= (Q.blizzardUntil or 0) then Q.blizzard = nil end
   local pending = #Q.list > 0 or #Q.waiters > 0
   if not pending then return end
-  if not ready() or now() < Q.pausedUntil or (ns.sellBusy and ns.sellBusy()) then
+  if not ready() or now() < Q.pausedUntil then
     later(0.3)
     return
   end

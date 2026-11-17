@@ -295,7 +295,7 @@ local function makePanel(parent)
   mark:SetPoint("LEFT", 4, 0)
   mark:SetTexture("Interface\\AddOns\\" .. ADDON .. "\\Media\\icon")
 
-  f.button = UI.button(f, "Update prices", 150, 22, "primary")
+  f.button = UI.button(f, "Update prices", 150, 22)
   f.button:SetPoint("RIGHT", -2, 0)
   f.button:SetScript("OnClick", function() startScan() end)
   UI.tip(f.button, "Update prices", tipText)

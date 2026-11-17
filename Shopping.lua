@@ -509,7 +509,7 @@ ev:SetScript("OnEvent", function(_, e)
     if SH.tab then pcall(PanelTemplates_DeselectTab, SH.tab) end
     return
   end
-  -- after the Selling tab (made 0.2 s after the auction house opens)
+  -- after the Quick sell tab (made 0.2 s after the auction house opens)
   C_Timer.After(0.3, function()
     if not SH.tab and ns.makeTab then
       SH.tab = ns.makeTab("EverlookAuctionsShoppingTab", "Shopping", openShopping, closeShopping)
