@@ -8,8 +8,9 @@
 -- effect: every Equip:, Use: and Chance on hit: line, joined with " / " (Data.lua, as on EverlookDB.com). text:
 -- everything on the item's tooltip (read once per item version from the game and kept for the session). `has` without
 -- a column searches text: `has "fire damage" and slot is trinket`, as on the site.
--- From EverlookDB's data (Data.lua): slots (bag size), source (vendor, crafted, drop, quest, skinning,
--- pickpocket), profession (that makes it), skill (needed to make it) and droprate (best drop chance, %).
+-- From EverlookDB's data (Data.lua): slots (bag size), source (every way you get it, as a list: "vendor, drop"; is,
+-- has, in and the like compare whole ways, so `source is vendor` finds everything vendors sell, as on EverlookDB.com),
+-- profession (that makes it), skill (needed to make it) and droprate (best drop chance, %).
 -- Steps: sort by <col> [asc|desc] (no column: price), top <n> [by <col>], count; a | between steps is optional.
 -- Below vendor price (Vendor.lua): `belowvendor` on its own, or a money column compared with another column
 -- (`price lt vendor`). profit is the vendor price minus the lowest buyout, each; stackprofit is that for a full stack.
@@ -102,6 +103,22 @@ local ALIAS = {
   effects = "effect", tooltip = "text",
   natureres = "nature_res", shadowres = "shadow_res", arcaneres = "arcane_res", blockvalue = "block", attackpower = "ap", spellpower = "sp", heal = "healing", def = "defense",
 }
+-- Columns that hold a comma list ("vendor, drop"): is, has, in, startswith... compare each element, as on the site.
+local LIST = { source = true }
+-- The ways to get an item, in Data.lua's order (ns.SOURCES bits); kept here so a shorter ns.SOURCES can't make a
+-- valid word an error. Other words for them, typed only: never shown.
+local SOURCES = { "vendor", "crafted", "drop", "quest", "skinning", "pickpocket", "fishing", "herbalism", "mining",
+  "object", "world drop", "container", "disenchant" }
+local SOURCE_OK = index(SOURCES)
+local SOURCE_ALIAS = { profession = "crafted", automatic = "auto", worlddrop = "world drop", world_drop = "world drop" }
+-- Professions that aren't also a way to get an item: typed as a source, the error points at the profession column.
+local PROFESSION = { alchemy = true, blacksmithing = true, cooking = true, enchanting = true, engineering = true,
+  ["first aid"] = true, leatherworking = true, poisons = true, tailoring = true, jewelcrafting = true }
+local function sourceWord(v)
+  v = tostring(v):lower():match("^%s*(.-)%s*$")
+  return SOURCE_ALIAS[v] or v
+end
+
 local function column(word)
   word = word and word:lower()
   word = ALIAS[word] or word
@@ -214,8 +231,19 @@ end
 -- A value that can't mean anything for its column is an error with an example, not a search that finds nothing.
 local TEXT_OPS = { has = true, starts = true, ends = true, like = true, notlike = true }
 local VALUE_EG = { quality = "quality ge rare", slot = "slot is back" }
+local SOURCE_CHECK = { eq = true, ne = true, has = true, ["in"] = true }
 function Parser:check(col, word, op, v)
   local kind = KIND[col]
+  if col == "source" and SOURCE_CHECK[op] then
+    local w = sourceWord(v)
+    if w == "" or SOURCE_OK[w] then return end
+    local list = table.concat(SOURCES, ", ")
+    if PROFESSION[w] then
+      self:fail(('%s is a profession, not a way to get an item; source is how you get it, one of: %s; e.g. profession is %s')
+        :format(w, list, w))
+    end
+    self:fail(('no item comes from "%s"; source is how you get it, one of: %s; e.g. %s is vendor'):format(v, list, word))
+  end
   if TEXT_OPS[op] or kind == "text" then return end
   if kind == "enum" then
     if enumIndex(col, v) then return end
@@ -711,6 +739,21 @@ local function textMatch(have, op, want)
   return false
 end
 
+-- A list column ("vendor, drop"): want compared with each element; ne and notlike are the opposite of a match.
+-- An empty want compares the whole text: `source is ""` is no source at all.
+local function listMatch(have, op, want)
+  want = sourceWord(want)
+  if want == "" then return textMatch(have, op, want) end
+  local elOp = (op == "ne" or op == "has") and "eq" or op == "notlike" and "like" or op
+  local found = false
+  for el in tostring(have or ""):gmatch("[^,]+") do
+    el = el:match("^%s*(.-)%s*$")
+    if el ~= "" and textMatch(el, elOp, want) then found = true; break end
+  end
+  if op == "ne" or op == "notlike" then return not found end
+  return found
+end
+
 local function numberOf(col, v)
   local kind = KIND[col]
   if kind == "enum" then return enumIndex(col, v) end
@@ -772,6 +815,7 @@ local function test(row, e)
     r = v ~= nil and a ~= nil and b ~= nil and v >= a and v <= b
   else
     local one = function(want)
+      if LIST[col] then return listMatch(get(row, col), op, want) end
       if kind == "text" or op == "has" or op == "starts" or op == "ends" or op == "like" or op == "notlike" then
         return textMatch(get(row, col), op, want)
       end
@@ -1182,7 +1226,8 @@ local GUIDE = table.concat({
   "name, quality (poor, common, uncommon, rare, epic, legendary), ilvl, reqlevel, category, type (Cloth, Wand, Potion...)",
   "slot: head, neck, shoulder, back, chest, robe, shirt, tabard, wrist, hands, waist, legs, feet, finger, trinket, onehand, twohand, mainhand, offhand, holdable, shield, ranged, wand, thrown, relic, ammo, quiver, bag",
   "price (the cheapest buyout for one), median (the usual price: half the auctions cheaper, half dearer), qty (how many are up), auctions, sell (what a vendor pays), stack (how many fit in a stack)",
-  "slots (bag size), source (vendor, crafted, drop, quest, skinning), profession, skill, droprate (best drop %)",
+  "slots (bag size), profession, skill, droprate (best drop %)",
+  C_INFO .. "source|r (or " .. C_INFO .. "from|r): every way you get it: vendor, crafted, drop, quest, skinning, pickpocket, fishing, herbalism, mining, object, world drop, container, disenchant. " .. C_GOOD .. "source is vendor|r finds every item vendors sell, also ones you can get other ways too:  " .. C_GOOD .. "source is vendor and profession is tailoring|r   " .. C_GOOD .. "source has \"world drop\"|r",
   "Money: 5g, 50s, 1g50s, 1g 50s, 2.5g, 20c. Or another column: " .. C_GOOD .. "price lt vendor|r",
   "Quality also takes colours (grey, white, green, blue, purple, orange); slot takes cloak, ring, helm, gloves, boots, belt, 1h, 2h.",
   "",

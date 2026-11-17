@@ -1028,6 +1028,28 @@ def audit_search():
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(VENDOR_SETUP, "setup", ns)
     lua.execute(QUEUE_SETUP)
+    # every way to get an item (Data.lua's order) and items with several: source is a comma list ("vendor, drop")
+    run("""
+      local ns = ...
+      bit = bit or { band = function(a, b)
+        local r, p = 0, 1
+        while a > 0 and b > 0 do
+          if a % 2 == 1 and b % 2 == 1 then r = r + p end
+          a, b, p = math.floor(a / 2), math.floor(b / 2), p * 2
+        end
+        return r
+      end }
+      ns.SOURCES = { "vendor", "crafted", "drop", "quest", "skinning", "pickpocket", "fishing", "herbalism", "mining",
+        "object", "world drop", "container", "disenchant" }
+      ns.PROFESSIONS = { "Alchemy", "Blacksmithing", "Cooking", "Enchanting" }
+      ns.ITEMDATA = {
+        [2589] = { 1 + 4 },        -- Linen Cloth: vendor, drop
+        [2592] = { 1024 },         -- Wool Cloth: world drop
+        [3000] = { 4 },            -- Old Sword: drop
+        [7001] = { 2, 4, 50 },     -- Lesser Magic Wand: crafted (Enchanting)
+        [7002] = { 4 + 1024 },     -- Sort Wand: drop, world drop
+      }
+    """, "sources", ns)
     lua.execute("""
       AUDIT_TIME = 1000
       function time() return AUDIT_TIME end
@@ -1092,6 +1114,49 @@ def audit_search():
     check(got is not None and 'no slot called "spaceship"' in got and "e.g. slot is back" in got, f"unknown slot: {got}")
     got = perr(P, "quality ge shiny")
     check(got is not None and "e.g. quality ge rare" in got, f"unknown quality: {got}")
+
+    # source is a list of ways: is, has, in, ne compare whole ways (as on EverlookDB.com)
+    def srt(text):
+        got = names(text)
+        return sorted(got) if isinstance(got, list) else got
+    check(srt("source is vendor") == ["Linen Cloth"], f"source is vendor finds vendor, drop: {srt('source is vendor')}")
+    check(srt("source == Vendor") == ["Linen Cloth"] and srt("source eq vendor") == ["Linen Cloth"], "== and eq, any case")
+    check(srt("source is drop") == ["Linen Cloth", "Old Sword", "Sort Wand"], f"source is drop: {srt('source is drop')}")
+    check(srt("source has drop") == ["Linen Cloth", "Old Sword", "Sort Wand"],
+          f"has drop doesn't find world drop: {srt('source has drop')}")
+    check(srt('source is "world drop"') == ["Sort Wand", "Wool Cloth"], f"world drop: {srt('source is \"world drop\"')}")
+    check(srt("source in (vendor, crafted)") == ["Lesser Magic Wand", "Linen Cloth"], "in compares each way")
+    check(srt("source has any (vendor, crafted)") == ["Lesser Magic Wand", "Linen Cloth"], "has any")
+    check(srt("source has all (vendor, drop)") == ["Linen Cloth"], "has all")
+    check(srt("source has all (drop, worlddrop)") == ["Sort Wand"], "has all with a synonym")
+    every = srt("name has a or name has e or name has i or name has o or name has u")
+    no_drop = sorted(set(every) - {"Linen Cloth", "Old Sword", "Sort Wand"})
+    check(srt("source ne drop") == no_drop and srt("source != drop") == no_drop and srt("source is not drop") == no_drop,
+          f"ne is the opposite of an element match: {srt('source ne drop')}")
+    check(srt("source not has drop") == no_drop and srt("not source has drop") == no_drop, "not has")
+    check(srt("from is vendor") == ["Linen Cloth"], "from is source")
+    check(srt("source startswith world") == ["Sort Wand", "Wool Cloth"], "startswith tests each way")
+    check(srt("source endswith drop") == ["Linen Cloth", "Old Sword", "Sort Wand", "Wool Cloth"], "endswith tests each way")
+    check(srt("source like v*") == ["Linen Cloth"], "like tests each way")
+    no_source = sorted(set(every) - {"Linen Cloth", "Wool Cloth", "Old Sword", "Lesser Magic Wand", "Sort Wand"})
+    check(srt('source is ""') == no_source, f"source is empty: no source at all: {srt('source is \"\"')}")
+    for typed, means in [("profession", "crafted"), ("worlddrop", "world drop"), ("world_drop", "world drop"),
+                         ("WorldDrop", "world drop")]:
+        check(srt(f"source is {typed}") == srt(f'source is "{means}"'), f"{typed} means {means}")
+    got = perr(P, "source is automatic")
+    check(got is not None and 'no item comes from "automatic"' in got, f"automatic is auto, not an item way: {got}")
+    ways = ("vendor, crafted, drop, quest, skinning, pickpocket, fishing, herbalism, mining, object, world drop, "
+            "container, disenchant")
+    for q in ["source is trainer", "source has recipe", "source in (vendor, class)", "source ne item"]:
+        got = perr(P, q)
+        check(got is not None and "no item comes from" in got and ways in got and "e.g. source is vendor" in got,
+              f"{q}: {got}")
+    got = perr(P, "from is trainer")
+    check(got is not None and "e.g. from is vendor" in got, f"from: its own word in the example: {got}")
+    got = perr(P, "source is tailoring")
+    check(got is not None and "profession is tailoring" in got, f"a profession as a source: {got}")
+    check(perr(P, "source is mining") is None and perr(P, "source like *drop") is None
+          and perr(P, "source startswith wor") is None, "ways, like and startswith parse")
 
     # a search's own order comes from the parse: "topaz" and "stop" aren't a top step
     ns.queryRun("name has topaz")
