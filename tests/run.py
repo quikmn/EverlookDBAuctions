@@ -93,6 +93,7 @@ def main() -> int:
     failures += search_queue()
     failures += undercut()
     failures += quick_sell()
+    failures += places()
     failures += deals()
     failures += core_and_lists()
     failures += audit_search()
@@ -1439,6 +1440,89 @@ def buy_decisions():
     return failures
 
 
+def places():
+    """Each place has its own colour, defined once in the theme (Skin.lua): every panel resolves its accent from it,
+    and the bar's Update prices / Try again button is a quiet button in the price updates' colour, never gold."""
+    import re
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("places: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    # the mock answers any unknown key with a function; the widgets' own fields (edb...) start out empty, as in game
+    lua.execute("""
+        local base = CreateFrame
+        CreateFrame = function(...)
+          local f = base(...)
+          local old = getmetatable(f).__index
+          setmetatable(f, { __index = function(t, k)
+            if type(k) == "string" and k:match("^edb") then return nil end
+            return old(t, k)
+          end })
+          return f
+        end
+    """)
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
+    T, UI = ns.T, ns.UI
+    names = ["search", "sell", "shopping", "prices"]
+    check(all(T.places[n] is not None for n in names), "every place has a colour")
+    cols = [tuple(T.places[n][k] for k in (1, 2, 3)) for n in names] + [tuple(T.accent[k] for k in (1, 2, 3))]
+    check(len(set(cols)) == len(cols), "the places differ from each other and from gold")
+
+    # contrast against the window background, for text
+    def lum(c):
+        def lin(v):
+            return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+        r, g, b = (lin(v) for v in c)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    bg = tuple(T.bg[k] for k in (1, 2, 3))
+    for n, c in zip(names, cols):
+        ratio = (lum(c) + 0.05) / (lum(bg) + 0.05)
+        check(ratio >= 4.5, f"{n} reads on the background: {ratio:.2f}")
+
+    # a frame inside a place takes its colour; outside any place it is gold
+    make = lua.eval("CreateFrame")
+    same = lua.eval("rawequal")
+    first = lua.eval("function(UI, f) return (UI.accentOf(f)) end")   # the colour, without the place's name
+    for n in names:
+        panel = make("Frame", None, lua.eval("UIParent"))
+        UI.place(panel, n)
+        inner = make("Frame", None, make("Frame", None, panel))
+        check(same(first(UI, inner), T.places[n]), f"{n}: a box inside the panel resolves its colour")
+    check(same(first(UI, make("Frame")), T.accent), "outside a place: gold")
+
+    # the bar's button: quiet, in the price updates' colour
+    bar = make("Frame")
+    UI.place(bar, "prices")
+    b = UI.button(bar, "Update prices", 128, 18, "quiet")
+    check(b.edbRole == "quiet", f"the bar button is quiet, not {b.edbRole}")
+    check(same(first(UI, b), T.places.prices), "the bar button is in the price updates' colour")
+    check(UI.button(bar, "Post", 10, 10, "primary").edbRole == "primary", "a primary button is still primary")
+
+    # every panel marks its place, and its colour is never hard-coded outside the theme
+    src = {n: (ROOT / n).read_text(encoding="utf-8") for n in
+           ["Search.lua", "Sell.lua", "Shopping.lua", "Buy.lua", "EverlookDBAuctions.lua"]}
+    for file, place in [("Search.lua", "search"), ("Sell.lua", "sell"), ("Shopping.lua", "shopping"),
+                        ("EverlookDBAuctions.lua", "prices")]:
+        check(f'UI.place(f, "{place}")' in src[file], f"{file} marks its panel as {place}")
+    m = re.search(r'f\.button = UI\.button\(f, "Update prices", \d+, (\d+), "([^"]*)"\)', src["EverlookDBAuctions.lua"])
+    check(m is not None and m.group(2) == "quiet" and int(m.group(1)) <= 20,
+          f"the bar button is small and quiet: {m and m.groups()}")
+    check("T.bad" not in src["EverlookDBAuctions.lua"].split("elseif bad then")[1].split("else")[0],
+          "a cut-off update is not shown in alarm red")
+    for file, text in src.items():
+        for n in names:
+            c = T.places[n]
+            hexc = "%02x%02x%02x" % tuple(round(c[k] * 255) for k in (1, 2, 3))
+            check(hexc not in text.lower(), f"{file} hard-codes the {n} colour")
+    return failures
+
+
 def quick_sell():
     """Quick sell (Sell.lua): strict undercut values, the price and quantity lines, the deposit warning, forgetting
     old remembered prices, and a missing or empty answer from the auction house never read as "nobody is selling"."""
@@ -1484,14 +1568,20 @@ def quick_sell():
     check(ns.underText(200, "the auction you picked") == "5% under the auction you picked, 200c.", ns.underText(200, "the auction you picked"))
     ns.setUndercut("1c")
 
-    # the line under How many to sell
-    t = ns.sellQtyNote(True, 40, 120)
-    check(t.startswith("Sells as one listing of 40 at 120c each, 4800c in all.") and "no need to split" in t, t)
-    check(ns.sellQtyNote(True, 40, 0).startswith("Sells as one listing of 40."), "commodity without a price yet")
-    check(ns.sellQtyNote(False, 1, 500) == "Posts one auction at 500c.", ns.sellQtyNote(False, 1, 500))
-    t = ns.sellQtyNote(False, 3, 500)
-    check(t.startswith("Posts 3 separate auctions, one item each, at 500c each, 1500c in all."), t)
-    check(ns.sellQtyNote(True, 0, 100) == "", "nothing to sell: no line")
+    # the line under Quantity: only for commodities, short
+    check(ns.sellQtyNote(True, 40) == "Buyers can buy any amount.", ns.sellQtyNote(True, 40))
+    check(ns.sellQtyNote(False, 3) == "", "items: no line (the Post button says how many)")
+    check(ns.sellQtyNote(True, 0) == "", "nothing to sell: no line")
+
+    # a click on a row of Current auctions sets the price to your undercut under it (or matches your own auction)
+    unit, src = ns.sellRowPrice(lua.table(unit=500, others=2))
+    check(unit == 499 and src == "1c under the auction you picked, 500c.", f"row click undercuts it: {unit} {src}")
+    unit, src = ns.sellRowPrice(lua.table(unit=500, others=0))
+    check(unit == 500 and src == "Matches your auction, 500c.", f"row click on your own auction matches it: {unit} {src}")
+    ns.setUndercut("5%")
+    unit, _src = ns.sellRowPrice(lua.table(unit=10000, others=1))
+    check(unit == 9500, f"row click with a 5% undercut: {unit}")
+    ns.setUndercut("1c")
 
     # the deposit warning: 1s deposit on 3 at 24c
     w = ns.depositWarning(100, 72, 15)

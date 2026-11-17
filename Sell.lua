@@ -181,24 +181,23 @@ local function underText(cheapest, what)
 end
 ns.underText = underText
 
--- What the quantity means, for the line under it. Commodities (stackable goods on this auction house) go up as one
--- listing that buyers take any amount of; other items go up as that many auctions of one.
-local function qtyNote(commodity, qty, unit)
-  if not qty or qty < 1 then return "" end
-  local priced = unit and unit > 0
-  if commodity then
-    local first = priced and ("Sells as one listing of %s at %s each, %s in all."):format(num(qty), money(unit), money(unit * qty))
-      or ("Sells as one listing of %s."):format(num(qty))
-    return first .. "\nBuyers can buy any amount of it, so there's no need to split it into stacks."
-  end
-  if qty == 1 then
-    return priced and ("Posts one auction at %s."):format(money(unit)) or "Posts one auction."
-  end
-  local first = priced and ("Posts %s separate auctions, one item each, at %s each, %s in all."):format(num(qty), money(unit), money(unit * qty))
-    or ("Posts %s separate auctions, one item each."):format(num(qty))
-  return first .. "\nEach is bought on its own."
+-- The short line under Quantity: only for commodities (stackable goods on this auction house), which go up as one
+-- listing that buyers take any amount of. Other items go up as that many auctions of one, as the Post button says.
+local function qtyNote(commodity, qty)
+  if not commodity or not qty or qty < 1 then return "" end
+  return "Buyers can buy any amount."
 end
 ns.sellQtyNote = qtyNote
+
+-- The price for a click on a row of Current auctions: your undercut under it, or the same price when it's your own
+-- auction (you never undercut yourself). Returns the price and the line saying where it comes from.
+local function rowPrice(r)
+  if r.others == 0 then
+    return roundPrice(r.unit), ("Matches your auction, %s."):format(money(r.unit))
+  end
+  return undercutPrice(r.unit), underText(r.unit, "the auction you picked")
+end
+ns.sellRowPrice = rowPrice
 
 -- A deposit bigger than the sale brings: what to say, or nil. vendorTotal is what a vendor pays for the same amount.
 local function depositWarning(deposit, total, vendorTotal)
@@ -651,9 +650,6 @@ end
 local function showCopper(on)
   local f = S.frame
   f.copper:SetShown(on)
-  f.copperIcon:SetShown(on)
-  f.suggest:ClearAllPoints()
-  f.suggest:SetPoint("LEFT", on and f.copperIcon or f.silverIcon, "RIGHT", 8, 0)
 end
 
 -- Total, deposit, the price's source and the Post button.
@@ -666,12 +662,14 @@ local function updateTotals()
     f.deposit:SetText("-")
     f.source:SetText("")
     f.qtyNote:SetText("")
+    f.suggest:Hide()
     f.post:Disable()
     f.post:SetText("Post")
     return
   end
   f.total:SetText((unit > 0 and qty > 0) and money(unit * qty) or "-")
-  f.qtyNote:SetText(qtyNote(g.commodity, qty, unit))
+  f.qtyNote:SetText(qtyNote(g.commodity, qty))
+  f.suggest:SetShown(S.userPrice and true or false)   -- "Undercut cheapest": back from your own price
   local dep
   if g.commodity then dep = try(AH.CalculateCommodityDeposit, g.id, S.dur, qty)
   elseif g.loc then dep = try(AH.CalculateItemDeposit, g.loc, S.dur, qty) end
@@ -892,7 +890,6 @@ local function updatePost()
   if g.de then bits[#bits + 1] = "disenchant ~" .. money(g.de) end
   f.sub:SetText(table.concat(bits, "   "))
   f.qty:SetText(tostring(S.qty or 1))
-  f.all:SetText(("All (%s in bags)"):format(num(S.avail or g.count)))
   showCopper(priceStep() == 1)
   for _, b in ipairs(f.durs) do b:EdbActive(b.dur == S.dur) end
   drawHistory()
@@ -1145,13 +1142,7 @@ local function buildCurRow(L)
     local r = self.item
     if not r or not r.unit or not S.sel then return end
     S.userPrice = true
-    if r.others == 0 then
-      S.unit = roundPrice(r.unit)
-      S.source = ("Matches your auction, %s."):format(money(r.unit))
-    else
-      S.unit = undercutPrice(r.unit)
-      S.source = underText(r.unit, "the auction you picked")
-    end
+    S.unit, S.source = rowPrice(r)
     writePrice(S.unit)
     updateTotals()
   end)
@@ -1241,20 +1232,6 @@ local function fillOwnRow(b, a)
   b.cancel:SetEnabled(not a.cancelling)
 end
 
-local function label(parent, text, x, y)
-  local l = UI.label(parent, text)
-  l:SetPoint("TOPLEFT", x, y)
-  return l
-end
-
-local function coin(parent, box, file)
-  local t = parent:CreateTexture(nil, "ARTWORK")
-  t:SetSize(12, 12)
-  t:SetPoint("LEFT", box, "RIGHT", 4, 0)
-  t:SetTexture(file)
-  return t
-end
-
 local function makeFrame()
   local ah = _G.AuctionHouseFrame
   if S.frame or not ah then return S.frame end
@@ -1263,14 +1240,15 @@ local function makeFrame()
   f:SetPoint("BOTTOMRIGHT", ah, "BOTTOMRIGHT", -2, (ns.BAR_H or 0) + 2)   -- the bar along the bottom stays visible
   f:SetFrameLevel(ah:GetFrameLevel() + 150)
   f:EnableMouse(true)
-  UI.panel(f, T.bg, T.bg)
+  local PLACE = UI.place(f, "sell")   -- Quick sell's colour: where you are
+  UI.panel(f, T.bg, PLACE)
   f:Hide()
   S.frame = f
 
   -- a title strip, so this is never mistaken for Blizzard's own Sell tab
   local head = UI.text(f, "title")
   head:SetPoint("TOPLEFT", 12, -8)
-  head:SetText(UI.hex(T.accent) .. "Quick sell|r")
+  head:SetText(UI.hex(PLACE) .. "Quick sell|r")
   local headNote = UI.text(f, "mute")
   headNote:SetPoint("LEFT", head, "RIGHT", 10, 0)
   headNote:SetPoint("RIGHT", f, "RIGHT", -12, 0)
@@ -1284,6 +1262,7 @@ local function makeFrame()
   local title = UI.text(left, "title")
   title:SetPoint("TOPLEFT", 10, -10)
   title:SetText("Your bags")
+  title:SetTextColor(unpack(PLACE))
   f.bagCount = UI.text(left, "mute")
   f.bagCount:SetPoint("TOPRIGHT", -10, -11)
   f.bagCount:SetJustifyH("RIGHT")
@@ -1403,13 +1382,19 @@ local function makeFrame()
   div:SetPoint("TOPLEFT", 1, -66)
   div:SetPoint("TOPRIGHT", -1, -66)
 
-  -- quantity
-  needs(label(P, "HOW MANY TO SELL", 12, -72))
-  local minus = needs(UI.button(P, "-", 24, 24))
-  minus:SetPoint("TOPLEFT", 12, -86)
-  minus:SetScript("OnClick", function() setQty((S.qty or 1) - 1) end)
-  f.qty = needs(UI.input(P, 56, 24, { numeric = true, right = true, max = 6 }))
-  f.qty:SetPoint("LEFT", minus, "RIGHT", 4, 0)
+  -- The post block, in the order of Blizzard's own Sell frame: Quantity, Unit price, Duration, Deposit, Total price,
+  -- Post. Labels on the left of their boxes; two columns so it fits under the item.
+  local function lab(text, x, y)
+    local l = needs(UI.text(P, "dim"))
+    l:SetPoint("TOPLEFT", x, y)
+    l:SetText(text)
+    return l
+  end
+
+  -- quantity: a box and Max (everything of it in your bags)
+  lab("Quantity", 12, -80)
+  f.qty = needs(UI.input(P, 64, 24, { numeric = true, right = true, max = 6 }))
+  f.qty:SetPoint("TOPLEFT", 92, -74)
   f.qty:HookScript("OnTextChanged", function(self, user)
     if not user then return end
     local n = tonumber(self:GetText())
@@ -1419,43 +1404,35 @@ local function makeFrame()
     end
   end)
   f.qty:HookScript("OnEditFocusLost", function(self) setQty(tonumber(self:GetText()) or 1) end)
-  local plus = needs(UI.button(P, "+", 24, 24))
-  plus:SetPoint("LEFT", f.qty, "RIGHT", 4, 0)
-  plus:SetScript("OnClick", function() setQty((S.qty or 0) + 1) end)
-  -- no Stack button: stackable goods go up as one listing that buyers take any amount of (the line below says so)
-  f.all = needs(UI.button(P, "All", 150, 24, "small"))
-  f.all:SetPoint("LEFT", plus, "RIGHT", 8, 0)
+  f.all = needs(UI.button(P, "Max", 52, 24, "small"))
+  f.all:SetPoint("LEFT", f.qty, "RIGHT", 4, 0)
   f.all:SetScript("OnClick", function() setQty(S.avail or 1) end)
-  UI.tip(f.all, "Sell everything of this in your bags")
-  -- what the quantity means: one listing of that many, or that many auctions of one
-  f.qtyNote = needs(UI.text(P, "mute"))
-  f.qtyNote:SetPoint("TOPLEFT", 12, -114)
-  f.qtyNote:SetPoint("RIGHT", P, "RIGHT", -12, 0)
-  f.qtyNote:SetWordWrap(true)
+  UI.tip(f.all, "Max", function() return ("Sell all %s in your bags."):format(num(S.avail or 0)) end)
+  -- one short line, for stackable goods only: they go up as one listing that buyers take any amount of
+  f.qtyNote = UI.text(P, "mute")
+  f.qtyNote:SetPoint("TOPLEFT", 92, -102)
 
-  -- duration
-  needs(label(P, "DURATION", 330, -72))
-  f.durs = {}
-  for k, d in ipairs(DURATIONS) do
-    local b = needs(UI.button(P, d[2], 52, 24, "small"))
-    b:SetPoint("TOPLEFT", 330 + (k - 1) * 56, -86)
-    b.dur = d[1]
-    b:SetScript("OnClick", function() setDur(d[1]) end)
-    f.durs[k] = b
+  -- unit price: gold, silver and copper boxes, each with its coin inside, like Blizzard's money input
+  lab("Unit price", 12, -122)
+  local per = lab("per item", 12, -135)
+  per:SetFontObject(UI.fontObject("mute"))
+  local function coinBox(w, max, file)
+    local e = needs(UI.input(P, w, 24, { numeric = true, right = true, max = max }))
+    e:SetTextInsets(7, 22, 0, 0)   -- the digits stop short of the coin
+    local icon = e:CreateTexture(nil, "OVERLAY")
+    icon:SetSize(13, 13)
+    icon:SetPoint("RIGHT", -6, 0)
+    icon:SetTexture(file)
+    return e
   end
-
-  -- unit price
-  needs(label(P, "PRICE EACH", 12, -144))
-  f.gold = needs(UI.input(P, 76, 24, { numeric = true, right = true, max = 7 }))
-  f.gold:SetPoint("TOPLEFT", 12, -158)
-  local gi = needs(coin(P, f.gold, "Interface\\MoneyFrame\\UI-GoldIcon"))
-  f.silver = needs(UI.input(P, 40, 24, { numeric = true, right = true, max = 2 }))
-  f.silver:SetPoint("LEFT", gi, "RIGHT", 6, 0)
-  f.silverIcon = needs(coin(P, f.silver, "Interface\\MoneyFrame\\UI-SilverIcon"))
-  -- copper: shown only where the auction house takes copper (showCopper)
-  f.copper = UI.input(P, 40, 24, { numeric = true, right = true, max = 2 })
-  f.copper:SetPoint("LEFT", f.silverIcon, "RIGHT", 6, 0)
-  f.copperIcon = coin(P, f.copper, "Interface\\MoneyFrame\\UI-CopperIcon")
+  f.gold = coinBox(84, 7, "Interface\\MoneyFrame\\UI-GoldIcon")
+  f.gold:SetPoint("TOPLEFT", 92, -118)
+  f.silver = coinBox(50, 2, "Interface\\MoneyFrame\\UI-SilverIcon")
+  f.silver:SetPoint("LEFT", f.gold, "RIGHT", 4, 0)
+  -- copper: shown only where the auction house takes copper (showCopper); not in needs, showCopper decides
+  f.copper = coinBox(50, 2, "Interface\\MoneyFrame\\UI-CopperIcon")
+  f.needItem[#f.needItem] = nil
+  f.copper:SetPoint("LEFT", f.silver, "RIGHT", 4, 0)
   local function typed(_, user)
     if not user then return end
     S.userPrice = true
@@ -1471,19 +1448,43 @@ local function makeFrame()
   f.silver:SetScript("OnTabPressed", function() if f.copper:IsShown() then f.copper:SetFocus() else f.gold:SetFocus() end end)
   f.copper:SetScript("OnTabPressed", function() f.gold:SetFocus() end)
 
-  local reset = needs(UI.button(P, "Suggest", 70, 24, "small"))
-  reset:SetPoint("LEFT", f.copperIcon, "RIGHT", 8, 0)
-  f.suggest = reset
-  reset:SetScript("OnClick", function()
+  -- back to the automatic price: a small text link, shown only once you've set your own (updateTotals)
+  local back = CreateFrame("Button", nil, P)
+  back:SetPoint("TOPLEFT", 92, -146)
+  back:SetHeight(14)
+  back.text = UI.text(back, "small")
+  back.text:SetPoint("LEFT")
+  back.text:SetText("Undercut cheapest")
+  back.text:SetTextColor(unpack(PLACE))
+  back:SetWidth(math.max(60, math.ceil(back.text:GetStringWidth() or 0) + 2))
+  back:SetScript("OnClick", function()
     S.userPrice = false
     applySuggestion()
   end)
-  UI.tip(reset, "Back to the suggested price", "Just under the cheapest auction someone else has up.")
+  back:HookScript("OnEnter", function() back.text:SetTextColor(unpack(T.text)) end)
+  back:HookScript("OnLeave", function() back.text:SetTextColor(unpack(PLACE)) end)
+  UI.tip(back, "Undercut cheapest", function()
+    return ("Sets the price to the cheapest live auction minus your undercut (%s)."):format(undercutText())
+  end)
+  back:Hide()
+  f.suggest = back
+
+  -- duration
+  lab("Duration", 300, -80)
+  f.durs = {}
+  for k, d in ipairs(DURATIONS) do
+    local b = needs(UI.button(P, d[2], 40, 24, "small"))
+    b:SetPoint("TOPLEFT", 372 + (k - 1) * 44, -74)
+    UI.place(b, "sell")   -- the picked one lights up in Quick sell's colour: a choice, not a money action
+    b.dur = d[1]
+    b:SetScript("OnClick", function() setDur(d[1]) end)
+    f.durs[k] = b
+  end
 
   -- undercut
-  needs(label(P, "UNDERCUT BY", 330, -144))
+  lab("Undercut by", 300, -124)
   f.cut = needs(UI.input(P, 76, 24, { hint = "1s or 5%", max = 10 }))
-  f.cut:SetPoint("TOPLEFT", 330, -158)
+  f.cut:SetPoint("TOPLEFT", 372, -118)
   f.cut:SetText(undercutShort())
   f.cut:SetScript("OnEnterPressed", function(self)
     local okSet, why = setUndercut(self:GetText())
@@ -1502,19 +1503,19 @@ local function makeFrame()
       .. (priceStep() > 1 and " This auction house only takes whole silver, so prices round down to it." or "")
   end)
 
-  -- where the price comes from, then total and deposit
+  -- where the price comes from, then deposit and total
   f.source = needs(UI.text(P, "mute"))   -- two lines at most: the lone-auction note or a warning can be long
-  f.source:SetPoint("TOPLEFT", 12, -188)
+  f.source:SetPoint("TOPLEFT", 12, -168)
   f.source:SetPoint("RIGHT", P, "RIGHT", -12, 0)
   f.source:SetWordWrap(true)
   if f.source.SetMaxLines then f.source:SetMaxLines(2) end
-  needs(label(P, "TOTAL", 12, -218))
-  f.total = needs(UI.text(P, "big"))
-  f.total:SetPoint("TOPLEFT", 12, -232)
-  -- far enough right for a total in thousands of gold
-  needs(label(P, "DEPOSIT", 230, -218))
+  lab("Deposit", 12, -214)
   f.deposit = needs(UI.text(P, "body"))
-  f.deposit:SetPoint("TOPLEFT", 230, -232)
+  f.deposit:SetPoint("TOPLEFT", 12, -232)
+  -- far enough right of the deposit, with room for a total in thousands of gold before Post
+  lab("Total price", 150, -214)
+  f.total = needs(UI.text(P, "big"))
+  f.total:SetPoint("TOPLEFT", 150, -230)
 
   f.post = UI.button(P, "Post", 150, 30, "primary")
   f.post:SetPoint("BOTTOMRIGHT", -12, 12)
@@ -1549,9 +1550,11 @@ local function makeFrame()
   Lw:SetPoint("TOPLEFT", P, "BOTTOMLEFT", 0, -8)
   Lw:SetPoint("BOTTOMRIGHT", -8, 30)
   f.curBtn = UI.button(Lw, "Current auctions", 128, 22, "small")
+  UI.place(f.curBtn, "sell")   -- the view toggles light up in Quick sell's colour, not the gold of an action
   f.curBtn:SetPoint("TOPLEFT", 10, -8)
   f.curBtn:SetScript("OnClick", function() setView("cur") end)
   f.ownBtn = UI.button(Lw, "Your auctions", 112, 22, "small")
+  UI.place(f.ownBtn, "sell")
   f.ownBtn:SetPoint("LEFT", f.curBtn, "RIGHT", 4, 0)
   f.ownBtn:SetScript("OnClick", function() setView("own") end)
   local refresh = UI.button(Lw, "Refresh", 70, 22, "small")
@@ -1681,8 +1684,8 @@ function ns.raise(f)
   f:SetFrameLevel(math.min(top + 20, 9000))
 end
 
--- A tab after Blizzard's (and after any tab made before it). Shared with Shopping.lua.
-function ns.makeTab(name, text, onClick, onBlizzard)
+-- A tab after Blizzard's (and after any tab made before it), selected in its place's colour. Shared with Shopping.lua.
+function ns.makeTab(name, text, onClick, onBlizzard, place)
   local ah = _G.AuctionHouseFrame
   if not ah then return nil end
   local tabsList = ah.Tabs or {}
@@ -1692,6 +1695,7 @@ function ns.makeTab(name, text, onClick, onBlizzard)
   local templated = okTab and tab ~= nil
   if not templated then tab = UI.button(ah, text, 90, 26) end
   tab:SetID(100)
+  if place then UI.place(tab, place) end
   tab:SetText(text)
   if templated then pcall(PanelTemplates_TabResize, tab, 0) end
   tab:SetPoint("LEFT", last, "RIGHT", templated and -15 or 4, 0)
@@ -1712,7 +1716,7 @@ end
 
 local function makeTab()
   if S.tab then return end
-  S.tab = ns.makeTab("EverlookAuctionsSellingTab", "Quick sell", openSelling, closeSelling)
+  S.tab = ns.makeTab("EverlookAuctionsSellingTab", "Quick sell", openSelling, closeSelling, "sell")
 end
 
 ---------------------------------------------------------------------------------------------------------------------

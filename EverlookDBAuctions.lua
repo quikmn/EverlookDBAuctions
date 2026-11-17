@@ -207,13 +207,14 @@ local function refreshPanel()
     panel.text:SetText(flash.text)
     panel.text:SetTextColor(unpack(flash.color or T.text))
   elseif bad then
+    -- not alarm red: nothing is lost, the prices are as they were; red is kept for real problems
     panel.text:SetText("The last price update was cut off by a reload or closing the AH. Try again.")
-    panel.text:SetTextColor(unpack(T.bad))
+    panel.text:SetTextColor(unpack(T.places.prices))
   else
     flash = nil
     local n = 0
     for _ in pairs(h.items) do n = n + 1 end
-    panel.text:SetText(("%s%s|r · %s items priced · %s"):format(ns.UI.hex(T.accent), house:match("%-(%a+)$") or "?",
+    panel.text:SetText(("%s%s|r · %s items priced · %s"):format(ns.UI.hex(T.places.prices), house:match("%-(%a+)$") or "?",
       num(n), h.scanned and ("updated " .. ago(h.scanned)) or "no update yet"))
     panel.text:SetTextColor(unpack(T.text))
   end
@@ -269,14 +270,14 @@ local function makePanel(parent)
   f:SetHeight(BAR_H)
   if modern then
     grow(parent)
-    -- a raised band across the window's bottom with a gold line on top; the money display sits on it, the bar's
-    -- content to its right
+    -- a raised band across the window's bottom with a line on top in the price updates' colour; the money display
+    -- sits on it, the bar's content to its right
     local band = parent:CreateTexture(nil, "BACKGROUND", nil, -6)
     band:SetPoint("BOTTOMLEFT", 1, 1)
     band:SetPoint("BOTTOMRIGHT", -1, 1)
     band:SetHeight(BAR_H + 2)
     UI.shade(band, T.raised, UI.LIFT)
-    local line = UI.line(parent, true, T.accent, "BORDER")
+    local line = UI.line(parent, true, T.places.prices, "BORDER")
     line:SetPoint("BOTTOMLEFT", band, "TOPLEFT")
     line:SetPoint("BOTTOMRIGHT", band, "TOPRIGHT")
     f:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 182, 2)
@@ -285,8 +286,9 @@ local function makePanel(parent)
     -- the old auction house window: the bar hangs under it
     f:SetPoint("TOPLEFT", parent, "BOTTOMLEFT", 14, -4)
     f:SetPoint("TOPRIGHT", parent, "BOTTOMRIGHT", -40, -4)
-    UI.panel(f, T.bg, T.edge)
+    UI.panel(f, T.bg, T.places.prices)
   end
+  UI.place(f, "prices")   -- the bar's own colour: price updates, not buying or posting
   f:SetFrameLevel(parent:GetFrameLevel() + 200)
   f:EnableMouse(true)
 
@@ -295,7 +297,8 @@ local function makePanel(parent)
   mark:SetPoint("LEFT", 4, 0)
   mark:SetTexture("Interface\\AddOns\\" .. ADDON .. "\\Media\\icon")
 
-  f.button = UI.button(f, "Update prices", 150, 22)
+  -- a small quiet button: updating prices is housekeeping, not a money action like Buy or Post
+  f.button = UI.button(f, "Update prices", 128, 18, "quiet")
   f.button:SetPoint("RIGHT", -2, 0)
   f.button:SetScript("OnClick", function() startScan() end)
   UI.tip(f.button, "Update prices", tipText)
@@ -307,7 +310,7 @@ local function makePanel(parent)
   bar.fill:SetPoint("TOPLEFT", 1, -1)
   bar.fill:SetPoint("BOTTOMLEFT", 1, 1)
   bar.fill:SetWidth(1)
-  bar.fill:SetColorTexture(unpack(T.accent))
+  bar.fill:SetColorTexture(unpack(T.places.prices))
   bar.label = UI.text(bar, "small", "OVERLAY")
   bar.label:SetPoint("CENTER")
   bar.label:SetShadowOffset(0, 0)

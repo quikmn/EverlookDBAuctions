@@ -35,6 +35,17 @@ local T = {
   sheen    = { 1, 1, 1, 0.05 },              -- the light top edge of raised things
   glow     = { 1, 0.82, 0, 0.22 },           -- soft ring around a focused box or an armed button
 }
+-- Where you are: one colour per place of the addon. It shows in the place's thin border, its title text, its tab's
+-- selected line and text, its section headers and the focus ring of its boxes. Gold stays for the one main action of
+-- a screen (Buy, Post, Search...), so money and actions look the same everywhere; this colour only says where you
+-- are. All read at 5:1 or better on the window background and stay apart for red-green and blue-yellow colour
+-- blindness. Blizzard's own views keep their look.
+T.places = {
+  search   = { 0.200, 0.573, 1, 1 },         -- #3392ff  Advanced search and its buy panel: blue
+  sell     = { 0.325, 0.776, 0.573, 1 },     -- #53c692  Quick sell: green
+  shopping = { 0.765, 0.651, 1, 1 },         -- #c3a6ff  Shopping: violet
+  prices   = { 0.561, 0.663, 0.710, 1 },     -- #8fa9b5  price updates (the bar along the bottom): cyan-grey
+}
 ns.T = T
 
 local FLAT = "Interface\\Buttons\\WHITE8x8"
@@ -54,6 +65,25 @@ UI.hex = hex
 function UI.own(f)
   own[f] = true
   return f
+end
+
+-- Marks f as a place (a key of T.places); everything inside it takes that place's colour. Returns the colour.
+function UI.place(f, name)
+  assert(T.places[name], "unknown place " .. tostring(name))
+  f.edbPlace = name
+  return T.places[name]
+end
+
+-- The colour of the place f is in (f or the nearest parent marked with UI.place), else gold; and the place's name.
+function UI.accentOf(f)
+  local depth = 0
+  while type(f) == "table" and depth < 30 do
+    local p = rawget(f, "edbPlace")
+    if p and T.places[p] then return T.places[p], p end
+    f = f.GetParent and f:GetParent() or nil
+    depth = depth + 1
+  end
+  return T.accent
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -240,6 +270,11 @@ local function ring(f)
     t:SetPoint(p[2])
     if p[3] then t:SetHeight(2) else t:SetWidth(2) end
     t:SetColorTexture(unpack(T.glow))
+    r[#r + 1] = t
+  end
+  -- r:EdbColor(c): the ring in a soft tint of c
+  r.EdbColor = function(self, c)
+    for _, t in ipairs(self) do t:SetColorTexture(c[1], c[2], c[3], T.glow[4]) end
   end
   r:Hide()
   return r
@@ -250,7 +285,10 @@ UI.ring = ring
 -- Buttons, by role:
 --   "primary"  the one main action of a panel (Post, Buy, Search): solid gold with dark text
 --   "danger"   something that takes an auction or a list away (Cancel, Delete): red text, a red tint on hover
---   plain      everything else: raised grey; can be a toggle (b:EdbActive(true)) with a gold edge and text
+--   "quiet"    a small housekeeping action that is not about money (Update prices, Try again): no fill, a thin
+--              edge and text in the colour of the place it is in (UI.place), a faint tint on hover; compact text
+--   plain      everything else: raised grey; can be a toggle (b:EdbActive(true)) with a gold edge and text, or in the
+--              colour of its own place when the button itself is marked with UI.place (the Advanced search button)
 -- Add "small" for the compact text in rows and toolbars ("small", "small danger"). An active primary button
 -- (b:EdbActive(true), e.g. Confirm) gets a soft gold ring. Add tooltips with HookScript, so the hover look keeps
 -- working.
@@ -258,6 +296,12 @@ UI.ring = ring
 local function buttonColors(b)
   local enabled = b:IsEnabled()
   local over, down, on = b.edbOver and enabled, b.edbDown and enabled, b.edbOn
+  if b.edbRole == "quiet" then
+    local c = UI.accentOf(b)
+    if not enabled then return { c[1], c[2], c[3], 0 }, T.edge, T.mute end
+    return { c[1], c[2], c[3], down and 0.20 or over and 0.12 or 0 },
+      { c[1], c[2], c[3], over and 1 or 0.55 }, over and T.text or c
+  end
   if not enabled then return b.edbRole == "primary" and T.raised or T.surface, T.edge, T.mute end
   if b.edbRole == "primary" then
     local fill = down and T.accentHi or over and T.accentUp or T.accent
@@ -265,9 +309,10 @@ local function buttonColors(b)
   elseif b.edbRole == "danger" then
     return down and T.input or (over or on) and T.badBg or T.raised, (over or on) and T.bad or T.edge, T.bad
   end
+  local onColor = rawget(b, "edbPlace") and T.places[b.edbPlace] or T.accent
   return down and T.input or (over or on) and T.raisedHi or T.raised,
-    on and T.accent or over and T.edgeHi or T.edge,
-    on and T.accent or T.text
+    on and onColor or over and T.edgeHi or T.edge,
+    on and onColor or T.text
 end
 
 local function drawButton(b, k, c)
@@ -282,16 +327,17 @@ local function buttonState(b, instant)
   fadeTo(b, b.edbCur, { fill = fill, edge = edge, text = text }, drawButton, instant == true)
   local enabled = b:IsEnabled()
   if b.edbRing then b.edbRing:SetShown(b.edbOn and enabled and true or false) end
-  b.edbSheen:SetShown(enabled and not b.edbDown and true or false)
+  b.edbSheen:SetShown(enabled and not b.edbDown and b.edbRole ~= "quiet" and true or false)
 end
 
 function UI.button(parent, label, w, h, kind)
   local b = CreateFrame("Button", nil, parent)
   b:SetSize(w or 100, h or 24)
   kind = kind or ""
-  b.edbRole = kind:find("primary") and "primary" or kind:find("danger") and "danger" or nil
+  b.edbRole = kind:find("primary") and "primary" or kind:find("danger") and "danger"
+    or kind:find("quiet") and "quiet" or nil
   local s = paint(b, T.raised, T.edge)
-  s.lift = LIFT
+  s.lift = b.edbRole ~= "quiet" and LIFT or nil
   b.edbSheen = b:CreateTexture(nil, "BORDER", nil, -7)
   b.edbSheen:SetPoint("TOPLEFT", 1, -1)
   b.edbSheen:SetPoint("TOPRIGHT", -1, -1)
@@ -299,7 +345,7 @@ function UI.button(parent, label, w, h, kind)
   b.edbSheen:SetColorTexture(unpack(T.sheen))
   if b.edbRole == "primary" then b.edbRing = ring(b) end
   local fs = b:CreateFontString(nil, "OVERLAY")
-  fs:SetFontObject(fontObject(kind:find("small") and "small" or "body"))
+  fs:SetFontObject(fontObject((kind:find("small") or kind:find("quiet")) and "small" or "body"))
   if b.edbRole == "primary" then fs:SetShadowOffset(0, 0) end   -- dark text on gold needs no shadow
   fs:SetPoint("LEFT", 4, 0)
   fs:SetPoint("RIGHT", -4, 0)
@@ -337,7 +383,8 @@ function UI.tip(f, title, body)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
--- Edit boxes: dark well, 1 px border that lights up on hover and turns gold while typing. opts.hint shows grey text
+-- Edit boxes: dark well, 1 px border that lights up on hover and, while typing, takes the colour of the place the box
+-- is in (gold outside one). opts.hint shows grey text
 -- while empty; opts.numeric allows digits only; opts.right aligns right; opts.max limits the length.
 -- opts.lines makes a box that many lines tall whose text wraps: still one line of text (Enter runs opts.onEnter
 -- instead of breaking the line, pasted line breaks become spaces), scrolled to keep the cursor in view. Anchor and
@@ -394,8 +441,11 @@ function UI.input(parent, w, h, opts)
   e.edbRing = ring(well)
   local hint
   local function edge()
-    setEdge(well, e:HasFocus() and T.accent or e.edbOver and T.edgeHi or T.edge)
-    e.edbRing:SetShown(e:HasFocus())
+    local focus = e:HasFocus()
+    local c = focus and UI.accentOf(well)
+    setEdge(well, c or e.edbOver and T.edgeHi or T.edge)
+    if c then e.edbRing:EdbColor(c) end
+    e.edbRing:SetShown(focus)
     if hint then hint:SetShown(e:GetText() == "" and not e:HasFocus()) end
   end
   if opts.hint then
@@ -874,7 +924,8 @@ local function styleButton(b)
 end
 
 -- Tabs hang under the frame and overlap their neighbours by 15; the insets leave a 1 px gap between them. The active
--- tab is the surface color with a gold line along its bottom; the others sit darker.
+-- tab is the surface color with a line along its bottom: gold on Blizzard's tabs, the place's colour (and text) on
+-- ours (marked with UI.place); the others sit darker.
 local function tabState(tab, selected)
   if not tabs[tab] then return end
   local s = paint(tab, selected and T.surface or T.bg, T.edge)
@@ -883,9 +934,15 @@ local function tabState(tab, selected)
     s.bar:SetPoint("BOTTOMLEFT", s.fill, 1, 1)
     s.bar:SetPoint("BOTTOMRIGHT", s.fill, -1, 1)
     s.bar:SetHeight(2)
-    s.bar:SetColorTexture(unpack(T.accent))
   end
+  local place = rawget(tab, "edbPlace") and T.places[tab.edbPlace]
+  s.bar:SetColorTexture(unpack(place or T.accent))
   s.bar:SetShown(selected and true or false)
+  local fs = place and tab.GetFontString and tab:GetFontString()
+  if fs then
+    local c = selected and place or (NORMAL_FONT_COLOR and { NORMAL_FONT_COLOR:GetRGB() }) or T.accent
+    fs:SetTextColor(c[1], c[2], c[3], 1)
+  end
   tabs[tab] = selected and "on" or "off"
 end
 
@@ -959,6 +1016,21 @@ local function styleClose(b)
   end
   b:HookScript("OnEnter", function() for _, t in ipairs(lines) do t:SetColorTexture(unpack(T.text)) end end)
   b:HookScript("OnLeave", function() for _, t in ipairs(lines) do t:SetColorTexture(unpack(T.dim)) end end)
+end
+
+-- Your money, bottom left of the auction house: Blizzard's box is shorter than the coins, so they stuck out of its
+-- top. Our box keeps Blizzard's bottom edge and width but is MONEY_BOX_H tall (the 13 px coins and text with room
+-- above and below), and the money sits in its middle, 8 px in from the right, so four-digit gold still fits.
+local MONEY_BOX_H = 24
+local function moneyBox(f)
+  local s = paint(f, T.surface, T.edge)
+  s.fill:ClearAllPoints()
+  s.fill:SetPoint("BOTTOMLEFT")
+  s.fill:SetPoint("BOTTOMRIGHT")
+  s.fill:SetHeight(MONEY_BOX_H)
+  local m = f.MoneyFrame
+  m:ClearAllPoints()
+  m:SetPoint("RIGHT", s.fill, "RIGHT", -8, 0)
 end
 
 local function flatten(f)
@@ -1064,6 +1136,8 @@ local function style(f)
     line:SetPoint("TOPRIGHT", band, "BOTTOMRIGHT")
     onePixel(line, true)
     line:SetColorTexture(unpack(T.edge))
+  elseif f == (_G.AuctionHouseFrame and _G.AuctionHouseFrame.MoneyFrameBorder) and f.MoneyFrame then
+    moneyBox(f)
   else
     paint(f, T.surface, T.edge)
   end

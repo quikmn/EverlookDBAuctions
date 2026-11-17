@@ -16,8 +16,9 @@
 local ADDON, ns = ...
 local UI, T = ns.UI, ns.T
 local V = ns.vendor
-local C_BAD, C_MUTE, C_DIM, C_GOOD, C_INFO, C_ACCENT =
-  UI.hex(T.bad), UI.hex(T.mute), UI.hex(T.dim), UI.hex(T.good), UI.hex(T.info), UI.hex(T.accent)
+local PLACE = T.places.search   -- Advanced search's colour (and its buy panel's): where you are
+local C_BAD, C_MUTE, C_DIM, C_GOOD, C_INFO, C_PLACE =
+  UI.hex(T.bad), UI.hex(T.mute), UI.hex(T.dim), UI.hex(T.good), UI.hex(T.info), UI.hex(PLACE)
 
 local ROW_H = 22
 
@@ -846,7 +847,7 @@ local function render()
       b.name:SetPoint("RIGHT", f, "RIGHT", -12 - BAR_SHIFT, 0)
       local tail = r.err or (ns.num(r.count) .. " found" .. (r.sum and r.count > 1 and (", one of each " .. ns.money(r.sum)) or ""))
       if r.want then tail = "buy " .. ns.num(r.want) .. "   " .. tail end
-      b.name:SetText(C_ACCENT .. r.name .. "|r   " .. C_MUTE .. tail .. "|r")
+      b.name:SetText(C_PLACE .. r.name .. "|r   " .. C_MUTE .. tail .. "|r")
       for c in ipairs(COLS) do b.cells[c]:SetText("") end
       for c in ipairs(VCOLS) do b.vcells[c]:SetText("") end
       b.flag:EdbSet(nil)
@@ -885,7 +886,7 @@ local function render()
     local mark = ""
     if Q.sortCol == h.col then mark = Q.sortDesc and " v" or " ^" end
     h.text:SetText(h.label .. mark)
-    h.text:SetTextColor(unpack(Q.sortCol == h.col and T.accent or T.mute))
+    h.text:SetTextColor(unpack(Q.sortCol == h.col and PLACE or T.mute))
   end
   if f.bar then f.bar:Update() end
   f.more:SetText(#Q.results > n
@@ -952,7 +953,7 @@ end
 -- The line at the panel's top left: where you are.
 function ns.searchCrumb(item)
   if not Q.frame then return end
-  Q.frame.crumb:SetText(C_ACCENT .. "Advanced search|r" .. (item and (C_MUTE .. "  >  |r" .. item) or ""))
+  Q.frame.crumb:SetText(C_PLACE .. "Advanced search|r" .. (item and (C_MUTE .. "  >  |r" .. item) or ""))
 end
 
 -- The Below vendor button: Start buying on a below-vendor list, else Below vendor.
@@ -987,20 +988,20 @@ local EXAMPLES = {
 }
 
 local GUIDE = table.concat({
-  C_ACCENT .. "How it works|r",
+  C_PLACE .. "How it works|r",
   "Searches everything in the last full scan of this auction house (it rescans every 15 minutes while it is open), then asks the auction house about each result. " .. C_INFO .. "Now|r is that live price (from the last 5 minutes); " .. C_INFO .. "Last scan|r is the price at the full scan, grey because it can be out of date. " .. C_INFO .. "none up|r means nobody is selling it now; " .. C_INFO .. "no answer yet|r means the auction house didn't answer, and it is asked again in a minute. Click a result to see its auctions and buy it.",
   "",
-  C_ACCENT .. "Conditions|r   join them with " .. C_INFO .. "and|r, " .. C_INFO .. "or|r, " .. C_INFO .. "not|r and ( )",
+  C_PLACE .. "Conditions|r   join them with " .. C_INFO .. "and|r, " .. C_INFO .. "or|r, " .. C_INFO .. "not|r and ( )",
   C_INFO .. "is|r, " .. C_INFO .. "is not|r   " .. C_INFO .. "gt|r, " .. C_INFO .. "ge|r (at least), " .. C_INFO .. "lt|r, " .. C_INFO .. "le|r (at most)   " .. C_INFO .. "has|r (contains)",
   C_INFO .. "like|r \"*of the bear\"  (* = anything)   " .. C_INFO .. "between|r (20 .. 30)   " .. C_INFO .. "in|r (head, chest)",
   "A word on its own searches names:  " .. C_GOOD .. "wand|r",
   "",
-  C_ACCENT .. "Steps|r   at the end:  " .. C_GOOD .. "type has wand and reqlevel le 29 sort by price|r",
+  C_PLACE .. "Steps|r   at the end:  " .. C_GOOD .. "type has wand and reqlevel le 29 sort by price|r",
   C_INFO .. "sort by|r price   " .. C_INFO .. "sort by|r ilvl desc, price   " .. C_INFO .. "sort desc|r (no column: by price)   " .. C_INFO .. "top|r 10 " .. C_INFO .. "by|r sta   " .. C_INFO .. "count|r",
   "Every search is over items, so there is nothing to put in front. reqlevel is also lvl, lvlreq or reqlvl.",
   "Or click a column header to sort; click again to flip it.",
   "",
-  C_ACCENT .. "Columns|r",
+  C_PLACE .. "Columns|r",
   "name, quality (poor, common, uncommon, rare, epic, legendary), ilvl, reqlevel, category, type (Cloth, Wand, Potion...)",
   "slot: head, neck, shoulder, back, chest, robe, shirt, tabard, wrist, hands, waist, legs, feet, finger, trinket, onehand, twohand, mainhand, offhand, holdable, shield, ranged, wand, thrown, relic, ammo, quiver, bag",
   "price (the cheapest buyout for one), median (the usual price: half the auctions cheaper, half dearer), qty (how many are up), auctions, sell (what a vendor pays), stack (how many fit in a stack)",
@@ -1008,16 +1009,16 @@ local GUIDE = table.concat({
   "Money: 5g, 50s, 1g50s, 1g 50s, 2.5g, 20c. Or another column: " .. C_GOOD .. "price lt vendor|r",
   "Quality also takes colours (grey, white, green, blue, purple, orange); slot takes cloak, ring, helm, gloves, boots, belt, 1h, 2h.",
   "",
-  C_ACCENT .. "Below vendor price|r",
+  C_PLACE .. "Below vendor price|r",
   C_GOOD .. "belowvendor|r lists every auction in the last full scan that is cheaper than a vendor pays and makes at least 10s, biggest total first. Buy them and sell them to any vendor: vendors take no cut. Quest items and items vendors don't buy never count. " .. C_INFO .. "deals|r is how many such auctions, " .. C_INFO .. "dealprofit|r what they make together. Start buying opens them one after another.",
   C_INFO .. "profit|r (vendor price minus the lowest buyout, each) and " .. C_INFO .. "stackprofit|r (for a full stack):  " .. C_GOOD .. "belowvendor and profit ge 10s|r",
   "Elsewhere, a green " .. C_GOOD .. "Below vendor|r tag marks such results.",
   "",
-  C_ACCENT .. "Stats|r",
+  C_PLACE .. "Stats|r",
   "str, agi, sta, int, spi, armor, ap, sp, healing, mp5, defense, dps, hit, crit, block",
   "fire_res, frost_res, nature_res, shadow_res, arcane_res, and " .. C_INFO .. "stats|r (every stat as text: stats has spirit)",
   "",
-  C_ACCENT .. "Examples|r   click one to run it",
+  C_PLACE .. "Examples|r   click one to run it",
 }, "\n")
 
 local function makeGuide(f)
@@ -1130,7 +1131,7 @@ local function makeHeader(f, label, col, right, width, mode)
     end
   end)
   h:SetScript("OnLeave", function(self)
-    self.text:SetTextColor(unpack(Q.sortCol == self.col and T.accent or T.mute))
+    self.text:SetTextColor(unpack(Q.sortCol == self.col and PLACE or T.mute))
     GameTooltip:Hide()
   end)
   Q.headers[#Q.headers + 1] = h
@@ -1201,7 +1202,8 @@ local function makeResults()
   local f = UI.own(CreateFrame("Frame", "EverlookAuctionsQueryResults", area))
   f:SetAllPoints(area)
   f:SetFrameLevel(area:GetFrameLevel() + 200)
-  UI.panel(f, T.bg, T.accent)   -- a gold edge: Advanced search is what's active
+  UI.place(f, "search")
+  UI.panel(f, T.bg, PLACE)   -- the blue edge: you are in Advanced search
   f:EnableMouse(true)
   f:SetScript("OnShow", function() blizzardList(false); blizzardSearch(false); modeButton() end)
   f:SetScript("OnHide", function() blizzardList(true); blizzardSearch(true); modeButton() end)
@@ -1213,7 +1215,7 @@ local function makeResults()
   f.crumb:SetPoint("RIGHT", -12, 0)
   f.crumb:SetJustifyH("LEFT")
   f.crumb:SetWordWrap(false)
-  f.crumb:SetText(C_ACCENT .. "Advanced search|r")
+  f.crumb:SetText(C_PLACE .. "Advanced search|r")
 
   -- the query box across the whole top, two lines tall; under it the status line, with the buttons on the right
   local search   -- Enter and the Search button
@@ -1645,6 +1647,7 @@ local function makeButton()
   local row = ah and ah.SearchBar
   if Q.button or not row then return end
   local b = UI.button(row, "Advanced search", 150, 22)
+  UI.place(b, "search")   -- while open it shows in Advanced search's blue, like our tabs
   b:SetPoint("RIGHT", row, "LEFT", -8, 0)
   b:SetScript("OnClick", function()
     if Q.frame and Q.frame:IsShown() then hideResults() else ns.openSearch() end
