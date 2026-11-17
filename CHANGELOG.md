@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Advanced search: a tooltip search next to a cheaper condition (`has "fire damage" and slot is trinket`) reads only the tooltips of items the other condition leaves open, so the first such search over a whole scan no longer stalls the game while it reads every tooltip.
 - Fixed a Lua error when hovering a button whose tooltip had nothing to say (for example Buy with nothing picked).
 
 - Advanced search finds what an item does, like EverlookDB.com: `effect` holds every Equip:, Use: and Chance on hit: line (`slot is feet and effect has "speed"`, `effect has "chance on hit" and category is Weapon top 10 by dps`), and `text` everything on the item's tooltip: name, stats, binds, effects, set bonuses, flavour text. `has` without a column searches the tooltip: `has "fire damage" and slot is trinket`, also after and, or, not and (, and with `has any (a, b)`. A quoted word on its own still searches names. The guide lists the new columns with examples.

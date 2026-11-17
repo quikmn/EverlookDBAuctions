@@ -101,6 +101,7 @@ def main() -> int:
     failures += buy_decisions()
     failures += ux_flows()
     failures += tooltip_text()
+    failures += tooltip_reads_last()
 
     if failures:
         for f in failures:
@@ -1958,6 +1959,31 @@ def tooltip_text():
     ids4 = ids_of(ns4)
     check(ids4('effect has "Lauftempo"') == [2], "German client: effect from the tooltip")
     check(ids4('effect has "run speed"') == [], "German client: not Data.lua's English lines")
+    return failures
+
+
+def tooltip_reads_last():
+    """A tooltip search with a cheap condition beside it reads only the tooltips the cheap side leaves open, whichever
+    side of and/or it is written on: the first search over a whole scan reads no tooltip it doesn't need."""
+    failures = []
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(TEXT_SETUP, "setup", ns, "enUS")
+    for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    G = lua.globals()
+    rows, head, _m, _v = ns.queryRun('has speed and name has rod')
+    got = [rows[i].id for i in range(1, len(rows) + 1)] if rows is not None else head
+    if got != [2]:
+        failures.append(f"tooltip last: has speed and name has rod found {got}")
+    if G.TIPCALLS != 2:
+        failures.append(f"tooltip last: read {G.TIPCALLS} tooltips, only the two rods' were needed")
+    rows, head, _m, _v = ns.queryRun('has lightning or quality is legendary')
+    got = [rows[i].id for i in range(1, len(rows) + 1)] if rows is not None else head
+    if got != [3]:
+        failures.append(f"tooltip last: or found {got}")
     return failures
 
 

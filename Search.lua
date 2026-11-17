@@ -740,14 +740,28 @@ local function valueOf(row, col, want)
   return numberOf(col, want)
 end
 
+-- A condition that reads tooltips (text, and effect on a non-English client): the first search over a whole scan
+-- reads the game's tooltip of every item it has to look at, so and/or look at the other side first and only read the
+-- tooltips of items that side leaves open (`has "fire damage" and slot is trinket` reads trinkets' tooltips only).
+local function slow(e)
+  if e.k == "and" or e.k == "or" then return slow(e.a) or slow(e.b) end
+  if e.k == "not" then return slow(e.e) end
+  return e.k == "cmp" and (e.col == "text" or (e.col == "effect" and not ENGLISH)) or false
+end
+
 local function test(row, e)
   if e.k == "below" then
     if row.dealN ~= nil then return row.dealN > 0 end
     local p = get(row, "profit")
     return p ~= nil and p > 0
   end
-  if e.k == "and" then return test(row, e.a) and test(row, e.b) end
-  if e.k == "or" then return test(row, e.a) or test(row, e.b) end
+  if e.k == "and" or e.k == "or" then
+    if e.slowFirst == nil then e.slowFirst = slow(e.a) and not slow(e.b) end
+    local a, b = e.a, e.b
+    if e.slowFirst then a, b = b, a end   -- same answer either way: these tests have no side effects on the result
+    if e.k == "and" then return test(row, a) and test(row, b) end
+    return test(row, a) or test(row, b)
+  end
   if e.k == "not" then return not test(row, e.e) end
   local col, op = e.col, e.op
   local kind = KIND[col]
