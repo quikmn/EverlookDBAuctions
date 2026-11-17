@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Price updates: the server allows one about every 15 minutes and counts every request, answered or not; Try again now waits those 15 minutes instead of 1 (asking sooner was ignored, so one cut-off update led to "no answer" after "no answer").
+- The price bar no longer shows a made-up percentage while waiting: it says it is asking the server and for how long, then counts the auctions actually read.
+- /eah status lists the last price updates and how each ended.
+- Your money at the bottom left: the whole box, gold edge included, is now tall enough for the coins.
+
 - Blizzard's Cancel Auction button no longer sits on top of the price bar's button: Blizzard's Auctions and Sell views now end above the bar.
 - Quick sell, Shopping and Advanced search are washed in their own colour (green, violet, blue) with a thicker coloured border and a coloured window title, so you always see where you are.
 

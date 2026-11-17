@@ -156,9 +156,16 @@ local function setStatus(text, color)
   flash = text and text ~= "" and { text = text, color = color, till = GetTime() + FLASH_FOR } or nil
 end
 
-local RETRY_AFTER = 60          -- an update that didn't finish can be tried again by hand after a minute
 
 -- An update was started but never finished (UI reloaded, auction house closed, or no answer from the server).
+-- The last 20 price updates on this house and how each ended, for /eah status: { at, how, secs }.
+local function logScan(h, how)
+  h.log = h.log or {}
+  table.insert(h.log, 1, { at = time(), how = how, secs = h.tried and (time() - h.tried) or nil })
+  while #h.log > 20 do table.remove(h.log) end
+end
+ns.logScan = logScan
+
 local function unfinished(h)
   return not scan and h.tried ~= nil and (not h.scanned or h.scanned < h.tried)
 end
@@ -166,7 +173,9 @@ end
 -- Seconds until Update prices may be used again.
 local function scanWait(h)
   if not h.tried then return 0 end
-  return h.tried + (unfinished(h) and RETRY_AFTER or SCAN_COOLDOWN) - time()
+  -- the server counts every request against its 15 minutes, answered or not: asking again sooner only gets ignored
+  -- (that is how one cut-off update turned into "no answer" after "no answer")
+  return h.tried + SCAN_COOLDOWN - time()
 end
 
 -- How long an update should take: as long as the last one on this house, else about 30 seconds.
@@ -190,15 +199,16 @@ local function refreshPanel()
   local h = getHouse(house)
   if scan then
     local took = time() - scan.started
-    local est = expected(h)
-    local pct = math.min(0.95, took / est)
+    local pct = scan.total and scan.total > 0 and math.min(0.99, (scan.done or 0) / scan.total) or 0
     local text
-    if yielding() then
+    if not scan.reading then
+      -- nothing has come back yet: say so, with the time waited, not a made-up percentage
+      text = ("Asking the server for the full auction list… %d:%02d (it answers within about a minute, or not at all)")
+        :format(math.floor(took / 60), took % 60)
+    elseif yielding() then
       text = "Updating prices… paused while you buy, post or cancel"
-    elseif est - took >= 2 then
-      text = ("Updating prices… about %d seconds left · keep browsing"):format(est - took)
     else
-      text = "Updating prices… almost done · keep browsing"
+      text = ("Updating prices… read %s of %s auctions · keep browsing"):format(num(scan.done or 0), num(scan.total or 0))
     end
     panel.text:SetText(text)
     panel.text:SetTextColor(unpack(T.text))
@@ -206,7 +216,7 @@ local function refreshPanel()
     local bar = panel.bar
     bar:Show()
     bar.fill:SetWidth(math.max(1, (bar:GetWidth() - 2) * pct))
-    bar.label:SetText(("%d%%"):format(pct * 100))
+    bar.label:SetText(scan.reading and ("%d%%"):format(pct * 100) or "waiting")
     bar.label:SetTextColor(unpack(pct >= 0.5 and T.onAccent or T.text))
     return
   end
@@ -254,14 +264,15 @@ local function grow(ah)
     if ah.CategoriesList then ah.CategoriesList:SetHeight(ah.CategoriesList:GetHeight() + BAR_H) end
     -- Blizzard's Auctions view ends at the money display and hangs its Cancel Auction button 22 px below that, in the
     -- bottom strip where our bar now sits; lift the views that end at the money display above the bar instead
-    for _, key in ipairs({ "AuctionsFrame", "ItemSellFrame" }) do
+    -- (by the button's 22 px plus a gap; Blizzard's Sell view keeps its place: its Post button sits inside it)
+    for _, key in ipairs({ "AuctionsFrame" }) do
       local v = ah[key]
       if v then
         local pts = {}
         for i = 1, v:GetNumPoints() do pts[i] = { v:GetPoint(i) } end
         v:ClearAllPoints()
         for _, p in ipairs(pts) do
-          if p[1] == "BOTTOM" and (p[2] == ah.MoneyFrameBorder or p[2] == ah) then p[5] = (p[5] or 0) + BAR_H end
+          if p[1] == "BOTTOM" and (p[2] == ah.MoneyFrameBorder or p[2] == ah) then p[5] = (p[5] or 0) + 24 end
           v:SetPoint(unpack(p))
         end
       end
@@ -498,6 +509,7 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       if it[1] then noteDay(h, id, it[1], day) end
     end
     h.scanned = now
+    logScan(h, "done")
     pruneDays(h)
     local build = select(2, GetBuildInfo())
     table.insert(db.scans, {
@@ -572,13 +584,14 @@ local function processList(total, first, read)
   if total <= 0 then
     -- an empty answer (refused or not loaded): never let it wipe the saved prices
     scan = nil
-    if house then getHouse(house).why = "empty" end
+    if house then getHouse(house).why = "empty"; logScan(getHouse(house), "empty list") end
     setStatus("The server sent an empty list. Prices were left as they were.", ns.T.bad)
     say("the server sent an empty auction list; prices were left as they were.")
     refreshPanel()
     return
   end
   local h = getHouse(house)
+  scan.total, scan.done = total, 0
   local vars, requested = {}, {}
   local unlinked = {}   -- item ID -> auctions that never got a link
   linkSamples = {}
@@ -597,6 +610,7 @@ local function processList(total, first, read)
       -- the auction house closed while reading: keep the old prices rather than half a scan
       scan = nil
       h.why = "closed"
+      logScan(h, "AH closed while reading")
       say("the full scan stopped because the auction house closed; prices were left as they were.")
       return true
     end
@@ -631,6 +645,7 @@ local function processList(total, first, read)
         end
       end
       i = stop + 1
+      if not list and scan then scan.done = math.min(stop, n) end
       if i > n then done(missing) else C_Timer.After(0, step) end
     end
     step()
@@ -704,6 +719,7 @@ function startScan(auto)
     if scan == mine and not mine.reading then
       scan = nil
       h.why = "noanswer"
+      logScan(h, "no answer")
       setStatus("No answer from the server. Prices were left as they were.", ns.T.bad)
       say("the server didn't send the auction list (it may limit full scans). Try again later.")
       refreshPanel()
@@ -901,7 +917,7 @@ function events.AUCTION_HOUSE_CLOSED()
       scan.aborted = true
     else
       scan = nil
-      if house then getHouse(house).why = "closed" end
+      if house then getHouse(house).why = "closed"; logScan(getHouse(house), "AH closed while waiting") end
     end
   end
   house = nil
@@ -1022,6 +1038,10 @@ function showStatus()
     local n = 0
     for _ in pairs(h.items) do n = n + 1 end
     print(("  %s: %s items priced, %s"):format(key, num(n), h.scanned and ("last full scan " .. ago(h.scanned)) or "no full scan yet"))
+    for i, e in ipairs(h.log or {}) do
+      if i > 8 then break end
+      print(("    %s: %s%s"):format(ago(e.at), e.how, e.secs and (" after " .. e.secs .. " s") or ""))
+    end
     any = true
   end
   if not any then print("  no prices yet: open the auction house and let it update prices, or just search.") end

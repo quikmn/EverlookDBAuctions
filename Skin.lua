@@ -1046,14 +1046,16 @@ end
 -- above and below), and the money sits in its middle, 8 px in from the right, so four-digit gold still fits.
 local MONEY_BOX_H = 24
 local function moneyBox(f)
+  -- the frame itself grows (it is anchored by its bottom, so it grows upward): Blizzard's own gold edge stretches
+  -- with it, and box, edge and coins share one middle. Growing only our fill left the 19 px gold edge behind, and the
+  -- coins, centred in the taller fill, stuck out of its top.
+  f:SetHeight(MONEY_BOX_H)
   local s = paint(f, T.surface, T.edge)
   s.fill:ClearAllPoints()
-  s.fill:SetPoint("BOTTOMLEFT")
-  s.fill:SetPoint("BOTTOMRIGHT")
-  s.fill:SetHeight(MONEY_BOX_H)
+  s.fill:SetAllPoints(f)
   local m = f.MoneyFrame
   m:ClearAllPoints()
-  m:SetPoint("RIGHT", s.fill, "RIGHT", -8, 0)
+  m:SetPoint("RIGHT", f, "RIGHT", -8, 0)
 end
 
 local function flatten(f)
