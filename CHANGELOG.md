@@ -1,5 +1,9 @@
 # EverlookDB Auctions
 
+## Unreleased
+
+- The settings window has a search box at the top: type to find any setting.
+
 ## v0.9.0 (2026-11-17)
 
 - Full scans for EverlookDB.com are kept for 7 days instead of only the newest 4, so none are lost when they can't be uploaded for a while (up to 60 scans, about 20 MB). Only the newest scan of each auction house is kept as it was; older ones are packed into a compressed line of text, about a quarter of the size.

@@ -39,7 +39,7 @@ local function build()
 
   -- selling
   app:Setting({
-    key = "undercut", type = "string", label = "Undercut by", width = 120, placeholder = "1s or 5%",
+    key = "undercut", type = "string", label = "Undercut by", keywords = { "price", "cheaper", "under", "posting" }, width = 120, placeholder = "1s or 5%",
     desc = "How far under the cheapest auction Quick sell and Blizzard's Sell tab price: 1s, 50c, 1g, 5%, or 0 to match it.",
     example = "1s",
     get = function() return ns.undercutShort() end,
@@ -50,7 +50,7 @@ local function build()
     after = function() if ns.undercutChanged then ns.undercutChanged() end end,
   })
   app:Setting({
-    key = "duration", type = "choice", label = "Default duration", width = 160,
+    key = "duration", type = "choice", label = "Default duration", keywords = { "time", "hours", "length", "posting" }, width = 160,
     desc = "For items you haven't posted before; the others keep the duration you used last.",
     choices = { { value = 12, text = "12 hours" }, { value = 24, text = "24 hours" }, { value = 48, text = "48 hours" } },
     get = function() return HOURS[(ns.sellSettings() or {}).duration or 1] or 12 end,
@@ -63,7 +63,7 @@ local function build()
   -- tooltips
   for _, t in ipairs(TIP_LINES) do
     app:Setting({
-      key = t[1], type = "bool", label = t[3], chatLabel = "Tooltip line: " .. t[3]:lower(),
+      key = t[1], type = "bool", label = t[3], chatLabel = "Tooltip line: " .. t[3]:lower(), keywords = { "tooltip", t[2] },
       get = function() return ns.tipOn(t[2]) end,
       set = function(v)
         local d = db()
@@ -76,17 +76,17 @@ local function build()
   -- general
   app:Setting({
     key = "auto", type = "bool", label = "Update prices by themselves while the auction house is open (every 15 minutes)",
-    chatLabel = "Automatic price updates",
+    chatLabel = "Automatic price updates", keywords = { "scan", "automatic", "refresh", "auto" },
     get = function() return db().auto ~= false end,
     set = function(v) db().auto = v end,
   })
   app:Setting({
-    key = "skin", type = "bool", label = "EverlookDB look for Blizzard's auction house (after /reload)",
+    key = "skin", type = "bool", label = "EverlookDB look for Blizzard's auction house (after /reload)", keywords = { "skin", "theme", "style" },
     get = function() return db().skin ~= false end,
     set = function(v) db().skin = v end,
   })
   app:Setting({
-    key = "crafting", type = "bool", label = "Crafting cost beside the profession window",
+    key = "crafting", type = "bool", label = "Crafting cost beside the profession window", keywords = { "reagents", "materials", "profit", "tradeskill" },
     get = function() return db().craft ~= false end,
     set = function(v) db().craft = v end,
     after = function() if ns.craftRefresh then ns.craftRefresh() end end,
