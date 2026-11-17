@@ -386,7 +386,7 @@ local function prepare(g)
     or (g.key == g.id .. ":0" and try(AH.MakeItemKey, g.id, 0, 0, 0)) or nil
   g.ckey = ckey(g.itemKey)
   local info = ns.itemInfo and ns.itemInfo(g.id)
-  g.vendor = info and info[9] or 0
+  g.vendor = info and info[9] or nil   -- nil: not loaded yet (shown as …), 0: vendors don't buy it
   g.de = ns.disenchantValue and ns.disenchantValue(g.id)
 end
 
@@ -682,6 +682,25 @@ local function updateTotals()
   if f.net then
     f.net:SetText((unit > 0 and qty > 0)
       and ("You get %s after the %d%% AH cut."):format(money(net * qty), cut * 100) or "")
+  end
+  if f.vendorPrice then
+    local v = g.vendor
+    if v == nil then
+      f.vendorPrice:SetText("…")
+      f.vendorNote:SetText("")
+    elseif v <= 0 then
+      f.vendorPrice:SetText(UI.hex(T.dim) .. "Can't|r")
+      f.vendorNote:SetText(UI.hex(T.dim) .. "vendors won't buy it|r")
+    else
+      f.vendorPrice:SetText(money(v))
+      if unit <= 0 then
+        f.vendorNote:SetText("")
+      elseif v >= net then
+        f.vendorNote:SetText(UI.hex(T.bad) .. "pays more than the AH|r")
+      else
+        f.vendorNote:SetText(UI.hex(T.good) .. "AH pays " .. money(net - v) .. " more|r")
+      end
+    end
   end
   local warn = (unit > 0 and qty > 0) and depositWarning(dep, unit * qty, (g.vendor or 0) * qty) or nil
   if warn then
@@ -1327,12 +1346,43 @@ local function makeFrame()
   f.icon:SetPoint("TOPLEFT", 12, -12)
   f.name = UI.text(P, "big")
   f.name:SetPoint("TOPLEFT", 66, -16)
-  f.name:SetPoint("RIGHT", P, "RIGHT", -180, 0)
+  f.name:SetPoint("RIGHT", P, "RIGHT", -310, 0)
+  f.name:SetWordWrap(false)
   f.sub = UI.text(P, "dim")
   f.sub:SetPoint("TOPLEFT", f.name, "BOTTOMLEFT", 0, -7)
-  f.sub:SetPoint("RIGHT", P, "RIGHT", -180, 0)
+  f.sub:SetPoint("RIGHT", P, "RIGHT", -310, 0)
   f.sub:SetWordWrap(true)
   if f.sub.SetMaxLines then f.sub:SetMaxLines(2) end
+
+  -- the picked item's tooltip on the icon and the name, like anywhere else in the game (vendor price included)
+  local hover = needs(CreateFrame("Frame", nil, P))
+  hover:SetPoint("TOPLEFT", f.icon, "TOPLEFT")
+  hover:SetPoint("BOTTOMRIGHT", f.sub, "BOTTOMRIGHT")
+  hover:EnableMouse(true)
+  hover:SetScript("OnEnter", function(self)
+    local g = S.sel
+    if not g then return end
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    if not (g.link and pcall(GameTooltip.SetHyperlink, GameTooltip, g.link)) then pcall(GameTooltip.SetItemByID, GameTooltip, g.id) end
+    GameTooltip:Show()
+  end)
+  hover:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+  -- what a vendor pays, big and next to the 30-day low: the first thing to weigh before posting at all
+  local vb = needs(CreateFrame("Frame", nil, P))
+  vb:SetPoint("TOPRIGHT", -176, -10)
+  vb:SetSize(120, 48)
+  local vl = UI.label(vb, "SELLS TO VENDOR")
+  vl:SetPoint("TOPLEFT", 0, 0)
+  f.vendorPrice = UI.text(vb, "big")
+  f.vendorPrice:SetPoint("TOPLEFT", vl, "BOTTOMLEFT", 0, -6)
+  f.vendorNote = UI.text(vb, "small")
+  f.vendorNote:SetPoint("TOPLEFT", f.vendorPrice, "BOTTOMLEFT", 0, -3)
+  f.vendorNote:SetPoint("RIGHT", vb, "RIGHT", 0, 0)
+  f.vendorNote:SetJustifyH("LEFT")
+  vb:EnableMouse(true)
+  UI.tip(vb, "Sells to vendor", "What a vendor pays for one, right now and with no fee. If it is close to what the "
+    .. "auction house gets you after its cut, selling to a vendor is the safer choice: no deposit to lose, no wait.")
 
   -- 30-day price chart
   local sp = needs(CreateFrame("Frame", nil, P))

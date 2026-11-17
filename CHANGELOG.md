@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Quick sell: hovering the picked item's icon or name shows its tooltip; a big "Sells to vendor" box next to the 30-day low shows what a vendor pays and whether the auction house pays more after its cut.
+
 - Tab text stays in the middle of the tab when the tab is selected (it dropped to the bottom edge).
 
 - Price updates: the server allows one about every 15 minutes and counts every request, answered or not; Try again now waits those 15 minutes instead of 1 (asking sooner was ignored, so one cut-off update led to "no answer" after "no answer").
