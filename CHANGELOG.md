@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.10.1 (2026-11-18)
 
 - Settings: an AI help button copies a description of every setting for an AI assistant, and `/eah apply` runs the commands it gives back.
 
