@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Blizzard's commodity list (cloth, herbs, ore): clicking a row there sets Quantity to everything at or below that price and marks all those rows, because commodities always sell cheapest first. When a click picks more than one row, a line under Buy now says so: "Quantity set to 655: every one up to 4s 99c each, from 9 rows, about 32g 28s." Typing another quantity takes it away.
 - Chat commands now follow one pattern across all EverlookDB addons: `/eah help` (or `?`) lists them in the same format as the others; `get` and `set <setting> <value>`; `search <words>`; `status` now starts with the version; `version`; a mistyped command suggests the nearest one. Every old command still works.
 - Tooltip lines now share one tidy layout with the other EverlookDB addons: labels left, prices right, in a fixed order (auction house, 30-day low and median, disenchant, vendor), after a blank line. The auction line reads "Auction house  3,365 listed · 76 min ago" instead of "AH (3365 up, 76 min ago)"; the 30-day line sits indented under it. Money everywhere rounds the same way: copper dropped from 1g, silver from 1,000g.
 - New option, Tooltips page: show tooltip details (the 30-day low and median) always, as before, or only while Shift is held.

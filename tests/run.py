@@ -105,6 +105,7 @@ def main() -> int:
     failures += shared_tooltip()
     failures += reload_logged()
     failures += scan_storage()
+    failures += commodity_note()
 
     if failures:
         for f in failures:
@@ -2329,6 +2330,38 @@ def scan_storage():
     out = "\n".join(G.PRINTED[i] for i in range(1, len(G.PRINTED) + 1))
     check("2 scans from this session not on disk yet" in out and "/reload" in out, f"/eah status lists them: {out}")
     check("full scans kept for EverlookDB.com: 3" in out, "/eah status counts the scans kept")
+    return failures
+
+
+def commodity_note():
+    """Blizzard's commodity list: what a click there sets, and the line that says so."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "CommodityNote.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    N = ns.commodityNote
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("commodity note: " + what)
+
+    # the Bolt of Woolen Cloth list from the report: a click on 4s 99c set Quantity to 655
+    res = lua.eval("""{ {quantity=27,unitPrice=476}, {quantity=37,unitPrice=477}, {quantity=21,unitPrice=478},
+      {quantity=10,unitPrice=479}, {quantity=88,unitPrice=489}, {quantity=84,unitPrice=490}, {quantity=37,unitPrice=494},
+      {quantity=58,unitPrice=497}, {quantity=293,unitPrice=499}, {quantity=3,unitPrice=500} }""")
+    got, cost, top, rows = N.cost(res, 655)
+    want = 27*476 + 37*477 + 21*478 + 10*479 + 88*489 + 84*490 + 37*494 + 58*497 + 293*499
+    check(got == 655 and cost == want and top == 499 and rows == 9, f"655 cheapest first: {got} {cost} {top} {rows}")
+    got, cost, top, rows = N.cost(res, 20)
+    check(got == 20 and cost == 20*476 and rows == 1, "inside the first row: one row")
+    got, _, _, _ = N.cost(res, 10000)
+    check(got == 658, "more than for sale: only what is listed")
+    t = N.text(655, want, 499, 9)
+    check("655" in t and "9 rows" in t and "cheapest first" in t, f"the line: {t}")
     return failures
 
 
