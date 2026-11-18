@@ -1,5 +1,9 @@
 # EverlookDB Auctions
 
+## Unreleased
+
+- Settings: an AI help button copies a description of every setting for an AI assistant, and `/eah apply` runs the commands it gives back.
+
 ## v0.10.0 (2026-11-18)
 
 - Blizzard's commodity list (cloth, herbs, ore): clicking a row there sets Quantity to everything at or below that price and marks all those rows, because commodities always sell cheapest first. When a click picks more than one row, a line under Buy now says so: "Quantity set to 655: every one up to 4s 99c each, from 9 rows, about 32g 28s." Typing another quantity takes it away.
