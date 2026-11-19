@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.12.3 (2026-11-19)
 - The vendor price line only steps aside when the game's own Sell Price is really on the tooltip (a leftover from an earlier tooltip could hide it on quest rewards). `/eah tipdebug` prints what the next item tooltip saw.
 
 ## v0.12.2 (2026-11-19)
