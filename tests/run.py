@@ -1356,8 +1356,10 @@ def buy_panel():
         return lua.table(auctionID=aid, buyoutAmount=buyout, quantity=qty, containsOwnerItem=False, timeLeft=3)
 
     # Start buying on Old Sword (vendor 500c): its cheapest auction under vendor price is picked, one click buys it
-    G.ITEMS = tbl(auction(1, 300, 3), auction(2, 600))
+    G.ITEMS = tbl(auction(1, 300, 3), auction(2, 600))   # 300c each, 3 up
     deal_list = tbl(lua.table(header=True), lua.table(id=3000, name="Old Sword", quality="uncommon"))
+    last_query = ns.lastQuery
+    ns.lastQuery = lua.eval('function() return "profit > 0" end')   # a 5s sword never clears the 10s bar
     ns.startDeals(deal_list)
     f = G.EverlookAuctionsQueryResults.children[1]
     check(ns.buyOpen is True and f.shown, "a header row is skipped and the item opens")
@@ -1398,6 +1400,7 @@ def buy_panel():
     ns.db().itemInfo[424242] = lua.eval('{ "Mystery", 1, 1, 0, "Trade Goods", "Cloth", "", 1, 5000, 1 }')
     G.advance(1)
     check(f.status.text.startswith("Picked"), f"picked once the price came: {f.status.text}")
+    ns.lastQuery = last_query
 
     # the version's own part of its name in the row
     G.AHQ.showAll = True
@@ -1492,9 +1495,10 @@ def buy_decisions():
             failures.append("buy decisions: " + what)
 
     # the 10s bar: per auction for items, together for stackable goods
-    rows = tbl(lua.table(unit=100, buyout=100, qty=1), lua.table(unit=100, buyout=300, qty=3))
-    pick = V.nextDeal(rows, 500, False, V.MIN_DEAL)
-    check(pick is not None and pick.qty == 3, "an item: the first auction making 10s, not one making 4s")
+    # an item row is priced per item and one click buys one, so how many are up doesn't add to the profit
+    rows = tbl(lua.table(unit=600, buyout=600, qty=5), lua.table(unit=400, buyout=400, qty=1))
+    pick = V.nextDeal(rows, 1500, False, V.MIN_DEAL)
+    check(pick is not None and pick.unit == 400, "an item: the first auction making 10s on its own, not 5 up making 9s each")
     check(V.nextDeal(tbl(lua.table(unit=100, buyout=100, qty=1)), 500, False, V.MIN_DEAL) is None, "4s: nothing")
     check(V.nextDeal(tbl(lua.table(unit=100, buyout=100, qty=1)), 500, False, 0) is not None, "no bar: taken")
     goods = tbl(lua.table(unit=10, qty=20, others=20))

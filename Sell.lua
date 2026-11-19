@@ -466,7 +466,8 @@ local function readItems(k)
       local buy = okv(r.buyoutAmount)
       local mine = okv(r.containsOwnerItem) == true
       rows[#rows + 1] = {
-        unit = (buy and buy > 0) and math.floor(buy / math.max(1, q)) or nil, qty = q, others = mine and 0 or q,
+        -- buyoutAmount is per item here: quantity is how many are up at that price (WoW Forever posts one per auction)
+        unit = (buy and buy > 0) and buy or nil, qty = q, others = mine and 0 or q,
         mine = mine, left = okv(r.timeLeftSeconds), band = okv(r.timeLeft),
       }
     end

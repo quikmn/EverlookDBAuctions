@@ -62,7 +62,7 @@ local function itemRows(itemKey)
       local vname
       if link then vname = select(3, ns.variantOf(B.id, link)) end
       rows[#rows + 1] = {
-        auctionID = okv(r.auctionID), buyout = buy, unit = buy and math.floor(buy / math.max(1, q)), qty = q,
+        auctionID = okv(r.auctionID), buyout = buy, unit = buy, qty = q,   -- the buyout is per item; quantity is how many are up
         mine = okv(r.containsOwnerItem) == true, left = okv(r.timeLeftSeconds), band = okv(r.timeLeft), link = link,
         vname = vname,
       }
@@ -249,7 +249,7 @@ local function buyItem()
   if okCall then
     local id = r.auctionID
     B.pending, B.late = id, nil
-    B.buying = { qty = r.qty, cost = r.buyout }
+    B.buying = { qty = B.commodity and r.qty or 1, cost = r.buyout }   -- an item row's buyout buys one of them
     setStatus(("Buying for %s..."):format(money(r.buyout)), T.dim)
     -- no word back in time: say so (it may still go through) and look again
     C_Timer.After(5, function()
@@ -407,7 +407,7 @@ local function fillRow(b, r)
     b.tag:SetPoint("LEFT", b.price, "RIGHT", 10, 0)
   end
   b.qty:SetText(num(r.qty))
-  b.total:SetText((not B.commodity and r.buyout and r.qty > 1) and money(r.buyout) or "")
+  b.total:SetText("")   -- item rows are priced per item: one click buys one
   b.left:SetText(fmtLeft(r.left, r.band))
   b:EdbSelect(B.sel == r)
 end
@@ -453,7 +453,7 @@ function render()
     local r = B.sel
     local text = ""
     if r and r.buyout then
-      text = ("%s: %s for %s"):format(r.mine and "Your auction" or "Picked", num(r.qty), money(r.buyout))
+      text = ("%s: %s for %s"):format(r.mine and "Your auction" or "Picked", num(B.commodity and r.qty or 1), money(r.buyout))
       if not r.mine and GetMoney() < r.buyout then text = text .. "  " .. UI.hex(T.bad) .. "not enough money|r" end
     elseif r then
       text = "Bids only: no buyout. Bid in Blizzard search."
@@ -702,7 +702,7 @@ function dealPick()
   else
     B.sel, B.dealSel = pick, pick
     setStatus(("Picked: %s, vendor pays %s. One click on Buy buys it.  %s"):format(
-      money(pick.buyout), money(sell * pick.qty), tally), T.accent)
+      money(pick.buyout), money(sell), tally), T.accent)
   end
   render()
 end

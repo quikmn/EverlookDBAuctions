@@ -161,7 +161,7 @@ function V.nextDeal(rows, sell, commodity, minProfit)
     return nil
   end
   for _, r in ipairs(rows or {}) do
-    if not r.mine and r.unit and r.buyout and r.unit < sell and (sell - r.unit) * (r.qty or 1) >= minProfit then
+    if not r.mine and r.unit and r.buyout and r.unit < sell and sell - r.unit >= minProfit then   -- one item per click
       return r
     end
   end
@@ -201,7 +201,7 @@ function V.rowPrice(d)
   local unit = ok(d.unitPrice) or ok(d.minPrice)
   if not unit then
     local buy = ok(d.buyoutAmount)
-    if buy then unit = math.floor(buy / math.max(1, q or 1)) end
+    if buy then unit = buy end   -- an item row: the buyout is per item, quantity is how many are up
   end
   return id, unit
 end

@@ -1215,6 +1215,13 @@ local function onShow(retried)
   end
 end
 
+local FIX_FROM = 20773   -- 2026-11-16 (days since 1970, UTC): the day before v0.10.0 shipped
+local function maxStackOf(id)
+  local okS, n = pcall(C_Item.GetItemMaxStackSizeByID or function() return nil end, id)
+  if okS and type(n) == "number" then return n end
+  return nil
+end
+
 local events = {}
 
 function events.ADDON_LOADED(name)
@@ -1229,6 +1236,20 @@ function events.ADDON_LOADED(name)
   for _, h in pairs(db.houses) do
     h.items, h.days = h.items or {}, h.days or {}
     pruneDays(h)
+    -- v0.10.0-v0.12.0 divided an item's live price by how many were up (39s with 19 up became 2s 5c) and saved that as
+    -- the item's price and day low. Once: drop search-saved prices and day lows since then for items that don't stack
+    -- (those are never commodities, so they're the ones affected); the next update puts the real ones back.
+    if not db.fixedLiveUnit then
+      for id, v in pairs(h.items) do
+        if type(v) == "table" and v[3] == nil and (v[4] or 0) >= FIX_FROM * 86400 and maxStackOf(id) == 1 then h.items[id] = nil end
+      end
+      for id, d in pairs(h.days) do
+        if maxStackOf(id) == 1 then
+          for day in pairs(d) do if day >= FIX_FROM then d[day] = nil end end
+          if next(d) == nil then h.days[id] = nil end
+        end
+      end
+    end
     -- an update that was running when the UI reloaded or the game closed ended without a word: log it once
     if h.tried and (not h.scanned or h.scanned < h.tried) and not h.why then
       h.why = "reload"
@@ -1237,6 +1258,7 @@ function events.ADDON_LOADED(name)
       while #h.log > 20 do table.remove(h.log) end
     end
   end
+  db.fixedLiveUnit = true
   hookTooltips()
 end
 
