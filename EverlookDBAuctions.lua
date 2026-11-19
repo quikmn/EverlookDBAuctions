@@ -15,6 +15,9 @@
 local ADDON, ns = ...
 local VERSION = 2
 local SCAN_COOLDOWN = 15 * 60   -- the server allows one full scan about every 15 minutes
+-- Automatic updates leave every other window free: other addons (Cheap Upgrades, Auctionator...) need the same full
+-- scan, and the server allows one per 15 minutes for everyone, so ours runs every 30 and theirs fit in between.
+local AUTO_EVERY = 30 * 60
 local SCAN_TIMEOUT = 90         -- no answer by then: the server refused (throttled) or the AH closed
 local BATCH = 1000              -- auctions read per frame, so a big scan doesn't freeze the game
 local LOADS_PER_STEP = 15       -- item-detail requests per frame: a flood of them delays the player's own buys and posts
@@ -279,8 +282,8 @@ local function refreshPanel()
   local wait = scanWait(h)
   if wait > 0 then
     panel.button:Disable()
-    -- "Next update" only when one will start by itself; with automatic updates off it is when one may be started
-    local lead = bad and "Try again in" or db.auto == false and "Allowed in" or "Next update"
+    -- the manual button's wait (15 minutes); the automatic one comes later (30), so this is when you may start one
+    local lead = bad and "Try again in" or "Allowed in"
     panel.button:SetText(("%s %d:%02d"):format(lead, math.floor(wait / 60), wait % 60))
   else
     panel.button:Enable()
@@ -333,7 +336,7 @@ local function tipText()
   if db.auto == false then
     return ("Automatic updates are off: press Update prices, or type /eah auto on. An update reads every auction on this auction house in about %d seconds, and you can keep buying and selling meanwhile. The server allows one about every 15 minutes."):format(secs)
   end
-  return ("Prices update by themselves when you open the auction house and every 15 minutes while it is open. An update reads every auction in about %d seconds, and you can keep buying and selling meanwhile."):format(secs)
+  return ("Prices update by themselves when you open the auction house and every 30 minutes while it is open, which leaves other addons room for their own scans in between. An update reads every auction in about %d seconds, and you can keep buying and selling meanwhile."):format(secs)
 end
 
 local function makePanel(parent)
@@ -399,7 +402,7 @@ local function makePanel(parent)
   f.text:SetWordWrap(false)
   UI.tip(f, "Auction prices", tipText)
 
-  -- the countdown on the button and the progress bar, and a fresh update every 15 minutes while the auction house
+  -- the countdown on the button and the progress bar, and a fresh update every 30 minutes while the auction house
   -- is open (this only runs while the bar, and so the auction house, is shown)
   local acc = 0
   f:SetScript("OnUpdate", function(_, dt)
@@ -409,7 +412,7 @@ local function makePanel(parent)
     refreshPanel()
     if db.auto ~= false and not scan and house then
       local h = getHouse(house)
-      if h.tried and time() - h.tried >= SCAN_COOLDOWN then startScan(true) end
+      if h.tried and time() - h.tried >= AUTO_EVERY then startScan(true) end
     end
   end)
   return f
@@ -1095,11 +1098,11 @@ local function onShow(retried)
   if parent and not panel then panel = makePanel(parent) end
   setStatus(nil)
   refreshPanel()
-  -- Automatic full scan when the last one is 15+ minutes old (db.auto, on by default; /eah auto off).
+  -- Automatic full scan when the last one is 30+ minutes old (db.auto, on by default; /eah auto off).
   -- A short wait first, so the auction house window finishes opening before the list comes in.
   if db.auto ~= false and not scan then
     local h = getHouse(house)
-    if not h.tried or time() - h.tried >= SCAN_COOLDOWN then
+    if not h.tried or time() - h.tried >= AUTO_EVERY then
       C_Timer.After(1.5, function()
         if house and not scan and ahFrame() and ahFrame():IsShown() then startScan(true) end
       end)
@@ -1228,7 +1231,7 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   if msg == "auto off" or msg == "auto on" then
     db.auto = msg == "auto on"
     if ns.optionsRefresh then ns.optionsRefresh() end   -- the options window shows the change if it is open
-    say(db.auto and "prices update by themselves (when you open the auction house, then every 15 minutes while it is open)."
+    say(db.auto and "prices update by themselves (when you open the auction house, then every 30 minutes while it is open)."
       or "automatic price updates are off. Press Update prices or type /eah scan when you want one.")
     return
   end

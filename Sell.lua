@@ -1843,7 +1843,64 @@ function ns.raise(f)
   f:SetFrameLevel(math.min(top + 20, 9000))
 end
 
--- A tab after Blizzard's (and after any tab made before it), selected in its place's colour. Shared with Shopping.lua.
+-- Our tabs sit after every other tab in the auction house's tab row: Blizzard's and other addons' (Cheap Upgrades puts
+-- its tabs after the last one in AuctionHouseFrame.Tabs, so ours leave that list, or both would claim the same spot).
+-- Placed by where the other tabs are on screen, so it works whichever addon made its tabs first.
+local function bottomRowRight(ah, ours)
+  local bottom, best, bestRight = ah:GetBottom(), nil, nil
+  if not bottom then return nil end
+  local function consider(f)
+    if ours[f] or not f.IsShown or not f:IsShown() or not (f.IsObjectType and f:IsObjectType("Button")) then return end
+    local top, right = f:GetTop(), f:GetRight()
+    -- a tab hangs under the window: its top is at the window's bottom edge
+    if top and right and math.abs(top - bottom) <= 12 and (not bestRight or right > bestRight) then best, bestRight = f, right end
+  end
+  local function walk(f, depth)
+    for _, c in ipairs({ f:GetChildren() }) do
+      consider(c)
+      if depth < 3 then walk(c, depth + 1) end
+    end
+  end
+  walk(ah, 1)
+  return best, bestRight
+end
+
+function ns.layoutTabs()
+  local ah = _G.AuctionHouseFrame
+  local list = ns.tabOrder
+  if not ah or not list or not list[1] or not ah:IsShown() then return end
+  local ours = ns.ourTabs or {}
+  local blizz = ah.AuctionsTab or (ah.Tabs and ah.Tabs[#ah.Tabs])
+  local after, right = bottomRowRight(ah, ours)
+  local first = list[1]
+  first:ClearAllPoints()
+  if after and right and blizz and blizz:GetTop() then
+    -- by position, not by anchoring to another addon's frame (it might anchor to ours: a loop)
+    local scale = first:GetEffectiveScale() / ah:GetEffectiveScale()
+    first:SetPoint("TOPLEFT", ah, "BOTTOMLEFT", (right - ah:GetLeft()) / scale + (first.templated and -15 or 4),
+      (blizz:GetTop() - ah:GetBottom()) / scale)
+  elseif blizz then
+    first:SetPoint("LEFT", blizz, "RIGHT", first.templated and -15 or 4, 0)
+  end
+  for i = 2, #list do
+    list[i]:ClearAllPoints()
+    list[i]:SetPoint("LEFT", list[i - 1], "RIGHT", list[i].templated and -15 or 4, 0)
+  end
+end
+
+-- Lay out again when the auction house opens (other addons add their tabs then too).
+local layoutHooked
+local function hookLayout(ah)
+  if layoutHooked then return end
+  layoutHooked = true
+  ah:HookScript("OnShow", function()
+    C_Timer.After(0, ns.layoutTabs)
+    C_Timer.After(0.5, ns.layoutTabs)
+    C_Timer.After(2, ns.layoutTabs)
+  end)
+end
+
+-- A tab in the auction house's tab row (see layoutTabs), selected in its place's colour. Shared with Shopping.lua.
 function ns.makeTab(name, text, onClick, onBlizzard, place)
   local ah = _G.AuctionHouseFrame
   if not ah then return nil end
@@ -1864,6 +1921,7 @@ function ns.makeTab(name, text, onClick, onBlizzard, place)
     tab:HookScript("OnShow", size)
     tab:HookScript("OnEvent", size)
   end
+  tab.templated = templated
   tab:SetPoint("LEFT", last, "RIGHT", templated and -15 or 4, 0)
   tab:SetScript("OnClick", onClick)
   if templated then pcall(PanelTemplates_DeselectTab, tab) end
@@ -1872,9 +1930,16 @@ function ns.makeTab(name, text, onClick, onBlizzard, place)
   -- to ah.Tabs, so only tabs that aren't ours get the hook: hooking our own made each click open and close at once.
   ns.ourTabs = ns.ourTabs or {}
   ns.ourTabs[tab] = true
+  ns.tabOrder = ns.tabOrder or {}
+  ns.tabOrder[#ns.tabOrder + 1] = tab
+  for i = #tabsList, 1, -1 do
+    if tabsList[i] == tab then table.remove(tabsList, i) end   -- out of the list other addons place their tabs after
+  end
   for _, t in ipairs(tabsList) do
     if not ns.ourTabs[t] then t:HookScript("OnClick", onBlizzard) end
   end
+  hookLayout(ah)
+  ns.layoutTabs()
   if ah.SetDisplayMode then hooksecurefunc(ah, "SetDisplayMode", onBlizzard) end
   if ns.applySkin then ns.applySkin() end
   return tab

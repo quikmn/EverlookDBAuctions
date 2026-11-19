@@ -85,7 +85,7 @@ local function build()
 
   -- general
   app:Setting({
-    key = "auto", type = "bool", label = "Update prices by themselves while the auction house is open (every 15 minutes)",
+    key = "auto", type = "bool", label = "Update prices by themselves while the auction house is open (every 30 minutes)",
     chatLabel = "Automatic price updates", keywords = { "scan", "automatic", "refresh", "auto" },
     get = function() return db().auto ~= false end,
     set = function(v) db().auto = v end,
