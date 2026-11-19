@@ -701,12 +701,16 @@ def search_queue():
     # which ItemKeys to open: the version named like the result, else all of them
     G.KEYNAMES = lua.eval('{ [5] = "Dwarven Magestaff of the Bear", [6] = "Dwarven Magestaff of the Eagle" }')
     es = results(entry(key(30, 5), 4400, 7), entry(key(30, 6), 4400, 5))
-    keys, all_ = Q.pickKeys(es, "Dwarven Magestaff of the Bear", Q.nameOf)
+    keys, all_, _every = Q.pickKeys(es, "Dwarven Magestaff of the Bear", Q.nameOf)
     check(len(keys) == 1 and keys[1].itemSuffix == 5 and all_ is False, "the Bear version's key")
-    keys, all_ = Q.pickKeys(es, "Dwarven Magestaff of the Owl", Q.nameOf)
+    keys, all_, _every = Q.pickKeys(es, "Dwarven Magestaff of the Owl", Q.nameOf)
     check(len(keys) == 2 and all_ is True, "no match: every version, shown with names")
+    # only one other version up: still named, never listed as the wanted one (audit 2026-11-19)
+    r = Q.pickKeys(results(entry(key(30, 6), 4400, 5)), "Dwarven Magestaff of the Bear", Q.nameOf)
+    r = r if isinstance(r, tuple) else (r,)
+    check(len(r) > 1 and r[1] is True, "one other version: shown with its name")
     G.KEYNAMES = lua.eval('{ [0] = "Linen Cloth" }')
-    keys, all_ = Q.pickKeys(results(entry(key(2589), 10, 20)), "Linen Cloth", Q.nameOf)
+    keys, all_, _every = Q.pickKeys(results(entry(key(2589), 10, 20)), "Linen Cloth", Q.nameOf)
     check(len(keys) == 1 and all_ is False, "a plain item: its one key")
 
     # live prices for random-stat versions: by name; a version not in a complete answer is sold out, an unnamed
@@ -755,6 +759,11 @@ def undercut():
             check(ns.undercutPrice(item) == item - 1, f"item: 1c under 44s14c is 44s13c, got {ns.undercutPrice(item)}")
             check(ns.undercutPrice(goods) == goods - 1, "stackable good: 1c under too")
             check(ns.undercutPrice(1) == 1, "never below 1c")
+            ns.setUndercut("1s")
+            check(ns.undercutPrice(80) == 79, f"1s under 80c is 79c, not 1c: got {ns.undercutPrice(80)}")
+            check(ns.undercutPrice(101) == 100, f"1s under 1s 1c is 1s: got {ns.undercutPrice(101)}")
+            check(ns.undercutPrice(150) == 149, f"1s under 1s 50c is 1s 49c: got {ns.undercutPrice(150)}")
+            check(ns.undercutPrice(100000) == 99900, f"1s under 10g is 9g 99s: got {ns.undercutPrice(100000)}")
             ns.setUndercut("5%")
             check(ns.undercutPrice(10000) == 9500, "5% of 1g")
         else:
@@ -1329,6 +1338,7 @@ def buy_panel():
     run(AHQ_FAKE, "ahq", ns)
     for name in ["Skin.lua", "Vendor.lua", "Buy.lua"]:
         run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    ns.calmSecs = 0   # the half-second click lockout after Buy turns into Confirm: off for these click scripts
     G = lua.globals()
     ev = G.MOCK_FRAMES[len(G.MOCK_FRAMES)]   # Buy.lua's event frame, made last
     tbl = lua.eval("function(...) return { ... } end")
@@ -1483,6 +1493,7 @@ def buy_decisions():
     run(AHQ_FAKE, "ahq", ns)
     for name in ["Skin.lua", "Vendor.lua", "Buy.lua"]:
         run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    ns.calmSecs = 0   # the half-second click lockout after Buy turns into Confirm: off for these click scripts
     G = lua.globals()
     ev = G.MOCK_FRAMES[len(G.MOCK_FRAMES)]
     tbl = lua.eval("function(...) return { ... } end")

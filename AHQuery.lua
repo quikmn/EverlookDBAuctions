@@ -317,8 +317,10 @@ function Q.pickKeys(entries, wantName, nameOf)
     local n = nameOf(e.itemKey)
     if want and n and n:lower() == want then match[#match + 1] = e.itemKey end
   end
-  if #match > 0 then return match, false end
-  return all, #all > 1
+  -- third value: whether these are all of the item's versions (only then is their lowest the item's own price)
+  if #match > 0 then return match, false, #match == #all end
+  -- nothing named the same (or names not loaded): every version, each named, even when there is only one other
+  return all, #all > 1 or want ~= nil, true
 end
 
 -- Live prices for the result rows of one item ({ name, suffix }) from a browse answer: per row { price, qty },

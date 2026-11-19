@@ -59,6 +59,7 @@ local function itemRows(itemKey)
       local link = okv(r.itemLink)
       local q = okv(r.quantity) or 1
       local buy = okv(r.buyoutAmount)
+      if buy and buy <= 0 then buy = nil end   -- bids only
       local vname
       if link then vname = select(3, ns.variantOf(B.id, link)) end
       rows[#rows + 1] = {
@@ -148,7 +149,7 @@ function send()
             B.loaded, B.state = true, nil
             if not B.partial and not B.showAll then B.shareLive(rows) end
             -- every variant of the item came in: the tooltip's AH price follows it
-            if not B.partial and not B.showAll and ns.noteLivePrice then ns.noteLivePrice(B.id, rows) end
+            if not B.partial and B.allVersions and ns.noteLivePrice then ns.noteLivePrice(B.id, rows) end
           end
           render()
           if left <= 0 and B.deal then dealPick() end
@@ -171,7 +172,7 @@ function send()
         if answer.full and B.deal then dealPick() end
         return
       end
-      B.keys, B.showAll = ns.ahq.pickKeys(answer.entries, B.name, ns.ahq.nameOf)
+      B.keys, B.showAll, B.allVersions = ns.ahq.pickKeys(answer.entries, B.name, ns.ahq.nameOf)
       local info = try(AH.GetItemKeyInfo, B.keys[1])
       if info and okv(info.isCommodity) ~= nil then B.commodity = okv(info.isCommodity) and true or false end
       queryKeys()
@@ -241,7 +242,7 @@ local function buyItem()
   local r = B.sel
   if not r or not r.buyout or not r.auctionID or r.mine then return end
   -- Start buying: one click buys the auction it picked (under vendor price); any other auction you pick takes Confirm
-  if not B.armed and not (B.deal and B.dealSel == r) then arm(); return end
+  if not B.armed and not (B.deal and B.dealSel == r) then arm(); B.calmUntil = GetTime() + (ns.calmSecs or 0.5); return end
   B.armed = nil
   if GetMoney() < r.buyout then setStatus("Not enough money.", T.bad); render(); return end
   if not AH.PlaceBid then setStatus("This client can't buy auctions.", T.bad); return end
@@ -565,6 +566,9 @@ local function makeFrame()
   f.buy = UI.button(f, "Buy", 190, 28, "primary")
   f.buy:SetPoint("BOTTOMRIGHT", -10, 8)
   f.buy:SetScript("OnClick", function()
+    -- Buy turns into Confirm under the cursor: a click in the first half second after that is ignored, so a double
+    -- click or an impatient click never pays a price nobody read
+    if GetTime() < (B.calmUntil or 0) then return end
     if B.commodity then buyCommodity() else buyItem() end
   end)
   UI.tip(f.buy, function()
@@ -729,7 +733,17 @@ function events.COMMODITY_PRICE_UPDATED(unit, total)
     return
   end
   local quote = { qty = B.starting, unit = okv(unit), total = total }
+  -- the event carries no quantity: a total far under what the listed auctions cost for this quantity is the answer
+  -- for an earlier, smaller Buy press, and is never shown or paid (Confirm would buy the new quantity)
+  local _, listedNow = estimate(quote.qty)
+  if listedNow > 0 and quote.total < listedNow * 0.8 then
+    cancelQuote()
+    setStatus("The quantity changed while the price was on its way, so nothing was bought. Press Buy to ask again.", T.bad)
+    render()
+    return
+  end
   B.quote, B.starting, B.asking = quote, nil, nil
+  B.calmUntil = GetTime() + (ns.calmSecs or 0.5)
   local sell = B.deal and ns.vendor.sellOf(B.id)
   if B.deal and (not sell or quote.total > sell * quote.qty) then
     setStatus(("The auction house quotes %s, more than a vendor pays (%s). Not bought; Refresh to look again."):format(

@@ -1,5 +1,15 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Quick sell: an undercut bigger than 5% of the price now goes one copper under instead (1s under an 80c auction suggested 1c; now 79c).
+- Quick sell: prices you posted at in v0.10.0 to v0.12.0 for items that don't stack are forgotten once, since they came from the wrong suggestion.
+- Quick sell: when the auction house asks you to confirm a post, the bar says exactly what will go up, and if you changed the price, quantity or item since, nothing is posted until you press Post again.
+- Quick sell: after your last one of an item is posted and the next item is picked for you, Post waits for that item's live price, so a late click can't post it at an old price. Post also pauses for a second after each post.
+- Quick sell only remembers a price once the post actually went up.
+- Buy: an item whose version you picked ("of the Bear") never lists another version as if it were that one; every other version is named.
+- Buy: a price quote meant for a different quantity is never shown or paid, and Confirm ignores clicks for half a second after it appears, so a double click can't pay a price you didn't see.
+- Cancel undercut only cancels on a live price under a minute old, and doesn't count stackable goods as undercut until it knows how this server reports their price.
+
 ## v0.12.1 (2026-11-19)
 - Fixed wrong prices for items that don't stack (recipes, gear): Quick sell and Buy divided an auction's price by how many were up, so a recipe at 39s with 19 up showed as 2s 5c and Quick sell suggested posting at that. Prices are right again, wrong lows saved since v0.10.0 are cleared once, and the Below vendor marks on the auction list use the real price.
 

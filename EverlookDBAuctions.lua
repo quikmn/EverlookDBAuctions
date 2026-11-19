@@ -1239,12 +1239,12 @@ function events.ADDON_LOADED(name)
     -- v0.10.0-v0.12.0 divided an item's live price by how many were up (39s with 19 up became 2s 5c) and saved that as
     -- the item's price and day low. Once: drop search-saved prices and day lows since then for items that don't stack
     -- (those are never commodities, so they're the ones affected); the next update puts the real ones back.
-    if not db.fixedLiveUnit then
+    if not db.fixedLiveUnit2 then
       for id, v in pairs(h.items) do
-        if type(v) == "table" and v[3] == nil and (v[4] or 0) >= FIX_FROM * 86400 and maxStackOf(id) == 1 then h.items[id] = nil end
+        if type(v) == "table" and v[3] == nil and (v[4] or 0) >= FIX_FROM * 86400 and (maxStackOf(id) or 1) == 1 then h.items[id] = nil end
       end
       for id, d in pairs(h.days) do
-        if maxStackOf(id) == 1 then
+        if (maxStackOf(id) or 1) == 1 then   -- not known yet counts too: better a lost day than a wrong low
           for day in pairs(d) do if day >= FIX_FROM then d[day] = nil end end
           if next(d) == nil then h.days[id] = nil end
         end
@@ -1258,7 +1258,14 @@ function events.ADDON_LOADED(name)
       while #h.log > 20 do table.remove(h.log) end
     end
   end
-  db.fixedLiveUnit = true
+  -- the prices you posted at in those versions were the wrong suggestion too: forget them for items that don't stack
+  if not db.fixedLiveUnit2 and type(db.sell) == "table" and type(db.sell.memory) == "table" then
+    for key, m in pairs(db.sell.memory) do
+      local id = tonumber(tostring(key):match("^(%d+)"))
+      if type(m) == "table" and (m.at or 0) >= FIX_FROM * 86400 and id and (maxStackOf(id) or 1) == 1 then db.sell.memory[key] = nil end
+    end
+  end
+  db.fixedLiveUnit2 = true
   hookTooltips()
 end
 

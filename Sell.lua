@@ -163,6 +163,8 @@ local function undercutPrice(p)
     new = p * (1 - u.pct / 100)
   else
     new = p - (u.copper or 100)
+    -- a fixed undercut never takes more than 5% off: 1s under an 80c auction would be 1c (it once was)
+    if p - new > p * 0.05 then new = p - step end
   end
   new = math.floor(new / step) * step
   local wantsBelow = u.pct and u.pct > 0 or (u.copper or 0) > 0
@@ -589,7 +591,12 @@ local function ownedState(a)
   if a.sold then return "Sold", T.good end
   local e = liveFor(a.ckey, a.itemID, a.commodity)
   if e then
-    if e.lowestOther and a.unit and e.lowestOther < a.unit then return "Undercut", T.bad, e.lowestOther, "live" end
+    -- a commodity's own price is only sure once we know how this server reports it (whole auction or each)
+    local sure = not a.commodity or (sdb() and sdb().ownedTotal ~= nil)
+    if e.lowestOther and a.unit and e.lowestOther < a.unit then
+      if not sure then return "Maybe", T.accent, e.lowestOther, "live" end
+      return "Undercut", T.bad, e.lowestOther, "live"
+    end
     return "Lowest", T.good
   end
   local it = ns.houseItem and ns.houseItem(a.itemID)
@@ -658,6 +665,7 @@ local function showCopper(on)
 end
 
 -- Total, deposit, the price's source and the Post button.
+local hold   -- defined with the post code below
 local function updateTotals()
   local f, g = S.frame, S.sel
   if not f then return end
@@ -718,7 +726,8 @@ local function updateTotals()
     warn = ("Disenchanting is worth about %s, more than this gets you after the AH's %d%% cut."):format(money(g.de), cut * 100)
   end
   f.source:SetText(warn and (UI.hex(T.bad) .. warn .. "|r") or S.source or "")
-  f.post:SetEnabled(not S.posting and not S.warned and qty >= 1 and qty <= (S.avail or 0) and unit >= priceStep())
+  local held = GetTime() < (S.holdUntil or 0) or (S.holdLive ~= nil and S.sel and S.holdLive == S.sel.key)
+  f.post:SetEnabled(not held and not S.posting and not S.warned and qty >= 1 and qty <= (S.avail or 0) and unit >= priceStep())
   local m = S.posting and S.posting.multi
   f.post:SetText(m and ("Posting %d / %d"):format(m[1], m[2]) or S.posting and "Posting..."
     or (qty > 1 and ("Post " .. num(qty)) or "Post"))
@@ -819,9 +828,16 @@ local function renderCurrent()
 end
 
 -- The first of your auctions someone else is cheaper than, or nil.
+-- Cancel undercut only acts on a live answer under a minute old (a cancel costs the deposit): older ones are asked again
+local CANCEL_FRESH = 60
 local function nextUndercut()
+  local now = time()
   for _, a in ipairs(S.owned) do
-    if not a.sold and not a.cancelling and ownedState(a) == "Undercut" then return a end
+    if not a.sold and not a.cancelling and ownedState(a) == "Undercut" then
+      local e = Live.cache[a.ckey]
+      if e and now - e.at <= CANCEL_FRESH then return a end
+      if not Live.jobs[a.ckey] then request(a.key, a.commodity, false) end
+    end
   end
 end
 
@@ -973,17 +989,32 @@ local function refreshBags()
   if g and not S.sel and S.advance == g.key and was then
     S.advance = nil
     local nxt = S.visible[was] or S.visible[#S.visible]
-    if nxt then selectGroup(nxt) end
+    if nxt then
+      -- picked for you, not by a click: Post waits for its live price (at most 5 s), so a late second click on Post
+      -- can't post the next item at an old remembered price
+      hold(1)
+      S.holdLive = nxt.key
+      C_Timer.After(5, function() if S.holdLive == nxt.key then S.holdLive = nil; updateTotals() end end)
+      selectGroup(nxt)
+    end
   end
 end
 
 function onLive(c)
   if not S.frame or not S.frame:IsShown() then return end
   if S.sel and S.sel.ckey == c then
+    if S.holdLive == S.sel.key then S.holdLive = nil end
     applySuggestion()
     renderCurrent()
   end
   if S.view == "own" then renderOwned() end
+end
+
+-- Post stays off for `secs` (after an automatic pick, or right after a post went up): a double click or a click that
+-- lands as the panel changes doesn't post again.
+hold = function(secs)
+  S.holdUntil = GetTime() + secs
+  C_Timer.After(secs + 0.05, function() if S.frame and S.frame:IsShown() then updateTotals() end end)
 end
 
 -- A post was sent: wait for the server. Several of an item (not a commodity) go up as that many auctions of one, one
@@ -1014,7 +1045,7 @@ end
 local function askConfirm(job)
   S.posting, S.warned = nil, job
   S.frame.confirm:Show()
-  setStatus("Confirm the post, or don't.", T.accent)
+  setStatus(("Confirm: post %s x %s at %s each, or don't."):format(num(job.qty), job.name, money(job.unit)), T.accent)
   updateTotals()
 end
 
@@ -1022,6 +1053,7 @@ end
 local function post()
   local g = S.sel
   if not g or S.posting or S.warned then return end
+  if GetTime() < (S.holdUntil or 0) or (S.holdLive ~= nil and S.holdLive == g.key) then return end
   local loc = locate(g)
   if not loc then
     setStatus("That item is no longer in your bags.", T.bad)
@@ -1043,8 +1075,6 @@ local function post()
     setStatus("Couldn't post: " .. tostring(needsConfirm), T.bad)
     return
   end
-  local s = sdb()
-  if s then s.memory[g.key] = { p = unit, d = dur, q = qty, at = time() } end
   local job = { name = g.name, qty = qty, unit = unit, commodity = g.commodity, loc = loc, dur = dur, id = g.id, key = g.key }
   -- several of an item go up one auction at a time; count them until the last one is up
   if not g.commodity and qty > 1 then job.multi = { 0, qty } end
@@ -1057,6 +1087,17 @@ local function confirmPost()
   S.frame.confirm:Hide()
   S.warned = nil
   if not job then return end
+  -- what is set now must still be what the server asked about, and the item still in that bag slot
+  local g = S.sel
+  local same = g and g.key == job.key and S.unit == job.unit and S.qty == job.qty and S.dur == job.dur
+  local there = job.loc and C_Item and C_Item.DoesItemExist and C_Item.DoesItemExist(job.loc)
+    and C_Item.GetItemID and C_Item.GetItemID(job.loc) == job.id
+  if not same or not there then
+    setStatus(not same and "The price, quantity or item changed since: nothing was posted. Press Post again."
+      or "That item moved in your bags: nothing was posted. Press Post again.", T.bad)
+    updateTotals()
+    return
+  end
   local okCall
   if job.commodity and AH.ConfirmPostCommodity then
     okCall = pcall(AH.ConfirmPostCommodity, job.loc, job.dur, job.qty, job.unit)
@@ -2056,6 +2097,10 @@ end
 
 local function posted(job)
   S.posting = nil
+  hold(1)
+  -- remembered only once it went up (not on a refused or cancelled post)
+  local s = sdb()
+  if s and job.key then s.memory[job.key] = { p = job.unit, d = job.dur, q = job.qty, at = time() } end
   S.advance = job.key   -- when that was the last of it, the next item in the list gets picked
   setStatus(("Posted %s x %s at %s each."):format(num(job.qty), job.name, money(job.unit)), T.good)
   updateTotals()
