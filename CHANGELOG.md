@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.12.0 (2026-11-19)
 - Quick sell lists what's in your reagent bag (WoW Forever's extra bag slot, where herb and other profession bags go), so you can sell from it.
 - Item tooltips now show what a vendor pays wherever the game leaves its Sell Price out: quest rewards, loot and links. In bags the game's own line stays and ours doesn't repeat it.
 - Closing the auction house during a price update no longer throws the update away: once the server has sent the auction list, the update finishes even with the auction house closed (items whose details hadn't loaded yet count as their plain version, without "of the Bear"). Closing before the server answered gives the 15-minute wait back, so you can update again right away.
