@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.12.1 (2026-11-19)
 - Fixed wrong prices for items that don't stack (recipes, gear): Quick sell and Buy divided an auction's price by how many were up, so a recipe at 39s with 19 up showed as 2s 5c and Quick sell suggested posting at that. Prices are right again, wrong lows saved since v0.10.0 are cleared once, and the Below vendor marks on the auction list use the real price.
 
 ## v0.12.0 (2026-11-19)
