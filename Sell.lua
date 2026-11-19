@@ -1770,6 +1770,22 @@ local function makeFrame()
     updatePost()
     setView(S.view)
     queryOwned()
+    -- the item picked before the auction house closed is picked again (this session), while it is still in the bags
+    local keep = S.keep
+    S.keep = nil
+    if keep and not S.sel then
+      for _, g in ipairs(S.groups or {}) do
+        if g.key == keep.key then
+          selectGroup(g)
+          if keep.qty and S.avail and S.avail >= 1 then
+            S.qty = clamp(keep.qty, 1, S.avail)
+            f.qty:SetText(tostring(S.qty))
+            updateTotals()
+          end
+          break
+        end
+      end
+    end
   end)
   return f
 end
@@ -2018,6 +2034,8 @@ function events.AUCTION_HOUSE_CLOSED()
   wipe(Live.byId)
   wipe(Live.jobs)
   wipe(Live.failed)
+  -- the picked item is remembered for the next visit this session (picked again when Quick sell shows)
+  if S.sel then S.keep = { key = S.sel.key, qty = S.qty } end
   S.posting, S.warned, S.sel, S.cancelPending, S.advance = nil, nil, nil, nil, nil
   -- your auctions are asked for again next visit; until the answer the list says so instead of showing old ones
   S.owned, S.ownedLoaded = {}, nil
