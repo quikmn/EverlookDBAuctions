@@ -181,6 +181,13 @@ local function logScan(h, how)
 end
 ns.logScan = logScan
 
+-- How many items have a saved price on a house.
+function ns.countItems(h)
+  local n = 0
+  for _ in pairs(h.items) do n = n + 1 end
+  return n
+end
+
 local function unfinished(h)
   return not scan and h.tried ~= nil and (not h.scanned or h.scanned < h.tried)
 end
@@ -1237,10 +1244,30 @@ frame:SetScript("OnEvent", function(_, e, ...) events[e](...) end)
 
 local showStatus   -- /eah status (below)
 
--- /eah debug: what is shown where, for bug reports about tabs and panels ("I click Selling and nothing changes")
+-- /eah debug: what is shown where, for bug reports about tabs and panels ("I click Selling and nothing changes"),
+-- and the technical side of price updates: the auction API, each house's update log, the scans kept.
 function ns.debugReport()
   local ah = _G.AuctionHouseFrame
-  say(("debug: AuctionHouseFrame %s, mode %s, tab %s"):format(ah and (ah:IsShown() and "shown" or "hidden") or "missing",
+  say(("debug: version %s; auction API: %s; frame: %s"):format(addonVersion(), apiKind() or "none found",
+    _G.AuctionHouseFrame and "AuctionHouseFrame (modern)" or _G.AuctionFrame and "AuctionFrame (classic)" or "not loaded yet"))
+  for key, h in pairs(db.houses) do
+    print(("  %s: %s items priced, %s"):format(key, num(ns.countItems(h)), h.scanned and ("last full scan " .. ago(h.scanned)) or "no full scan yet"))
+    for i, e in ipairs(h.log or {}) do
+      if i > 8 then break end
+      print(("    %s: %s%s"):format(ago(e.at), e.how, e.secs and (" after " .. e.secs .. " s") or ""))
+    end
+  end
+  local packed = 0
+  for _, sc in ipairs(db.scans) do if not sc.rows then packed = packed + 1 end end
+  print(("  full scans kept for EverlookDB.com: %d (%d packed); the last %d days, up to %d"):format(#db.scans, packed,
+    KEEP_DAYS, MAX_SCANS))
+  local n, oldest = unsavedInfo()
+  if n > 0 then
+    print(("  %d %s from this session not on disk yet (oldest %d min)"):format(n, n == 1 and "scan" or "scans",
+      math.floor((GetServerTime() - oldest) / 60)))
+  end
+  print(("  test mode (/eah test, reload after every full scan): %s"):format(db.reloadAfterScan and "on" or "off"))
+  print(("  AuctionHouseFrame %s, mode %s, tab %s"):format(ah and (ah:IsShown() and "shown" or "hidden") or "missing",
     tostring(ah and ah.GetDisplayMode and select(2, pcall(ah.GetDisplayMode, ah))), tostring(ah and ah.selectedTab)))
   for _, name in ipairs({ "EverlookAuctionsBar", "EverlookAuctionsSelling", "EverlookAuctionsShopping", "EverlookAuctionsQueryResults",
       "EverlookAuctionsSellingTab", "EverlookAuctionsShoppingTab", "EverlookAuctionsCrafting", "EverlookAuctionsRecipeList" }) do
@@ -1303,7 +1330,7 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
     return
   end
   if msg == "status" then
-    say("status")
+    say("version " .. addonVersion())
     showStatus()
     return
   end
@@ -1314,40 +1341,45 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
     print("  /eah scan  update prices now (auction house open)")
     if ns.help then ns.help() end
     print(("  /eah auto on  or  /eah auto off  update prices by themselves while the auction house is open (now %s)"):format(db.auto == false and "off" or "on"))
-    print(("  /eah test  reload after every full scan so it is saved at once (now %s)"):format(db.reloadAfterScan and "on" or "off"))
-    print("  /eah debug  what is shown where, the addon's auction house searches and any cut-off labels (for bug reports)")
     return
   end
   say(("unknown command \"%s\". /eah help lists the commands, for example /eah scan or /eah undercut 1s."):format(plain(msg)))
 end
 
--- /eah status
-function showStatus()
-  local kind = apiKind()
-  print(("  auction API: %s; frame: %s"):format(kind or "none found",
-    _G.AuctionHouseFrame and "AuctionHouseFrame (modern)" or _G.AuctionFrame and "AuctionFrame (classic)" or "not loaded yet"))
-  local any = false
-  for key, h in pairs(db.houses) do
-    local n = 0
-    for _ in pairs(h.items) do n = n + 1 end
-    print(("  %s: %s items priced, %s"):format(key, num(n), h.scanned and ("last full scan " .. ago(h.scanned)) or "no full scan yet"))
-    for i, e in ipairs(h.log or {}) do
-      if i > 8 then break end
-      print(("    %s: %s%s"):format(ago(e.at), e.how, e.secs and (" after " .. e.secs .. " s") or ""))
-    end
-    any = true
+-- /eah status, for players: one line per auction house with prices ("Alliance: 8,123 prices, updated 12 min ago"),
+-- then the scans waiting to be saved for upload. The version comes first (EverlookUI prints it; the old path below
+-- says it itself). The technical lines are in /eah debug.
+local function houseName(key)
+  local realm, side = key:match("^(.*)%-(%a+)$")
+  if not realm then return key end
+  return realm == GetRealmName() and side or (side .. " (" .. realm .. ")")
+end
+
+function ns.statusLines()
+  local out = {}
+  local keys = {}
+  for key in pairs(db.houses) do keys[#keys + 1] = key end
+  table.sort(keys, function(a, b) return houseName(a) < houseName(b) end)
+  for _, key in ipairs(keys) do
+    local h = db.houses[key]
+    out[#out + 1] = ("%s: %s prices, %s"):format(houseName(key), num(ns.countItems(h)),
+      h.scanned and ("updated " .. ago(h.scanned)) or "no full update yet")
   end
-  if not any then print("  no prices yet: open the auction house and let it update prices, or just search.") end
-  local packed = 0
-  for _, sc in ipairs(db.scans) do if not sc.rows then packed = packed + 1 end end
-  print(("  full scans kept for EverlookDB.com: %d (%d packed); the last %d days, up to %d"):format(#db.scans, packed,
-    KEEP_DAYS, MAX_SCANS))
-  local n, oldest = unsavedInfo()
+  if #keys == 0 then out[#out + 1] = "No prices yet: open the auction house and let it update prices, or just search." end
+  local n = unsavedInfo()
   if n > 0 then
-    print(("  %d %s from this session not on disk yet (oldest %d min): /reload, logging out or switching characters saves %s")
-      :format(n, n == 1 and "scan" or "scans", math.floor((GetServerTime() - oldest) / 60), n == 1 and "it" or "them"))
+    out[#out + 1] = ("%d %s waiting to upload: saved for EverlookDB.com when you log out or reload"):format(n,
+      n == 1 and "scan" or "scans")
   end
-  print("  /eah help lists the commands.")
+  if ns.droppedText then
+    local dropped = ns.droppedText()
+    if dropped then out[#out + 1] = dropped end
+  end
+  return out
+end
+
+function showStatus()
+  for _, line in ipairs(ns.statusLines()) do print("  " .. line) end
 end
 ns.showStatus = function() showStatus() end
 

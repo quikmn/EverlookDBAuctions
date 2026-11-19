@@ -113,7 +113,7 @@ local function build()
   })
 
   -- the addon's own commands; the shared ones (help, get, set, search, status, version, feedback) come with the app
-  app:StatusLines(function() if ns.showStatus then ns.showStatus() end end)
+  app:StatusLines(function() return ns.statusLines and ns.statusLines() or {} end)
   app:Command("scan", "scan", "update prices now (auction house open)", function() if ns.startScan then ns.startScan() end end)
   app:Command("sell", "sell", "open Quick sell (auction house open)", function() ns.slash("sell") end, { "selling", "quicksell", "quick" })
   app:Command("shop", "shop", "open Shopping (auction house open)", function() ns.slash("shop") end, { "shopping", "lists" })
@@ -122,12 +122,13 @@ local function build()
   end)
   -- "/eah undercut 1s" keeps its own reply (it names the step); "/eah set undercut 1s" works as for any setting
   app:Command("undercut", "undercut", "", function(rest) ns.slash("undercut " .. rest) end).hidden = true
+  -- for bug reports and testing: they work, but help doesn't list them
   app:Command("test", "test", "reload after every full scan, so it is saved at once", function()
     if ns.toggleTestMode then ns.toggleTestMode() end
-  end)
-  app:Command("debug", "debug", "what is shown where, and any cut-off labels (for bug reports)", function()
+  end).hidden = true
+  app:Command("debug", "debug", "the technical details: auction API, update log, scans kept, what is shown where", function()
     if ns.debugReport then ns.debugReport() end
-  end)
+  end).hidden = true
 
   app:Section("selling", "Selling", function(stack)
     UI.Header(stack, "Selling", "Quick sell's price is the cheapest live auction minus your undercut. Blizzard's own Sell tab gets the same undercut when you pick an auction in its list.")

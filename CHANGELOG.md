@@ -7,6 +7,7 @@
 - Automatic price updates no longer write to chat ("full scan done: ..."); the price bar shows how they went. Updates you start yourself (Update prices, `/eah scan`) still say so in chat.
 - Advanced search: while the Buy panel is open, Search is a plain button, so Buy is the only gold one.
 - New setting (General page): open the auction house on Browse, Quick sell, or the tab you used last (the default). Also `/eah openon sell`, and the settings search finds it under "tab".
+- `/eah status` is short and readable: the version, one line per auction house ("Alliance: 8,123 prices, updated 12 min ago"), and how many scans wait to upload. The technical details (auction API, update log, scans kept) moved to `/eah debug`; `/eah help` no longer lists `test` and `debug` (they still work).
 
 ## v0.11.0 (2026-11-19)
 

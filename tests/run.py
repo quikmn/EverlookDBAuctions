@@ -1838,6 +1838,7 @@ def ux_flows():
     for want in ("/eah scan", "/eah sell", "/eah run <list>", "/eah get [setting]", "/eah search <words>", "/eah status"):
         check(want in out, f"help lacks {want}: {out}")
     check("/eah undercut|r" not in out, "the old undercut command is not listed twice")
+    check("/eah test" not in out and "/eah debug" not in out, f"help leaves out test and debug: {out}")
     app.HandleSlash(app, "set duration 48")
     check(sell.duration == 3, f"/eah set duration 48: {sell.duration}")
     app.HandleSlash(app, "get duration")
@@ -2335,8 +2336,14 @@ def scan_storage():
     G.PRINTED = lua.table()
     G.SlashCmdList.EVERLOOKAUCTIONS("status")
     out = "\n".join(G.PRINTED[i] for i in range(1, len(G.PRINTED) + 1))
-    check("2 scans from this session not on disk yet" in out and "/reload" in out, f"/eah status lists them: {out}")
-    check("full scans kept for EverlookDB.com: 3" in out, "/eah status counts the scans kept")
+    check("2 scans waiting to upload" in out, f"/eah status lists them: {out}")
+    check("version" in out and "Alliance: 0 prices, no full update yet" in out, f"/eah status: version, one line a house: {out}")
+    check("auction API" not in out and "kept for EverlookDB.com" not in out, f"technical lines are in /eah debug: {out}")
+    G.PRINTED = lua.table()
+    ns.debugReport()
+    out = "\n".join(G.PRINTED[i] for i in range(1, len(G.PRINTED) + 1))
+    check("full scans kept for EverlookDB.com: 3" in out and "auction API" in out and "2 scans from this session" in out,
+          f"/eah debug has the technical lines: {out}")
     return failures
 
 
