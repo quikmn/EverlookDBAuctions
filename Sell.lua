@@ -2098,10 +2098,35 @@ function events.AUCTION_HOUSE_POST_WARNING()
   if S.posting and S.frame and S.frame:IsShown() then askConfirm(S.posting) end
 end
 
+-- The game's own words for why something failed ("Not enough money for the deposit"), for a second: a failed post
+-- gets them appended. Both the auction house's error event and the red text at the top of the screen count.
+local lastError   -- { text, at }
+local function noteError(text)
+  if type(text) ~= "string" or text == "" or (issecretvalue and issecretvalue(text)) then return end
+  lastError = { text = text, at = GetTime() }
+  if S.postFailed and GetTime() - S.postFailed.at <= 1 then
+    S.postFailed = nil
+    setStatus("The post didn't go through: " .. text, T.bad)
+  end
+end
+function events.UI_ERROR_MESSAGE(_, text) noteError(text) end
+function events.AUCTION_HOUSE_SHOW_ERROR(err)
+  local get = _G.AuctionHouseUtil and AuctionHouseUtil.GetErrorText
+  if not get then return end
+  local okText, text = pcall(get, err)
+  if okText then noteError(text) end
+end
+
 function events.AUCTION_HOUSE_POST_ERROR()
   if not S.posting then return end
   S.posting = nil
-  setStatus("The post didn't go through.", T.bad)
+  -- the reason may come just before or just after this event
+  if lastError and GetTime() - lastError.at <= 1 then
+    setStatus("The post didn't go through: " .. lastError.text, T.bad)
+  else
+    setStatus("The post didn't go through.", T.bad)
+    S.postFailed = { at = GetTime() }
+  end
   updateTotals()
 end
 
