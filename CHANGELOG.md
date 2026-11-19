@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.12.2 (2026-11-19)
 - Quick sell: a single listing far under everyone else's (a troll auction at 1c among 5g ones) no longer sets your price: it undercuts the next cheapest and says it skipped the lone one.
 - Quick sell and Blizzard's Sell tab only offer the last full scan's price when that scan saw at least 3 auctions in the last 3 days; otherwise it says so and leaves the price to you.
 - Quick sell: an undercut bigger than 5% of the price now goes one copper under instead (1s under an 80c auction suggested 1c; now 79c).
