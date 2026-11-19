@@ -2350,11 +2350,11 @@ def scan_storage():
     db.scans = tbl(a, b)
     ns.noteUnsaved(b, now - 1000)
     check(ns.unsavedText(now) is None, "under 30 minutes: no note")
-    check(ns.unsavedText(now + 801) == "1 scan waiting to upload · /reload saves it", f"one scan: {ns.unsavedText(now + 801)}")
+    check(ns.unsavedText(now + 801) == "1 scan waiting to upload · saved at logout", f"one scan: {ns.unsavedText(now + 801)}")
     ns.noteUnsaved(c, now - 500)
-    check(ns.unsavedText(now + 801) == "1 scan waiting to upload · /reload saves it", "a scan no longer kept doesn't count")
+    check(ns.unsavedText(now + 801) == "1 scan waiting to upload · saved at logout", "a scan no longer kept doesn't count")
     db.scans[3] = c
-    check(ns.unsavedText(now) is None and ns.unsavedText(now + 1000) == "2 scans waiting to upload · /reload saves them",
+    check(ns.unsavedText(now) is None and ns.unsavedText(now + 1000) == "2 scans waiting to upload · saved at logout",
           f"two scans, timed by the oldest: {ns.unsavedText(now + 1000)}")
     G.PRINTED = lua.table()
     G.SlashCmdList.EVERLOOKAUCTIONS("status")

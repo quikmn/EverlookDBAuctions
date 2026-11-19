@@ -10,7 +10,7 @@
 -- players are never kept. The scans of the last 7 days are kept (up to 60, about 6 MB), so few are lost while the
 -- uploader or the site is down; all but the newest per house are packed into one compressed string each. Scans dropped
 -- to stay under that size are counted, and /eah status says so.
--- The game writes saved variables only at /reload, logout or a character switch: the bar says when scans wait for one.
+-- The game writes saved variables only at /reload, logout or a character switch: the bar notes when scans wait for one.
 -- /eah for status, /eah scan to start a full scan while the auction house is open.
 
 local ADDON, ns = ...
@@ -34,7 +34,7 @@ local MAX_SCANS = 60
 -- game reads at every login and writes at every reload)
 local MAX_SCAN_BYTES = 6 * 1024 * 1024
 local ROW_BYTES = 76            -- what one row of a scan still kept as a table takes in the saved file (measured)
-local UNSAVED_AFTER = 30 * 60   -- scans not yet on disk this long: the bar says /reload saves them
+local UNSAVED_AFTER = 30 * 60   -- scans not yet on disk this long: the bar quietly says they are saved at logout
 local STALE = 24 * 3600         -- older prices are shown grey
 -- Zones whose auction house is the neutral one (Classic UiMapIDs): Stranglethorn Vale, Tanaris, Winterspring
 local NEUTRAL_ZONES = { [1434] = true, [1446] = true, [1452] = true }
@@ -658,7 +658,8 @@ ns.unsavedInfo = unsavedInfo
 function ns.unsavedText(now)
   local n, oldest = unsavedInfo()
   if n == 0 or (now or GetServerTime()) - oldest <= UNSAVED_AFTER then return nil end
-  return ("%d %s waiting to upload · /reload saves %s"):format(n, n == 1 and "scan" or "scans", n == 1 and "it" or "them")
+  -- a quiet note, not a call to reload mid-session: logging out saves them just as well
+  return ("%d %s waiting to upload · saved at logout"):format(n, n == 1 and "scan" or "scans")
 end
 -- Scans dropped to keep the saved file small (db.dropped: server times, the last KEEP_DAYS), and the line /eah status
 -- shows for them.
