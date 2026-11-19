@@ -91,6 +91,16 @@ local function build()
     set = function(v) db().auto = v end,
   })
   app:Setting({
+    key = "openon", type = "choice", label = "Open the auction house on", width = 180,
+    keywords = { "tab", "start", "first", "default", "remember", "browse", "quick sell", "opens" },
+    desc = "Which tab you see when you open the auction house: Blizzard's Browse, Quick sell, or the tab you used last.",
+    choices = { { value = "browse", text = "Browse" }, { value = "sell", text = "Quick sell" }, { value = "last", text = "Last tab used" } },
+    get = function() return db().openOn or "last" end,
+    set = function(v)
+      if v == "browse" or v == "sell" or v == "last" then db().openOn = v end
+    end,
+  })
+  app:Setting({
     key = "skin", type = "bool", label = "EverlookDB look for Blizzard's auction house (after /reload)", keywords = { "skin", "theme", "style" },
     get = function() return db().skin ~= false end,
     set = function(v) db().skin = v end,
@@ -131,6 +141,7 @@ local function build()
   end)
   app:Section("general", "General", function(stack)
     UI.Header(stack, "General")
+    app:Widget(stack, "openon")
     app:Widget(stack, "auto")
     app:Widget(stack, "skin")
     app:Widget(stack, "crafting")

@@ -500,8 +500,11 @@ local function openShopping()
   if ns.raise then ns.raise(f) end
   f:Show()
   if ns.ahTitle then ns.ahTitle("Shopping lists", T.places.shopping) end
+  if ns.noteTab then ns.noteTab("shopping") end
   if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 end
+
+ns.openShopping = openShopping
 
 -- The other tabs close this one.
 function ns.closeOthers(except)
@@ -536,6 +539,8 @@ ev:SetScript("OnEvent", function(_, e)
       SH.tab = ns.makeTab("EverlookAuctionsShoppingTab", "Shopping", openShopping, closeShopping, "shopping")
     end
     makeFrame()
+    -- every tab is made: open the one the settings ask for (Sell.lua)
+    if ns.openStartTab then ns.openStartTab() end
   end)
 end)
 

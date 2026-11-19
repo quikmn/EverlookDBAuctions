@@ -6,6 +6,7 @@
 - The automatic price update starts 8 seconds after you open the auction house, so a quick visit doesn't use up the server's one update per 15 minutes.
 - Automatic price updates no longer write to chat ("full scan done: ..."); the price bar shows how they went. Updates you start yourself (Update prices, `/eah scan`) still say so in chat.
 - Advanced search: while the Buy panel is open, Search is a plain button, so Buy is the only gold one.
+- New setting (General page): open the auction house on Browse, Quick sell, or the tab you used last (the default). Also `/eah openon sell`, and the settings search finds it under "tab".
 
 ## v0.11.0 (2026-11-19)
 

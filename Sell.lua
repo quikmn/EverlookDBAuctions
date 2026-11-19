@@ -1820,6 +1820,7 @@ local function openSelling()
   ns.raise(f)
   f:Show()
   ns.ahTitle("Quick sell", ns.T.places.sell)
+  ns.noteTab("sell")
   if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
 end
 ns.openSelling = openSelling
@@ -1945,9 +1946,50 @@ function ns.makeTab(name, text, onClick, onBlizzard, place)
   return tab
 end
 
+-- Which tab the auction house opens on (db.openOn): "browse" (Blizzard's own choice, its Browse tab), "sell" (Quick
+-- sell) or "last" (the default: the tab used last, kept in db.lastTab as "sell", "shopping" or Blizzard's tab ID).
+function ns.noteTab(tab)
+  local db = ns.db()
+  if db then db.lastTab = tab end
+end
+
+local blizzHooked = {}
+local function hookBlizzardTabs()
+  local ah = _G.AuctionHouseFrame
+  for _, t in ipairs(ah and ah.Tabs or {}) do
+    if not blizzHooked[t] and not (ns.ourTabs and ns.ourTabs[t]) and t.GetID then
+      blizzHooked[t] = true
+      t:HookScript("OnClick", function(self) ns.noteTab(self:GetID()) end)
+    end
+  end
+end
+
 local function makeTab()
   if S.tab then return end
   S.tab = ns.makeTab("EverlookAuctionsSellingTab", "Quick sell", openSelling, closeSelling, "sell")
+end
+
+-- Opens the tab db.openOn asks for; called once our tabs are made (Shopping.lua, after the auction house opens).
+function ns.openStartTab()
+  local db, ah = ns.db(), _G.AuctionHouseFrame
+  hookBlizzardTabs()
+  if not db or not ah or not ah:IsShown() then return end
+  local want = db.openOn or "last"
+  local tab = want == "sell" and "sell" or want == "last" and db.lastTab or nil
+  if tab == "sell" then
+    makeTab()
+    openSelling()
+  elseif tab == "shopping" then
+    if ns.openShopping then ns.openShopping() end
+  elseif type(tab) == "number" and tab ~= 1 then
+    -- Blizzard's Sell or Auctions tab: clicked as the player would (Browse is where Blizzard opens anyway)
+    for _, t in ipairs(ah.Tabs or {}) do
+      if not (ns.ourTabs and ns.ourTabs[t]) and t.GetID and t:GetID() == tab and t:IsShown() then
+        pcall(t.Click, t)
+        break
+      end
+    end
+  end
 end
 
 ---------------------------------------------------------------------------------------------------------------------

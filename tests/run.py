@@ -1848,6 +1848,12 @@ def ux_flows():
     check("Did you mean /eah scan?" in G.CHAT[len(G.CHAT)], f"a typo suggests the nearest: {G.CHAT[len(G.CHAT)]}")
     app.HandleSlash(app, "tipvendr off")
     check("Did you mean /eah tipvendor off?" in G.CHAT[len(G.CHAT)], f"a setting typo keeps the value: {G.CHAT[len(G.CHAT)]}")
+    # which tab the auction house opens on
+    check(ns.db().openOn is None, "opens on the last tab used by default")
+    app.HandleSlash(app, "set openon sell")
+    check(ns.db().openOn == "sell", f"/eah set openon sell: {ns.db().openOn}")
+    app.HandleSlash(app, "openon browse")
+    check(ns.db().openOn == "browse", f"/eah openon browse: {ns.db().openOn}")
     return failures
 
 
