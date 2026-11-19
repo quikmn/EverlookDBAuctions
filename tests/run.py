@@ -1628,6 +1628,12 @@ def quick_sell():
     for name in ["Skin.lua", "Sell.lua"]:
         run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
 
+    # Blizzard's popups are never hidden or changed from our code (that taints the popup system)
+    for name in ("Sell.lua", "Buy.lua", "Search.lua", "Shopping.lua", "EverlookDBAuctions.lua", "Options.lua"):
+        src = (ROOT / name).read_text(encoding="utf-8")
+        check("StaticPopup_Hide(" not in src.replace("pcall(StaticPopup_Hide", "StaticPopup_Hide(")
+              and "StaticPopup_Show(" not in src, f"{name} touches Blizzard's popups")
+
     # undercut values: only gold, silver and copper amounts, a percent, or 0
     for bad in ("1.5s", "1s banana", "50", "s"):
         okSet, why = ns.setUndercut(bad)

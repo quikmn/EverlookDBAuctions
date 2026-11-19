@@ -8,6 +8,7 @@
 - Advanced search: while the Buy panel is open, Search is a plain button, so Buy is the only gold one.
 - New setting (General page): open the auction house on Browse, Quick sell, or the tab you used last (the default). Also `/eah openon sell`, and the settings search finds it under "tab".
 - `/eah status` is short and readable: the version, one line per auction house ("Alliance: 8,123 prices, updated 12 min ago"), and how many scans wait to upload. The technical details (auction API, update log, scans kept) moved to `/eah debug`; `/eah help` no longer lists `test` and `debug` (they still work).
+- Quick sell no longer hides Blizzard's own confirm box when the auction house asks you to confirm a post (hiding it from an addon could make other confirm boxes stop working). Quick sell's own confirm shows as before; if you confirm in Blizzard's box instead, Quick sell counts the post and its box goes away.
 
 ## v0.11.0 (2026-11-19)
 

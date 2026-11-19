@@ -1008,8 +1008,9 @@ local function waitForPost(job)
 end
 
 -- The server wants a confirm for this post (an unusual price): show our own, which posts exactly what is set here.
+-- Blizzard's own confirm may show as well; it is left alone (hiding a Blizzard popup from addon code taints the popup
+-- system, and then other popups' buttons can be blocked).
 local function askConfirm(job)
-  if StaticPopup_Hide then pcall(StaticPopup_Hide, "AUCTION_HOUSE_POST_WARNING") end
   S.posting, S.warned = nil, job
   S.frame.confirm:Show()
   setStatus("Confirm the post, or don't.", T.accent)
@@ -2046,7 +2047,16 @@ local function posted(job)
   end)
 end
 
+-- Our confirm is up but the post went through anyway (confirmed in Blizzard's own box): ours goes, the post counts.
+local function adoptWarned()
+  if S.warned and not S.posting then
+    S.posting, S.warned = S.warned, nil
+    if S.frame then S.frame.confirm:Hide() end
+  end
+end
+
 function events.AUCTION_HOUSE_AUCTION_CREATED()
+  adoptWarned()
   local job = S.posting
   if not job then return end
   if not job.multi then posted(job); return end
@@ -2060,6 +2070,7 @@ function events.AUCTION_HOUSE_AUCTION_CREATED()
 end
 
 function events.AUCTION_MULTISELL_START(total)
+  adoptWarned()
   local job = S.posting
   if not job then return end
   job.multi, job.heard, job.counted = { 0, tonumber(total) or job.qty }, GetTime(), true
@@ -2085,13 +2096,6 @@ end
 
 function events.AUCTION_HOUSE_POST_WARNING()
   if S.posting and S.frame and S.frame:IsShown() then askConfirm(S.posting) end
-  if not S.warned then return end
-  -- Blizzard shows its own confirm for this warning too (now or a moment later), and its Accept would act on its own,
-  -- empty sell frame: only ours stays
-  local function hide() if S.warned and StaticPopup_Hide then pcall(StaticPopup_Hide, "AUCTION_HOUSE_POST_WARNING") end end
-  hide()
-  C_Timer.After(0, hide)
-  C_Timer.After(0.2, hide)
 end
 
 function events.AUCTION_HOUSE_POST_ERROR()
