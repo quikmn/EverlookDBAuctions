@@ -149,9 +149,16 @@ local function priceStep()
 end
 ns.priceStep = priceStep
 
+local scanTrusted   -- defined below
 local function roundPrice(copper)
   local step = priceStep()
   return math.max(step, math.floor(copper / step) * step)
+end
+
+-- A full scan's price is only a suggestion when it saw at least 3 auctions in the last 3 days: one listing (a troll
+-- at 2s for a 50g item) or a week-old price is no "usual price".
+scanTrusted = function(n, at)
+  return (n or 0) >= 3 and at ~= nil and time() - at <= 3 * 86400
 end
 
 -- The price to post at when someone else's cheapest auction is `p`.
@@ -180,7 +187,9 @@ local function underText(cheapest, what)
   if (u.pct and u.pct == 0) or (not u.pct and (u.copper or 0) == 0) then
     return ("Matches %s, %s."):format(what, money(cheapest))
   end
-  return ("%s under %s, %s."):format(u.pct and (u.pct .. "%") or money(u.copper), what, money(cheapest))
+  -- the real gap (a fixed undercut over 5% of the price is cut to one step)
+  local gap = cheapest - undercutPrice(cheapest)
+  return ("%s under %s, %s."):format(u.pct and (u.pct .. "%") or money(gap), what, money(cheapest))
 end
 ns.underText = underText
 
@@ -254,7 +263,7 @@ local function fallback(frame, commodity)
   if (n or 0) > 0 or not full then return end
   local row = scanRow(loc)
   local p = row and (row.med or row.low)
-  if p then frame.PriceInput:SetAmount(roundPrice(p)) end
+  if p and scanTrusted(row.n, row.at) then frame.PriceInput:SetAmount(roundPrice(p)) end
 end
 
 -- Blizzard's Sell tab: the deposit warning, in a line of ours under its Post button.
@@ -331,7 +340,7 @@ local function collect()
             g = {
               key = key, id = info.itemID, link = info.hyperlink, icon = info.iconFileID, quality = info.quality,
               name = info.hyperlink and info.hyperlink:match("%[(.-)%]") or ("item " .. info.itemID),
-              count = 0, slots = {}, scan = row and (row.med or row.low), scanAt = row and row.at,
+              count = 0, slots = {}, scan = row and (row.med or row.low), scanAt = row and row.at, scanN = row and row.n,
             }
             byKey[key] = g
             groups[#groups + 1] = g
@@ -429,7 +438,14 @@ local function summarize(e)
       if acc >= others / 2 then e.usual = r.unit; break end
     end
   end
-  e.lone = first ~= nil and others >= 5 and first.others == 1 and e.usual ~= nil and first.unit < e.usual * 0.6
+  e.lone = first ~= nil and others >= 3 and first.others == 1 and e.usual ~= nil and first.unit < e.usual * 0.6
+  -- the next price after a lone one: what Quick sell undercuts instead (a troll listing at 1c never sets your price)
+  e.second = nil
+  if e.lone then
+    for _, r in ipairs(e.rows) do
+      if r.unit and r.others > 0 and r ~= first then e.second = r.unit; break end
+    end
+  end
 end
 ns.sellSummarize = summarize
 
@@ -755,10 +771,11 @@ local function suggest()
   -- live auctions older than a minute and a half say when they were checked
   local age = (e and time() - e.at >= 90) and (" Checked " .. ns.ago(e.at) .. ".") or ""
   if e and e.lowestOther and (not e.lowestMine or e.lowestOther < e.lowestMine) then
-    local why = underText(e.lowestOther)
-    local usual = e.lone and e.usual
-    if usual then why = why .. (" It's a lone one far under the usual %s."):format(money(usual)) end
-    return undercutPrice(e.lowestOther), why .. age
+    if e.lone and e.second then
+      return undercutPrice(e.second), underText(e.second, "the next cheapest auction") ..
+        (" Skipped a lone one at %s, far under the usual %s."):format(money(e.lowestOther), money(e.usual)) .. age
+    end
+    return undercutPrice(e.lowestOther), underText(e.lowestOther) .. age
   end
   if e and e.lowestMine then
     return e.lowestMine, ("Matches your own cheapest auction, %s."):format(money(e.lowestMine)) .. age
@@ -767,9 +784,13 @@ local function suggest()
   local lead = e and "Nobody else is selling this." .. age .. " " or ""
   local tail = e and "" or failed and " The auction house didn't answer; Refresh asks again." or " Checking live auctions..."
   if mem and mem.p then return mem.p, lead .. "Your last price (" .. ns.ago(mem.at) .. ")." .. tail end
-  if g.scan then
+  if g.scan and scanTrusted(g.scanN, g.scanAt) then
     local when = g.scanAt and (", " .. ns.ago(g.scanAt)) or ""
     return roundPrice(g.scan), lead .. "Usual price at the last full scan" .. when .. "." .. tail
+  end
+  if g.scan then
+    return nil, lead .. ("The last full scan saw only %d at %s, %s: too few to go by. Set a price."):format(
+      g.scanN or 0, money(g.scan), g.scanAt and ns.ago(g.scanAt) or "a while ago") .. tail
   end
   if e then return nil, "Nobody is selling this." .. age .. " Set a price." end
   return nil, failed and "The auction house didn't answer. Click Refresh to ask again, or set a price." or "Checking live auctions..."

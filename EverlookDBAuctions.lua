@@ -1216,7 +1216,18 @@ local function onShow(retried)
 end
 
 local FIX_FROM = 20773   -- 2026-11-16 (days since 1970, UTC): the day before v0.10.0 shipped
+local FIX_MEMORY_FROM = 20771   -- 2026-11-14: Quick sell suggested the divided price from its first version
 local function maxStackOf(id)
+  -- the addon's own saved item details first (there at login), then the game
+  local info = db and db.itemInfo and db.itemInfo[id]
+  if type(info) == "table" and type(info[10]) == "number" then return info[10] end
+  if type(info) == "string" then   -- packed "quality^ilvl^req^category^type^equip^icon^sell^stack^name" (Search.lua)
+    local n = 0
+    for part in (info .. "^"):gmatch("([^%^]*)%^") do
+      n = n + 1
+      if n == 9 then local v = tonumber(part); if v then return v end; break end
+    end
+  end
   local okS, n = pcall(C_Item.GetItemMaxStackSizeByID or function() return nil end, id)
   if okS and type(n) == "number" then return n end
   return nil
@@ -1262,7 +1273,7 @@ function events.ADDON_LOADED(name)
   if not db.fixedLiveUnit2 and type(db.sell) == "table" and type(db.sell.memory) == "table" then
     for key, m in pairs(db.sell.memory) do
       local id = tonumber(tostring(key):match("^(%d+)"))
-      if type(m) == "table" and (m.at or 0) >= FIX_FROM * 86400 and id and (maxStackOf(id) or 1) == 1 then db.sell.memory[key] = nil end
+      if type(m) == "table" and (m.at or 0) >= FIX_MEMORY_FROM * 86400 and id and (maxStackOf(id) or 1) == 1 then db.sell.memory[key] = nil end
     end
   end
   db.fixedLiveUnit2 = true
