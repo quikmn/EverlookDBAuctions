@@ -184,11 +184,24 @@ local function logScan(h, how)
 end
 ns.logScan = logScan
 
--- How many items have a saved price on a house.
+-- How many items have a saved price on a house: counted once, then kept up as prices come in (the bar shows it every
+-- second while the auction house is open). Keyed by the items table, so a new one (a full scan) is counted afresh.
+local itemCounts = setmetatable({}, { __mode = "k" })
 function ns.countItems(h)
-  local n = 0
-  for _ in pairs(h.items) do n = n + 1 end
+  local n = itemCounts[h.items]
+  if not n then
+    n = 0
+    for _ in pairs(h.items) do n = n + 1 end
+    itemCounts[h.items] = n
+  end
   return n
+end
+
+-- Saves an item's price on a house, keeping its count.
+local function setItem(h, id, v)
+  local n = itemCounts[h.items]
+  if n and h.items[id] == nil then itemCounts[h.items] = n + 1 end
+  h.items[id] = v
 end
 
 local function unfinished(h)
@@ -276,8 +289,7 @@ local function refreshPanel()
     panel.text:SetTextColor(unpack(T.places.prices))
   else
     flash = nil
-    local n = 0
-    for _ in pairs(h.items) do n = n + 1 end
+    local n = ns.countItems(h)
     local side = ("%s%s|r"):format(ns.UI.hex(T.places.prices), house:match("%-(%a+)$") or "?")
     local updated = h.scanned and ("updated " .. ago(h.scanned)) or "no update yet"
     local waiting = ns.unsavedText()
@@ -995,7 +1007,7 @@ local function captureBrowse()
     end
   end
   for id, s in pairs(seen) do
-    h.items[id] = { s[1], s[2], nil, now }
+    setItem(h, id, { s[1], s[2], nil, now })
     noteDay(h, id, s[1], day)
   end
 end
@@ -1012,7 +1024,7 @@ function ns.noteLivePrice(id, rows)
   end
   if not low then return end   -- nothing up with a buyout: keep the last known price
   local h = getHouse(house)
-  h.items[id] = { low, qty, nil, time() }
+  setItem(h, id, { low, qty, nil, time() })
   noteDay(h, id, low, today())
 end
 

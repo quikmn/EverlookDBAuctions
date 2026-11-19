@@ -2495,6 +2495,12 @@ def full_scan():
     check(not ns.scanning() and len(db.scans) == 1, "a manual update finishes")
     check(db.scans[1].noLink == 0 and db.scans[1].rows["1:0"] is not None, f"items loaded by the retries: {db.scans[1].noLink}")
     check("full scan done: 3000 auctions" in printed(lua), f"a manual update says so in chat: {printed(lua)}")
+    # the bar's item count: counted once, then kept up as prices come in
+    h = db.houses["Test-Alliance"]
+    check(ns.countItems(h) == 30, f"30 items priced: {ns.countItems(h)}")
+    ns.noteLivePrice(500, lua.eval("{ { unit = 7, qty = 1 } }"))
+    ns.noteLivePrice(1, lua.eval("{ { unit = 7, qty = 1 } }"))
+    check(ns.countItems(h) == 31, f"a new item counts, a known one doesn't: {ns.countItems(h)}")
 
     # closed while the first read is under way and the list goes with it: thrown away, the old prices stay
     lua, ns, fire = scan_lua()
