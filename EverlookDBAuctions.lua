@@ -1036,7 +1036,7 @@ end
 -- and with Shift held, the price of a full stack.
 local function tipOn(key)
   local t = db and db.tip
-  if not t or t[key] == nil then return key ~= "vendor" end   -- everything but the vendor line is on by default
+  if not t or t[key] == nil then return true end   -- all on by default (the vendor line hides itself where the game shows one)
   return t[key]
 end
 ns.tipOn = tipOn
@@ -1139,8 +1139,22 @@ local function disenchantLine(t, id)
   end
 end
 
-local function vendorLine(t, id)
-  if not db or not tipOn("vendor") then return end
+-- Whether the game already put its own "Sell Price" on this tooltip (it does in bags, not on quest rewards, loot or links)
+local function gameShowsSellPrice(tt)
+  if not tt then return false end
+  if (tt.shownMoneyFrames or 0) > 0 then return true end
+  local name, label = tt.GetName and tt:GetName(), SELL_PRICE
+  if not name or not label then return false end
+  for i = 1, (tt.NumLines and tt:NumLines() or 0) do
+    local fs = _G[name .. "TextLeft" .. i]
+    local text = fs and fs.GetText and fs:GetText()
+    if text and text:find(label, 1, true) == 1 then return true end
+  end
+  return false
+end
+
+local function vendorLine(t, id, tt)
+  if not db or not tipOn("vendor") or gameShowsSellPrice(tt) then return end
   local stack = IsShiftKeyDown() and tipOn("stack") and stackSize(id) or 1
   local info = { pcall(C_Item.GetItemInfo, id) }
   local sell = ok(info[1] and info[12])
@@ -1169,7 +1183,7 @@ local function hookTooltips()
   Tip:Register({ id = "EverlookDBAuctions.disenchant", kind = "item", order = Tip.ORDER.disenchant,
     add = function(t, ctx) if ctx.id then disenchantLine(t, ctx.id) end end })
   Tip:Register({ id = "EverlookDBAuctions.vendor", kind = "item", order = Tip.ORDER.vendor,
-    add = function(t, ctx) if ctx.id then vendorLine(t, ctx.id) end end })
+    add = function(t, ctx) if ctx.id then vendorLine(t, ctx.id, ctx.tooltip) end end })
 end
 ns.tooltipLines = { auction = auctionLines, disenchant = disenchantLine, vendor = vendorLine }
 

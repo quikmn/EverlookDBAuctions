@@ -17,7 +17,7 @@ local TIP_LINES = {
   { "tipprice", "auction", "Auction price, how many are up and how old the price is" },
   { "tiphistory", "history", "30-day low and median" },
   { "tipdisenchant", "disenchant", "What disenchanting it is worth (an estimate from material prices)" },
-  { "tipvendor", "vendor", "Vendor price" },
+  { "tipvendor", "vendor", "Vendor price, where the game doesn’t show one (quest rewards, loot, links)" },
   { "tipstack", "stack", "Hold Shift for the price of a full stack" },
 }
 
