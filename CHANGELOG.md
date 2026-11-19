@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.11.0 (2026-11-19)
 
 - Automatic price updates now run every 30 minutes instead of 15 (still when you open the auction house). The server allows one full scan per 15 minutes, so this leaves room for other addons that scan too, like Cheap Upgrades. Update prices can still be pressed after 15 minutes.
 - Quick sell and Shopping tabs now sit after every other tab at the bottom of the auction house, also other addons' tabs (they used to land on top of Cheap Upgrades' tab).
