@@ -315,7 +315,7 @@ end
 local function collect()
   local s = sdb()
   local groups, byKey = {}, {}
-  for bag = 0, NUM_BAG_SLOTS or 4 do
+  for bag = 0, NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4 do   -- the reagent bag (bag 5) too
     for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
       local info = C_Container.GetContainerItemInfo(bag, slot)
       if info and info.itemID and not info.isBound then
