@@ -494,11 +494,13 @@ local function makeFrame()
     if ns.ahq then ns.ahq.cancel("buy") end
     if self:IsShown() then self:Hide() end
     ns.buyOpen = false
+    if ns.searchPrimary then ns.searchPrimary(true) end   -- Search is the gold button again
     if ns.searchCrumb then ns.searchCrumb(nil) end
     if ns.liveStep then ns.liveStep() end
   end)
   f:SetScript("OnShow", function()
     ns.buyOpen = true
+    if ns.searchPrimary then ns.searchPrimary(false) end  -- Buy is the one gold button while this is open
     if ns.searchCrumb then ns.searchCrumb(B.name) end
   end)
   B.frame = f

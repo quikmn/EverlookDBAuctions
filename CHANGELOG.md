@@ -5,6 +5,7 @@
 - Closing the auction house during a price update no longer throws the update away: once the server has sent the auction list, the update finishes even with the auction house closed (items whose details hadn't loaded yet count as their plain version, without "of the Bear"). Closing before the server answered gives the 15-minute wait back, so you can update again right away.
 - The automatic price update starts 8 seconds after you open the auction house, so a quick visit doesn't use up the server's one update per 15 minutes.
 - Automatic price updates no longer write to chat ("full scan done: ..."); the price bar shows how they went. Updates you start yourself (Update prices, `/eah scan`) still say so in chat.
+- Advanced search: while the Buy panel is open, Search is a plain button, so Buy is the only gold one.
 
 ## v0.11.0 (2026-11-19)
 

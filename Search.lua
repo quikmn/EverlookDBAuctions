@@ -1462,6 +1462,15 @@ local function makeResults()
 
   local go = UI.button(f, "Search", 68, 24, "primary")
   go:SetPoint("RIGHT", help, "LEFT", -6, 0)
+  -- one gold button on screen: while the Buy panel (gold Buy) is open, Search is a plain button
+  function ns.searchPrimary(on)
+    go.edbRole = on and "primary" or nil
+    if go.edbLabel then
+      if on then go.edbLabel:SetShadowOffset(0, 0) else go.edbLabel:SetShadowOffset(1, -1) end
+    end
+    if go.EdbRefresh then go:EdbRefresh() end
+  end
+  if ns.buyOpen then ns.searchPrimary(false) end
 
   local save = UI.button(f, "Save", 48, 24)
   save:SetPoint("RIGHT", go, "LEFT", -6, 0)
