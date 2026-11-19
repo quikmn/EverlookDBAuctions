@@ -106,6 +106,7 @@ def main() -> int:
     failures += reload_logged()
     failures += scan_storage()
     failures += commodity_note()
+    failures += full_scan()
 
     if failures:
         for f in failures:
@@ -2107,7 +2108,7 @@ def shared_tooltip():
         C_Item.GetItemInfo = function(id) if id == 2589 then return "Linen Cloth", nil, 1, 5, 1, "Trade Goods", "", 200, "", 0, 13 end end
         C_Item.GetItemMaxStackSizeByID = function() return 20 end
         local h = EverlookAuctionsDB.houses["Test-Alliance"]
-        h.items[2589] = { 95, 3365, 40, MOCK_TIME - 76 * 60 }
+        h["items"][2589] = { 95, 3365, 40, MOCK_TIME - 76 * 60 }
         h.days[2589] = { [99] = 93, [98] = 95, [97] = 120 }
         h.scanned = MOCK_TIME - 76 * 60
         EverlookAuctionsDB.tip = { vendor = true }
@@ -2332,6 +2333,172 @@ def scan_storage():
     check("full scans kept for EverlookDB.com: 3" in out, "/eah status counts the scans kept")
     return failures
 
+
+SCAN_SETUP = """
+function GetBuildInfo() return "1.15", "1" end
+TIMERS = {}
+C_Timer = { After = function(secs, fn) TIMERS[#TIMERS + 1] = { at = MOCK_CLOCK + secs, fn = fn } end }
+MOCK_CLOCK = 0
+function GetTime() return MOCK_CLOCK end
+-- runs every timer due within secs, in time order
+function ADVANCE(secs)
+  local stop = MOCK_CLOCK + secs
+  while true do
+    local best
+    for i, t in ipairs(TIMERS) do if t.at <= stop and (not best or t.at < TIMERS[best].at) then best = i end end
+    if not best then break end
+    local t = table.remove(TIMERS, best)
+    if t.at > MOCK_CLOCK then MOCK_CLOCK = t.at end
+    t.fn()
+  end
+  MOCK_CLOCK = stop
+end
+-- the replicate list: 3000 auctions of 30 items; items 1..10 load only LOADS_AFTER seconds after they are asked for
+AUCTIONS, LOADED, ASKED, CLEARED, REPLICATED = {}, {}, {}, false, 0
+LOADS_AFTER = 1000
+for i = 0, 2999 do AUCTIONS[i] = { id = 1 + i % 30, count = 2, buyout = 100 + i % 7 } end
+for id = 11, 30 do LOADED[id] = true end
+C_Item.RequestLoadItemDataByID = function(id) ASKED[id] = ASKED[id] or MOCK_CLOCK end
+local function loaded(id)
+  return LOADED[id] or (ASKED[id] and MOCK_CLOCK - ASKED[id] >= LOADS_AFTER)
+end
+C_AuctionHouse = {
+  ReplicateItems = function() REPLICATED = REPLICATED + 1 end,
+  GetNumReplicateItems = function() return 3000 end,
+  GetReplicateItemInfo = function(i)
+    local a = not CLEARED and AUCTIONS[i]
+    if not a then return nil end
+    return "x", 1, a.count, 1, false, 1, nil, 10, 1, a.buyout * a.count, 0, false, nil, nil, nil, false, a.id
+  end,
+  GetReplicateItemLink = function(i)
+    local a = not CLEARED and AUCTIONS[i]
+    if a and loaded(a.id) then return "|cffffffff|Hitem:" .. a.id .. "::::::::::::|h[Item " .. a.id .. "]|h|r" end
+  end,
+  GetReplicateItemTimeLeft = function() return 2 end,
+}
+"""
+
+
+def scan_lua():
+    """The core with a fake replicate list, timers that run when ADVANCE says and a stand-in skin; the auction house
+    is open."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(CORE_SETUP)
+    lua.execute(SCAN_SETUP)
+    lua.execute("EverlookAuctionsDB.houses['Test-Alliance'].items[99] = { 5, 1, 1, 1 }")
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    ns = lua.table()
+    run((ROOT / "EverlookDBAuctions.lua").read_text(encoding="utf-8"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
+    lua.eval("""function(ns)
+      local mk = CreateFrame
+      function CreateFrame(...) local f = mk(...); f.GetWidth = function() return 100 end; return f end
+      local color = { 1, 1, 1 }
+      ns.T = setmetatable({ places = setmetatable({}, { __index = function() return color end }) },
+        { __index = function() return color end })
+      ns.UI = setmetatable({ hex = function() return "|cffffffff" end },
+        { __index = function() return function() return CreateFrame("Frame") end end })
+    end""")(ns)
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    fire("ADDON_LOADED", "EverlookDBAuctions")
+    lua.execute("AuctionHouseFrame = CreateFrame('Frame', 'AuctionHouseFrame')")
+    fire("AUCTION_HOUSE_SHOW")
+    return lua, ns, fire
+
+
+def printed(lua):
+    P = lua.globals().PRINTED
+    return "\n".join(P[i] for i in range(1, len(P) + 1))
+
+
+def full_scan():
+    """Price updates: once the auction list has arrived the update always finishes, also when the auction house
+    closes while item details load (the retries are skipped, unlinked auctions count as their plain version); closed
+    before any answer gives the wait back; automatic updates stay out of chat."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("full scan: " + what)
+
+    # automatic: waits 8 s after opening, runs quietly, and finishes after the AH closes during the item retries
+    lua, ns, fire = scan_lua()
+    G = lua.globals()
+    G.ADVANCE(7)
+    check(G.REPLICATED == 0, "no automatic update in the first seconds after opening")
+    G.ADVANCE(2)
+    check(G.REPLICATED == 1, f"automatic update 8 s after opening ({G.REPLICATED})")
+    fire("REPLICATE_ITEM_LIST_UPDATE")
+    G.ADVANCE(1)           # first read done, waiting 2 s before the first retry
+    check(ns.scanning(), "still loading item details")
+    G.CLEARED = True       # the list goes with the closed auction house
+    fire("AUCTION_HOUSE_CLOSED")
+    G.ADVANCE(1)
+    db = G.EverlookAuctionsDB
+    h = db.houses["Test-Alliance"]
+    check(not ns.scanning(), "closing the auction house finishes the update")
+    check(h.scanned is not None and h.why is None, f"the update counts as done ({h.why})")
+    check(len(db.scans) == 1 and db.scans[1].auctions == 3000, "the scan is kept with every auction")
+    sc = db.scans[1]
+    check(sc.noLink == 1000, f"auctions without a link counted: {sc.noLink}")
+    row = sc.rows["1:0"]
+    check(row is not None and row.split(",")[3] == "200", f"an unlinked item counts as its plain version: {row}")
+    check(h["items"][1] is not None and h["items"][1][2] == 200 and h["items"][99] is None, "tooltip prices from the new scan")
+    check("done" in h.log[1].how and "closed" in h.log[1].how, f"the log says it finished after closing: {h.log[1].how}")
+    check("full scan done" not in printed(lua), f"an automatic update says nothing in chat: {printed(lua)}")
+
+    # by hand, AH open all along: the retries load the items, and chat says it is done
+    lua, ns, fire = scan_lua()
+    G = lua.globals()
+    G.LOADS_AFTER = 1
+    G.ADVANCE(1)
+    G.SlashCmdList.EVERLOOKAUCTIONS("scan")
+    fire("REPLICATE_ITEM_LIST_UPDATE")
+    G.ADVANCE(30)
+    db = G.EverlookAuctionsDB
+    check(not ns.scanning() and len(db.scans) == 1, "a manual update finishes")
+    check(db.scans[1].noLink == 0 and db.scans[1].rows["1:0"] is not None, f"items loaded by the retries: {db.scans[1].noLink}")
+    check("full scan done: 3000 auctions" in printed(lua), f"a manual update says so in chat: {printed(lua)}")
+
+    # closed while the first read is under way and the list goes with it: thrown away, the old prices stay
+    lua, ns, fire = scan_lua()
+    G = lua.globals()
+    G.SlashCmdList.EVERLOOKAUCTIONS("scan")
+    fire("REPLICATE_ITEM_LIST_UPDATE")    # reads the first 1000; the next slice waits for the next frame
+    G.CLEARED = True
+    fire("AUCTION_HOUSE_CLOSED")
+    G.ADVANCE(1)
+    h = G.EverlookAuctionsDB.houses["Test-Alliance"]
+    check(not ns.scanning() and h.why == "closed" and h["items"][99] is not None and len(G.EverlookAuctionsDB.scans) == 0,
+          f"a half-read list is thrown away ({h.why})")
+
+    # closed while the first read is under way but the list is still readable: it finishes
+    lua, ns, fire = scan_lua()
+    G = lua.globals()
+    G.LOADS_AFTER = 0
+    G.SlashCmdList.EVERLOOKAUCTIONS("scan")
+    fire("REPLICATE_ITEM_LIST_UPDATE")
+    fire("AUCTION_HOUSE_CLOSED")
+    G.ADVANCE(1)
+    check(not ns.scanning() and len(G.EverlookAuctionsDB.scans) == 1, "a list still readable after closing is finished")
+
+    # closed before any answer: the wait is given back
+    lua, ns, fire = scan_lua()
+    G = lua.globals()
+    G.SlashCmdList.EVERLOOKAUCTIONS("scan")
+    h = G.EverlookAuctionsDB.houses["Test-Alliance"]
+    check(h.tried is not None, "a request starts the wait")
+    fire("AUCTION_HOUSE_CLOSED")
+    check(h.tried is None and not ns.scanning(), "closed before an answer: the wait is given back")
+    check(h.log[1].how == "AH closed while waiting", "and logged")
+
+    # automatic, no answer: quiet in chat
+    lua, ns, fire = scan_lua()
+    G = lua.globals()
+    G.ADVANCE(9)
+    G.ADVANCE(100)
+    check(not ns.scanning() and "didn't send" not in printed(lua), f"an automatic update with no answer is quiet: {printed(lua)}")
+    return failures
 
 def commodity_note():
     """Blizzard's commodity list: what a click there sets, and the line that says so."""

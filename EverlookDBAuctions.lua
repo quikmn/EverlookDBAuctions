@@ -18,6 +18,7 @@ local SCAN_COOLDOWN = 15 * 60   -- the server allows one full scan about every 1
 -- Automatic updates leave every other window free: other addons (Cheap Upgrades, Auctionator...) need the same full
 -- scan, and the server allows one per 15 minutes for everyone, so ours runs every 30 and theirs fit in between.
 local AUTO_EVERY = 30 * 60
+local AUTO_DELAY = 8            -- seconds the auction house is open before an automatic update starts
 local SCAN_TIMEOUT = 90         -- no answer by then: the server refused (throttled) or the AH closed
 local BATCH = 1000              -- auctions read per frame, so a big scan doesn't freeze the game
 local LOADS_PER_STEP = 15       -- item-detail requests per frame: a flood of them delays the player's own buys and posts
@@ -675,7 +676,7 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       if it[1] then noteDay(h, id, it[1], day) end
     end
     h.scanned = now
-    logScan(h, "done")
+    logScan(h, scan.aborted and "done (AH closed; item details skipped)" or "done")
     pruneDays(h)
     local build = select(2, GetBuildInfo())
     local sc = {
@@ -709,9 +710,11 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       C_Timer.After(3, function() if not scan then ReloadUI() end end)
     end
     h.took = time() - scan.started
+    -- automatic updates are quiet: the price bar says how they went; an update asked for answers in chat too
+    local auto = scan.auto
     scan = nil
     setStatus(("Prices updated · %s auctions, %s items"):format(num(total), num(#list)), ns.T.good)
-    say(("full scan done: %s auctions, %s item versions."):format(num(total), num(#list)))
+    if not auto then say(("full scan done: %s auctions, %s item versions."):format(num(total), num(#list))) end
     refreshPanel()
   end
   step()
@@ -747,14 +750,18 @@ end
 local RETRY_WAITS = { 2, 3, 5 }   -- seconds before each re-read of auctions whose item wasn't loaded yet
 
 -- Reads the whole list a slice per frame. Auctions whose item isn't loaded yet have no link (so no random suffix):
--- the game is asked to load those items, and they are read again up to three times before counting as suffix 0.
+-- their numbers are kept from the first read, the game is asked to load those items, and they are read again up to
+-- three times for the link before counting as suffix 0 (their plain version).
+-- Once the list has arrived the update always finishes: when the auction house closes, the retries are skipped and
+-- the auctions still without a link count from the numbers kept, so nothing more is needed from the auction house.
 local function processList(total, first, read)
+  local mine = scan
   if total <= 0 then
     -- an empty answer (refused or not loaded): never let it wipe the saved prices
     scan = nil
     if house then getHouse(house).why = "empty"; logScan(getHouse(house), "empty list") end
     setStatus("The server sent an empty list. Prices were left as they were.", ns.T.bad)
-    say("the server sent an empty auction list; prices were left as they were.")
+    if not mine.auto then say("the server sent an empty auction list; prices were left as they were.") end
     refreshPanel()
     return
   end
@@ -771,85 +778,123 @@ local function processList(total, first, read)
     for k = qi, stop do pcall(load, queue[k]) end
     qi = stop + 1
   end
-
-  local function stopped()
-    if not scan then return true end
-    if scan.aborted then
-      -- the auction house closed while reading: keep the old prices rather than half a scan
-      scan = nil
-      h.why = "closed"
-      logScan(h, "AH closed while reading")
-      say("the full scan stopped because the auction house closed; prices were left as they were.")
-      return true
-    end
+  local function ask(id)
+    if load and not requested[id] then requested[id] = true; queue[#queue + 1] = id end
   end
 
-  -- reads indices from `list` (or first..last), a slice per frame; `final` counts unlinked auctions as suffix 0
-  local function pass(list, final, done)
-    local n = list and #list or total
-    local i, missing = 1, {}
+  local function gone() return scan ~= mine end        -- finished, or thrown away
+  local function closed() return mine.aborted end      -- the auction house closed after the list arrived
+
+  -- every auction without a link counts under its plain version (suffix 0), from the numbers kept at the first read
+  local rounds = {}
+  local function finish(missing)
+    for _, r in ipairs(missing) do
+      addAuction(vars, r[2], r[3], r[4], r[5], r[6], nil, r[7])
+      unlinked[r[2]] = (unlinked[r[2]] or 0) + 1
+    end
+    finishScan(h, vars, total, #missing, rounds, unlinked)
+  end
+
+  -- The first read, first..first+total-1. An auction without a link is kept as { index, id, count, buyout, minBid,
+  -- bid, time left }. Should the auction house close before every auction is read and the list go with it, the
+  -- update is thrown away (half a scan would drop the prices of everything not read).
+  local function firstPass(done)
+    local i, missing, lost = 1, {}, 0
     local function step()
-      if stopped() then return end
+      if gone() then return end
+      if not closed() and yielding() then
+        C_Timer.After(0.25, step)
+        return
+      end
+      if load and not closed() then pump() end
+      local stop = math.min(i + BATCH - 1, total)
+      for j = i, stop do
+        local k = first + j - 1
+        local count, buyout, id, minBid, bid, link, left = read(k)
+        if id and count and count > 0 then
+          if link then
+            addAuction(vars, id, count, buyout, minBid, bid, link, left)
+          else
+            missing[#missing + 1] = { k, id, count, buyout, minBid, bid, left }
+            ask(id)
+          end
+        elseif closed() then
+          lost = lost + 1
+        end
+      end
+      if lost > math.max(10, total * 0.01) then
+        scan = nil
+        h.why = "closed"
+        logScan(h, "AH closed while reading")
+        if not mine.auto then say("the full scan stopped because the auction house closed; prices were left as they were.") end
+        return
+      end
+      i = stop + 1
+      scan.done = math.min(stop, total)
+      if i > total then done(missing) else C_Timer.After(0, step) end
+    end
+    step()
+  end
+
+  -- A re-read of the auctions still without a link; the auction house closing ends it at once with the rest unread.
+  local function retry(missing, done)
+    local i, still = 1, {}
+    local function step()
+      if gone() then return end
+      if closed() then
+        for j = i, #missing do still[#still + 1] = missing[j] end
+        done(still)
+        return
+      end
       if yielding() then
         C_Timer.After(0.25, step)
         return
       end
       if load then pump() end
-      local stop = math.min(i + BATCH - 1, n)
+      local stop = math.min(i + BATCH - 1, #missing)
       for j = i, stop do
-        local k = list and list[j] or (first + j - 1)
-        local count, buyout, id, minBid, bid, link, left = read(k)
-        if id and count and count > 0 then
-          if link or final then
-            addAuction(vars, id, count, buyout, minBid, bid, link, left)
-            if final and not link then
-              missing[#missing + 1] = k
-              unlinked[id] = (unlinked[id] or 0) + 1
-            end
-          else
-            missing[#missing + 1] = k
-            if load and not requested[id] then requested[id] = true; queue[#queue + 1] = id end
-          end
+        local r = missing[j]
+        local count, buyout, id, minBid, bid, link, left = read(r[1])
+        if link and id == r[2] and count and count > 0 then
+          addAuction(vars, id, count, buyout, minBid, bid, link, left)
+        else
+          still[#still + 1] = r
+          ask(r[2])
         end
       end
       i = stop + 1
-      if not list and scan then scan.done = math.min(stop, n) end
-      if i > n then done(missing) else C_Timer.After(0, step) end
+      if i > #missing then done(still) else C_Timer.After(0, step) end
     end
     step()
   end
 
-  local round, rounds = 0, {}
+  local round = 0
   local function after(missing)
     rounds[#rounds + 1] = #missing
-    if #missing == 0 or round >= #RETRY_WAITS then
-      if #missing == 0 then
-        finishScan(h, vars, total, 0, rounds, unlinked)
-      else
-        -- last try: whatever still has no link counts under suffix 0
-        pass(missing, true, function(still)
-          finishScan(h, vars, total, #still, rounds, unlinked)
-        end)
-      end
-      return
-    end
+    if #missing == 0 or round >= #RETRY_WAITS or closed() then finish(missing); return end
     round = round + 1
     local function drain()
-      if stopped() then return end
+      if gone() then return end
+      if closed() then finish(missing); return end
       if load and qi <= #queue then
         if not yielding() then pump() end
         C_Timer.After(0, drain)
         return
       end
       requested, queue, qi = {}, {}, 1   -- ask again next round: some loads fail or get dropped
-      C_Timer.After(RETRY_WAITS[round], function()
-        if stopped() then return end
-        pass(missing, false, after)
-      end)
+      -- the wait ends early when the auction house closes (AUCTION_HOUSE_CLOSED calls scan.wake)
+      local woke = false
+      local function wake()
+        if woke or gone() then return end
+        woke, mine.wake = true, nil
+        if closed() then finish(missing) else retry(missing, after) end
+      end
+      mine.wake = wake
+      C_Timer.After(RETRY_WAITS[round], wake)
     end
     drain()
   end
-  pass(nil, false, after)
+  firstPass(after)
 end
 
 function startScan(auto)
@@ -864,7 +909,7 @@ function startScan(auto)
   end
   local kind = apiKind()
   if kind == "modern" then
-    scan = { started = time(), mode = "replicate", side = houseSide, at = GetServerTime() }
+    scan = { started = time(), mode = "replicate", side = houseSide, at = GetServerTime(), auto = auto }
     C_AuctionHouse.ReplicateItems()
   elseif kind == "classic" then
     local _, canAll = CanSendAuctionQuery()
@@ -873,10 +918,10 @@ function startScan(auto)
       if not auto then say("the server doesn't allow a price update right now; try again in a minute.") end
       return
     end
-    scan = { started = time(), mode = "getall", side = houseSide, at = GetServerTime() }
+    scan = { started = time(), mode = "getall", side = houseSide, at = GetServerTime(), auto = auto }
     QueryAuctionItems("", nil, nil, 0, nil, nil, true, false, nil)
   else
-    say("this client has no auction house API I know. Type /eah status and send that to EverlookDB.")
+    if not auto then say("this client has no auction house API I know. Type /eah status and send that to EverlookDB.") end
     return
   end
   h.tried, h.why = time(), nil
@@ -889,7 +934,7 @@ function startScan(auto)
       h.why = "noanswer"
       logScan(h, "no answer")
       setStatus("No answer from the server. Prices were left as they were.", ns.T.bad)
-      say("the server didn't send the auction list (it may limit full scans). Try again later.")
+      if not mine.auto then say("the server didn't send the auction list (it may limit full scans). Try again later.") end
       refreshPanel()
     end
   end)
@@ -1090,7 +1135,10 @@ ns.tooltipLines = { auction = auctionLines, disenchant = disenchantLine, vendor 
 ---------------------------------------------------------------------------------------------------------------------
 -- Events and commands
 
+local visits = 0   -- counts auction house visits, so a timer from an earlier visit does nothing
+
 local function onShow(retried)
+  if not retried then visits = visits + 1 end
   house, houseSide = currentHouseKey()
   local parent = ahFrame()
   -- Blizzard loads the auction house UI on this same event; if it isn't there yet, look again next frame
@@ -1099,12 +1147,14 @@ local function onShow(retried)
   setStatus(nil)
   refreshPanel()
   -- Automatic full scan when the last one is 30+ minutes old (db.auto, on by default; /eah auto off).
-  -- A short wait first, so the auction house window finishes opening before the list comes in.
+  -- AUTO_DELAY seconds after opening first: a quick visit (buy one thing, close) doesn't spend the server's one scan
+  -- per 15 minutes on a list nobody waits for, and the window finishes opening before the list comes in.
   if db.auto ~= false and not scan then
     local h = getHouse(house)
     if not h.tried or time() - h.tried >= AUTO_EVERY then
-      C_Timer.After(1.5, function()
-        if house and not scan and ahFrame() and ahFrame():IsShown() then startScan(true) end
+      local visit = visits
+      C_Timer.After(AUTO_DELAY, function()
+        if visit == visits and house and not scan and ahFrame() and ahFrame():IsShown() then startScan(true) end
       end)
     end
   end
@@ -1140,10 +1190,18 @@ function events.AUCTION_HOUSE_SHOW() onShow() end
 function events.AUCTION_HOUSE_CLOSED()
   if scan then
     if scan.reading then
+      -- the list is here: the update finishes without the auction house (processList), at once if it is waiting
       scan.aborted = true
+      if scan.wake then scan.wake() end
     else
+      -- nothing answered yet: the request goes unused, so the wait for the next one is given back
       scan = nil
-      if house then getHouse(house).why = "closed"; logScan(getHouse(house), "AH closed while waiting") end
+      if house then
+        local h = getHouse(house)
+        h.why = "closed"
+        logScan(h, "AH closed while waiting")
+        h.tried = nil
+      end
     end
   end
   house = nil
