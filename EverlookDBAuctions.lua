@@ -1140,9 +1140,15 @@ local function disenchantLine(t, id)
 end
 
 -- Whether the game already put its own "Sell Price" on this tooltip (it does in bags, not on quest rewards, loot or links)
+local tipDebug   -- /eah tipdebug: the next item tooltip prints what the vendor line saw
 local function gameShowsSellPrice(tt)
   if not tt then return false end
-  if (tt.shownMoneyFrames or 0) > 0 then return true end
+  -- a money frame that is really on this tooltip (the count alone can be left over from an earlier tooltip)
+  local tname = tt.GetName and tt:GetName()
+  for i = 1, (tt.shownMoneyFrames or 0) do
+    local mf = tname and _G[tname .. "MoneyFrame" .. i]
+    if mf and mf.IsShown and mf:IsShown() and (not mf.GetParent or mf:GetParent() == tt) then return true end
+  end
   local name, label = tt.GetName and tt:GetName(), SELL_PRICE
   if not name or not label then return false end
   for i = 1, (tt.NumLines and tt:NumLines() or 0) do
@@ -1154,6 +1160,13 @@ local function gameShowsSellPrice(tt)
 end
 
 local function vendorLine(t, id, tt)
+  if tipDebug and tt then
+    tipDebug = nil
+    local info = { pcall(C_Item.GetItemInfo, id) }
+    print(("|cff4fc3f7EverlookDB Auctions|r tooltip: item %s, sell price %s, setting %s, game shows a sell price: %s (money frames %s)"):format(
+      tostring(id), tostring(info[1] and info[12]), tostring(tipOn("vendor")), tostring(gameShowsSellPrice(tt)),
+      tostring(tt.shownMoneyFrames)))
+  end
   if not db or not tipOn("vendor") or gameShowsSellPrice(tt) then return end
   local stack = IsShiftKeyDown() and tipOn("stack") and stackSize(id) or 1
   local info = { pcall(C_Item.GetItemInfo, id) }
@@ -1400,6 +1413,7 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   if ns.slash and ns.slash(msg) then return end
   if msg == "scan" then startScan(); return end
   if msg == "debug" then ns.debugReport() return end
+  if msg == "tipdebug" then tipDebug = true; print("|cff4fc3f7EverlookDB Auctions|r: hover an item; its tooltip prints what the vendor line saw.") return end
   if msg == "test" then ns.toggleTestMode() return end
   if msg == "auto off" or msg == "auto on" then
     db.auto = msg == "auto on"
