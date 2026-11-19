@@ -479,26 +479,67 @@ end
 
 -- Item details are saved once in the addon's own file (db.itemInfo, db.itemStats): the game keeps only so many items
 -- in memory, so asking it again on every search would give a different set each time.
+-- Saved compactly, one line of text per item ("quality^ilvl^req^category^type^slot^icon^sell^stack^name", the slot
+-- without its INVTYPE_), about half the size of a table per item; read into tables as they are used.
+local packedOnce = false
+local unpackItem
+local function packItem(c)
+  local equip = tostring(c[7] or ""):gsub("^INVTYPE_", "")
+  return table.concat({ c[2] or 1, c[3] or 0, c[4] or 0, c[5] or "", c[6] or "", equip, c[8] or 0, c[9] or 0,
+    c[10] or 1, (tostring(c[1] or ""):gsub("%^", "")) }, "^")
+end
 local function store()
   local db = ns.db()
   if not db then return nil end
   db.itemInfo = db.itemInfo or {}
   db.itemStats = db.itemStats or {}
+  if not packedOnce then
+    -- details saved as tables by earlier versions: packed once per session
+    packedOnce = true
+    for id, c in pairs(db.itemInfo) do
+      if type(c) == "table" then db.itemInfo[id] = packItem(c) end
+    end
+  end
   return db
 end
+
+function unpackItem(text)
+  local q, ilvl, req, cat, kind, equip, icon, sell, stack, name =
+    text:match("^([^^]*)^([^^]*)^([^^]*)^([^^]*)^([^^]*)^([^^]*)^([^^]*)^([^^]*)^([^^]*)^(.*)$")
+  if not q then return nil end
+  return { name, tonumber(q) or 1, tonumber(ilvl) or 0, tonumber(req) or 0, cat, kind,
+    equip ~= "" and ("INVTYPE_" .. equip) or "", tonumber(icon) or icon, tonumber(sell) or 0, tonumber(stack) or 1 }
+end
+
+local unpacked = {}   -- id -> the saved line read into a table, this session
 
 -- { name, quality, ilvl, reqlevel, category, type, equipLoc, icon, sell, stack } or nil while the game loads it.
 local function itemInfo(id)
   local db = store()
-  local c = db and db.itemInfo[id]
-  if c then return c end
+  local saved = db and db.itemInfo[id]
+  if type(saved) == "table" then return saved end
+  if saved then
+    local c = unpacked[id]
+    if c and c.edbFrom == saved then return c end
+    c = unpackItem(saved)
+    if c then
+      c.edbFrom = saved
+      unpacked[id] = c
+      return c
+    end
+  end
   local name, _, quality, ilvl, req, category, kind, stack, equip, icon, sell = C_Item.GetItemInfo(id)
   if not name then return nil end
-  c = { name, quality or 1, ilvl or 0, req or 0, category or "", kind or "", equip or "", icon or 0, sell or 0, stack or 1 }
-  if db then db.itemInfo[id] = c end
+  local c = { name, quality or 1, ilvl or 0, req or 0, category or "", kind or "", equip or "", icon or 0, sell or 0, stack or 1 }
+  if db then
+    db.itemInfo[id] = packItem(c)
+    c.edbFrom = db.itemInfo[id]
+    unpacked[id] = c
+  end
   return c
 end
 ns.itemInfo = itemInfo
+ns.packItem, ns.unpackItem = packItem, function(t) return unpackItem(t) end   -- for tests/run.py
 
 local EMPTY_STATS = { stats = "" }
 

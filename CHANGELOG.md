@@ -9,7 +9,8 @@
 - New setting (General page): open the auction house on Browse, Quick sell, or the tab you used last (the default). Also `/eah openon sell`, and the settings search finds it under "tab".
 - `/eah status` is short and readable: the version, one line per auction house ("Alliance: 8,123 prices, updated 12 min ago"), and how many scans wait to upload. The technical details (auction API, update log, scans kept) moved to `/eah debug`; `/eah help` no longer lists `test` and `debug` (they still work).
 - Quick sell no longer hides Blizzard's own confirm box when the auction house asks you to confirm a post (hiding it from an addon could make other confirm boxes stop working). Quick sell's own confirm shows as before; if you confirm in Blizzard's box instead, Quick sell counts the post and its box goes away.
-- Quick sell: when a post fails, the message says why in the game's own words, for example "The post didn't go through: Not enough money for the deposit."
+- Quick sell: when a post fails, the message says why in the game's own words, for example "The post didn't go through: You don't have enough money."
+- A smaller saved file, so logins and reloads stay quick: full scans kept for EverlookDB.com now take up to about 6 MB instead of 20 MB (the oldest go first, still at most 7 days), and the item details Advanced search keeps are stored in about a third less space. When scans are dropped to make room, `/eah status` says how many, since the uploader may not have sent them yet.
 
 ## v0.11.0 (2026-11-19)
 

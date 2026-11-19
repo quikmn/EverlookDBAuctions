@@ -106,6 +106,7 @@ def main() -> int:
     failures += reload_logged()
     failures += scan_storage()
     failures += commodity_note()
+    failures += item_cache()
     failures += full_scan()
 
     if failures:
@@ -2289,7 +2290,7 @@ def scan_storage():
 
     # past 7 days goes, unless it is the newest scan of its house; the house's previous scan is packed
     scans = tbl(mk(now - 8 * day), mk(now - 10 * day, "Horde"), mk(now - day), mk(now))
-    dropped = ns.trimScans(scans, now)
+    dropped, _room = ns.trimScans(scans, now)
     check(dropped == 1 and ats(scans) == [now - 10 * day, now - day, now], f"8-day-old scan dropped: {ats(scans)}")
     check(scans[1].rows is not None and scans[3].rows is not None, "the newest scan per house keeps its rows")
     check(scans[2].rows is None and scans[2].z is not None, "the house's older scan is packed")
@@ -2297,7 +2298,7 @@ def scan_storage():
     # over 60 scans: a scan with a newer one of its house in the same server hour goes first, oldest first
     base = (now // 3600 - 20) * 3600
     scans = tbl(*[mk(base + k * 900) for k in range(64)])   # 4 per hour, 16 hours
-    dropped = ns.trimScans(scans, now)
+    dropped, _room = ns.trimScans(scans, now)
     left = ats(scans)
     gone = sorted(set(base + k * 900 for k in range(64)) - set(left))
     check(dropped == 4 and len(left) == 60, f"64 scans trimmed to 60 ({dropped} dropped)")
@@ -2310,12 +2311,19 @@ def scan_storage():
     left = ats(scans)
     check(len(left) == 60 and left[0] == base - 100 * 3600 + 2 * 7200, f"oldest dropped when none share an hour: {len(left)}")
 
-    # the size cap: 1,000,000 bytes each, about 20 MB in all
+    # the size cap: 1,000,000 bytes each, about 6 MB in all; drops for room are counted for /eah status
     scans = tbl(*[mk(base + k * 3600) for k in range(25)])
     for i in range(1, 25):
         setp(scans[i], 1000000)
-    ns.trimScans(scans, now)
-    check(len(scans) == 21 and scans[1].at == base + 4 * 3600, f"over 20 MB: oldest dropped ({len(scans)} left)")
+    dropped, room = ns.trimScans(scans, now)
+    check(len(scans) == 7 and scans[1].at == base + 18 * 3600, f"over 6 MB: oldest dropped ({len(scans)} left)")
+    check(dropped == 18 and room == 18, f"all 18 went for room: {dropped}, {room}")
+    ns.noteDropped(room, now)
+    ns.noteDropped(0, now + 8 * day)
+    check(ns.droppedText() is None, "drops older than 7 days are forgotten")
+    ns.noteDropped(2, now)
+    check("2 older scans were dropped in the last 7 days" in ns.droppedText(), ns.droppedText())
+    lua.globals().EverlookAuctionsDB.dropped = None
 
     # the newest scan of each house is never dropped, even alone over the size cap
     big = mk(base - 5 * 3600, "Horde")
@@ -2517,6 +2525,40 @@ def full_scan():
     G.ADVANCE(9)
     G.ADVANCE(100)
     check(not ns.scanning() and "didn't send" not in printed(lua), f"an automatic update with no answer is quiet: {printed(lua)}")
+    return failures
+
+def item_cache():
+    """Item details are saved as one compact line per item (old tables are packed at first use) and read back the
+    same."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("item cache: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    db = ns.db()
+    c = ns.itemInfo(3000)
+    saved = db.itemInfo[3000]
+    check(isinstance(saved, str) and saved == "2^20^15^Weapon^Swords^WEAPON^1^500^1^Old Sword",
+          f"an old table is packed into one line: {saved!r}")
+    got = [c[i] for i in range(1, 11)]
+    check(got == ["Old Sword", 2, 20, 15, "Weapon", "Swords", "INVTYPE_WEAPON", 1, 500, 1], f"read back the same: {got}")
+    c2 = ns.itemInfo(2589)
+    check(c2[7] == "" and c2[1] == "Linen Cloth" and c2[10] == 20, "an item with no slot")
+    check(lua.eval("rawequal")(ns.itemInfo(3000), c), "read once per session")
+    odd = ns.unpackItem(ns.packItem(lua.eval('{ "Odd ^ Name: of the Bear", 3, 1, 0, "A", "B", "", 7, 0, 5 }')))
+    check(odd[1] == "Odd  Name: of the Bear" and odd[2] == 3 and odd[10] == 5, f"a ^ in a name can't break the line: {odd[1]}")
+    lua.execute("C_Item.GetItemInfo = function(id) if id == 555 then return 'New Thing', nil, 1, 5, 0, 'Trade Goods', 'Cloth', 20, '', 9, 3 end end")
+    n = ns.itemInfo(555)
+    check(n[1] == "New Thing" and db.itemInfo[555] == "1^5^0^Trade Goods^Cloth^^9^3^20^New Thing",
+          f"a newly loaded item is saved packed: {db.itemInfo[555]!r}")
     return failures
 
 def commodity_note():

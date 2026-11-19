@@ -7,8 +7,9 @@
 -- Everlook). Each full scan is also kept as a summary for EverlookDB.com: region, realm, which auction house, the
 -- server time, and per item version (item + random suffix) the lowest, 10th-percentile and median price per unit,
 -- quantity, auctions, bid-only auctions, auctions with bids, time left and lowest bid. Sellers, bidders and other
--- players are never kept. The scans of the last 7 days are kept (up to 60, about 20 MB), so none is lost while the
--- uploader or the site is down; all but the newest per house are packed into one compressed string each.
+-- players are never kept. The scans of the last 7 days are kept (up to 60, about 6 MB), so few are lost while the
+-- uploader or the site is down; all but the newest per house are packed into one compressed string each. Scans dropped
+-- to stay under that size are counted, and /eah status says so.
 -- The game writes saved variables only at /reload, logout or a character switch: the bar says when scans wait for one.
 -- /eah for status, /eah scan to start a full scan while the auction house is open.
 
@@ -29,7 +30,9 @@ local HISTORY_DAYS = 30
 -- keeps its rows as a table (Search, Below vendor and tooltips read it); older ones are packed into one string.
 local KEEP_DAYS = 7
 local MAX_SCANS = 60
-local MAX_SCAN_BYTES = 20 * 1024 * 1024
+-- (6 MB: about 10 packed scans beside the newest per house; the whole saved file stays under about 8 MB, which the
+-- game reads at every login and writes at every reload)
+local MAX_SCAN_BYTES = 6 * 1024 * 1024
 local ROW_BYTES = 76            -- what one row of a scan still kept as a table takes in the saved file (measured)
 local UNSAVED_AFTER = 30 * 60   -- scans not yet on disk this long: the bar says /reload saves them
 local STALE = 24 * 3600         -- older prices are shown grey
@@ -580,7 +583,8 @@ end
 
 -- Packs every scan but the newest per house, then drops scans older than KEEP_DAYS (server time); over MAX_SCANS or
 -- MAX_SCAN_BYTES it drops a scan with a newer one of its house in the same server hour first (the site keeps one per
--- hour), oldest first, then the oldest. The newest scan per house is never dropped. Returns how many were dropped.
+-- hour), oldest first, then the oldest. The newest scan per house is never dropped. Returns how many were dropped,
+-- and how many of those went for room (younger than KEEP_DAYS: the uploader may not have sent them yet).
 local function trimScans(scans, now)
   local keep = newestPerHouse(scans)
   for _, sc in ipairs(scans) do if not keep[sc] then compactScan(sc) end end
@@ -590,7 +594,7 @@ local function trimScans(scans, now)
     local sc = scans[i]
     if not keep[sc] and (sc.at or 0) < cutoff then table.remove(scans, i); dropped = dropped + 1 end
   end
-  local bytes = 0
+  local bytes, forRoom = 0, 0
   for _, sc in ipairs(scans) do bytes = bytes + scanBytes(sc) end
   while #scans > MAX_SCANS or bytes > MAX_SCAN_BYTES do
     local pick
@@ -613,9 +617,9 @@ local function trimScans(scans, now)
     if not pick then break end
     bytes = bytes - scanBytes(scans[pick])
     table.remove(scans, pick)
-    dropped = dropped + 1
+    dropped, forRoom = dropped + 1, forRoom + 1
   end
-  return dropped
+  return dropped, forRoom
 end
 ns.trimScans = trimScans
 
@@ -643,6 +647,21 @@ function ns.unsavedText(now)
   local n, oldest = unsavedInfo()
   if n == 0 or (now or GetServerTime()) - oldest <= UNSAVED_AFTER then return nil end
   return ("%d %s waiting to upload · /reload saves %s"):format(n, n == 1 and "scan" or "scans", n == 1 and "it" or "them")
+end
+-- Scans dropped to keep the saved file small (db.dropped: server times, the last KEEP_DAYS), and the line /eah status
+-- shows for them.
+function ns.noteDropped(n, now)
+  db.dropped = db.dropped or {}
+  for _ = 1, n or 0 do db.dropped[#db.dropped + 1] = now end
+  local cutoff = now - KEEP_DAYS * 86400
+  for i = #db.dropped, 1, -1 do if db.dropped[i] < cutoff then table.remove(db.dropped, i) end end
+  if #db.dropped == 0 then db.dropped = nil end
+end
+function ns.droppedText()
+  local n = db.dropped and #db.dropped or 0
+  if n == 0 then return nil end
+  return ("%d older %s dropped in the last %d days to keep the saved file small; any the uploader hadn't sent are lost"
+    .. " (run it more often to keep them)"):format(n, n == 1 and "scan was" or "scans were", KEEP_DAYS)
 end
 function ns.noteUnsaved(sc, finished) unsavedScans[#unsavedScans + 1] = { scan = sc, finished = finished } end
 
@@ -706,7 +725,9 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       deals = deals,                      -- auctions under vendor price, or the cheapest ones of items not loaded
     }
     table.insert(db.scans, sc)
-    trimScans(db.scans, GetServerTime())   -- packs the house's previous scan, drops what is past keeping
+    -- packs the house's previous scan, drops what is past keeping; drops for room are noted for /eah status
+    local _, forRoom = trimScans(db.scans, GetServerTime())
+    ns.noteDropped(forRoom, GetServerTime())
     ns.noteUnsaved(sc, GetServerTime())
     linkSamples = nil
     if ns.onScan then ns.onScan() end
