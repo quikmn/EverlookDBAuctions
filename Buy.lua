@@ -270,8 +270,15 @@ local function buyCommodity()
   local qty = B.qty or 0
   if qty < 1 then return end
   if B.quote then
-    -- second click: pay the quoted price
+    -- second click: pay the quoted price, unless the game says the quote has run out (our timer may be late)
     local quote = B.quote
+    local left = try(AH.GetQuoteDurationRemaining)
+    if (type(left) == "number" and left <= 0) or (quote.endsAt and GetTime() >= quote.endsAt) then
+      cancelQuote()
+      setStatus("The price quote ran out, so nothing was bought. Press Buy to ask again.", T.mute)
+      render()
+      return
+    end
     if GetMoney() < quote.total then
       cancelQuote()
       setStatus(("Not enough money: that costs %s and you have %s."):format(money(quote.total), money(GetMoney())), T.bad)
@@ -742,9 +749,11 @@ function events.COMMODITY_PRICE_UPDATED(unit, total)
     return
   end
   -- the quote holds for a short while; then it's gone and Buy asks again
+  -- (ended a second early, so a click in the last moment doesn't reach the server after the quote is gone)
   local secs = try(AH.GetQuoteDurationRemaining)
   if type(secs) ~= "number" or secs <= 0 then secs = 30 end
-  C_Timer.After(secs, function()
+  quote.endsAt = GetTime() + math.max(1, secs - 1)
+  C_Timer.After(math.max(1, secs - 1), function()
     if B.quote == quote then
       cancelQuote()
       setStatus("The price quote ran out, so nothing was bought. Press Buy to ask again.", T.mute)

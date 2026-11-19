@@ -1436,6 +1436,15 @@ def buy_panel():
     check(f.buy.text == "Confirm 50c", f"quote: {f.buy.text}")
     G.advance(21)
     check(f.buy.text == "Buy" and "ran out" in f.status.text, f"the quote runs out: {f.buy.text} / {f.status.text}")
+    # the game says the quote is gone before our timer does: Confirm pays nothing
+    click(f.buy)
+    fire("COMMODITY_PRICE_UPDATED", 10, 50)
+    check(f.buy.text == "Confirm 50c", f"quote again: {f.buy.text}")
+    lua.execute("C_AuctionHouse.GetQuoteDurationRemaining = function() return 0 end")
+    click(f.buy)
+    check(len(calls("Confirm")) == 0 and f.buy.text == "Buy" and "ran out" in f.status.text,
+          f"an expired quote can't be confirmed: {f.buy.text} / {f.status.text}")
+    lua.execute("C_AuctionHouse.GetQuoteDurationRemaining = function() return 20 end")
     click(f.buy)
     G.advance(9)
     check(f.buy.text == "Buy" and "didn't send a price" in f.status.text, f"no price in time: {f.status.text}")
