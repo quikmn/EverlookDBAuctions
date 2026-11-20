@@ -9,6 +9,8 @@
 - The auction house has the EverlookDB look of the settings window: the same slate colours, rounded corners on the window, panels, buttons, boxes and tabs, a thin gold line along the window's top, and the softer gold on Buy, Post and Search.
 - Quick sell, Shopping and Advanced search no longer have a coloured frame and tint: each shows its colour as a thin line along its top, in its tab and in its title, so the screens look like one family.
 - Hurray! now also works where the game tells you about a sale through the auction house's own notice instead of a plain chat message (you saw "A buyer has been found..." in chat but no card).
+- Searching and sorting while prices update: a search, a click on a column to sort, or More results pauses the price update for a few seconds, so Blizzard's answer isn't stuck behind it. Blizzard's own lists ask the server again for every sort, so they can still take a moment.
+- Buy panel: click a column heading (Price each, Whole auction, Available, Time left) to sort by it, and again for the other way round. It sorts the auctions already loaded at once, without asking the server.
 - AH log has the EverlookDB look of the settings window: rounded slate window and cards, line icons, Bought and Income tabs, a search box, and a gear that opens its settings.
 - New settings page, AH log: window opacity (30-100%, solid by default), how many rows the list shows, switches for logging purchases and income, the sale celebration, and buttons to open the log.
 - Switches, buttons and sliders use a softer gold, and a switch's knob is dark when it's on, so it stands out on the gold.

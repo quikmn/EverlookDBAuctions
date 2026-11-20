@@ -121,6 +121,7 @@ def main() -> int:
     failures += commodity_note()
     failures += purchases()
     failures += cheer()
+    failures += buy_sort()
     failures += item_cache()
     failures += full_scan()
 
@@ -2816,6 +2817,39 @@ def purchases():
         P.add(lst, lua.eval("function(i) return { id = 1, q = 1, c = i } end")(i + 1), 3)
     check(len(lst) == 3 and lst[1].c == 3, "keeps the newest")
     check(P.add(lst, lua.eval("{ id = 1, q = 0, c = 5 }")) is None, "nothing bought: not logged")
+    return failures
+
+
+def buy_sort():
+    """The Buy panel's column sort: from the loaded rows, B.rows left cheapest first."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Buy.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    B = ns.buyPanel or ns.buy
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("buy sort: " + what)
+
+    if B is None or B.shownRows is None:
+        return ["buy sort: no Buy panel table (ns.buyPanel)"]
+    B.rows = lua.eval("{ { unit = 10, qty = 5, left = 100 }, { unit = 20, qty = 1, left = 50 }, { unit = 30, qty = 9 } }")
+    B.sortCol, B.sortDesc = "price", False
+    check([r.unit for r in B.shownRows().values()] == [10, 20, 30], "cheapest first by default")
+    B.sortDesc = True
+    check([r.unit for r in B.shownRows().values()] == [30, 20, 10], "price, dearest first")
+    B.sortCol, B.sortDesc = "avail", True
+    check([r.qty for r in B.shownRows().values()] == [9, 5, 1], "most available first")
+    B.sortCol, B.sortDesc = "left", False
+    check([r.unit for r in B.shownRows().values()] == [20, 10, 30], "least time left first, unknown last")
+    B.sortCol, B.sortDesc = "whole", True
+    check([r.unit for r in B.shownRows().values()] == [30, 10, 20], "whole auction")
+    check([r.unit for r in B.rows.values()] == [10, 20, 30], "the rows themselves stay cheapest first")
     return failures
 
 

@@ -18,6 +18,7 @@ local ROW = 22
 local CONFIRM_FOR = 6     -- seconds the Confirm button stays armed
 
 local B = {}
+ns.buyPanel = B   -- its state (rows, sort), for tests
 local render, send   -- defined further down
 local dealPick, nextDeal   -- Start buying (further down)
 
@@ -100,6 +101,33 @@ end
 local function byPrice(a, b)
   if a.unit and b.unit then return a.unit < b.unit end
   return a.unit ~= nil and b.unit == nil
+end
+
+-- The order the list shows (a click on a column heading): sorted here, from the auctions already loaded, never asked
+-- of the server again. B.rows stays cheapest first: buying many of a commodity takes the cheapest, whatever is shown.
+local SORT_BY = {
+  price = function(r) return r.unit end,
+  whole = function(r) return r.unit and r.unit * (r.qty or 1) end,
+  avail = function(r) return r.qty end,
+  left = function(r) return r.left or (r.band and (r.band + 1) * 1e7) end,
+}
+function B.shownRows()
+  local rows = B.rows or {}
+  local col, desc = B.sortCol or "price", B.sortDesc
+  if col == "price" and not desc then return rows end
+  local key = SORT_BY[col] or SORT_BY.price
+  local out = {}
+  for i, r in ipairs(rows) do out[i] = r end
+  table.sort(out, function(a, b)
+    local x, y = key(a), key(b)
+    if x == nil or y == nil then
+      if (x == nil) ~= (y == nil) then return x ~= nil end   -- unknown last
+      return byPrice(a, b)
+    end
+    if x ~= y then if desc then return x > y else return x < y end end
+    return byPrice(a, b)
+  end)
+  return out
 end
 
 -- The base name ("Dwarven Magestaff"): what Blizzard's search box takes; a browse by it lists every version.
@@ -432,7 +460,13 @@ function render()
   elseif B.state == "noanswer" then empty = "The auction house didn't answer. Press Refresh to try again."
   elseif B.state == "partial" then empty = "The auction house didn't send its whole list for this name. Try Show in Blizzard search." end
   f.list.empty:SetText(empty)
-  f.list:SetItems(B.rows or {})
+  f.list:SetItems(B.shownRows())
+  if B.commodity and B.sortCol == "whole" then B.sortCol, B.sortDesc = "price", false end
+  for _, h in ipairs(f.sortHeads or {}) do
+    if h.col == "whole" then h:SetShown(not B.commodity) end
+    local on = (B.sortCol or "price") == h.col
+    h.label:SetText(h.text .. (on and (B.sortDesc and " v" or " ^") or ""))
+  end
   f.qtyLabel:SetShown(B.commodity)
   f.qty:SetShown(B.commodity)
   f.max:SetShown(B.commodity)
@@ -544,16 +578,29 @@ local function makeFrame()
   local band = UI.headerBand(f, 20)
   band:SetPoint("TOPLEFT", 0, -56)
   band:SetPoint("TOPRIGHT", 0, -56)
-  local function col(text, x, right)
+  -- a click on a heading sorts by it (again: the other way round), right here from what is loaded
+  f.sortHeads = {}
+  local function col(text, x, right, key)
     local l = UI.label(band, text)
     if right then l:SetPoint("RIGHT", band, "RIGHT", x, 0); l:SetJustifyH("RIGHT") else l:SetPoint("LEFT", band, "LEFT", x, 0) end
+    local hit = CreateFrame("Button", nil, band)
+    hit:SetPoint("TOPLEFT", l, "TOPLEFT", -4, 3)
+    hit:SetPoint("BOTTOMRIGHT", l, "BOTTOMRIGHT", 4, -3)
+    hit:SetScript("OnClick", function()
+      if (B.sortCol or "price") == key then B.sortDesc = not B.sortDesc else B.sortCol, B.sortDesc = key, false end
+      render()
+    end)
+    hit:SetScript("OnEnter", function() l:SetTextColor(unpack(T.text)) end)
+    hit:SetScript("OnLeave", function() l:SetTextColor(unpack(T.mute)) end)
+    hit.label, hit.text, hit.col = l, text, key
+    f.sortHeads[#f.sortHeads + 1] = hit
     return l
   end
   -- right edges as in the rows: a row ends 18 px from the right (the list's 2 + the scroll bar's 16)
-  col("PRICE EACH", 12)
-  f.stackHead = col("WHOLE AUCTION", -198, true)
-  col("AVAILABLE", -118, true)
-  col("TIME LEFT", -28, true)
+  col("PRICE EACH", 12, false, "price")
+  f.stackHead = col("WHOLE AUCTION", -198, true, "whole")
+  col("AVAILABLE", -118, true, "avail")
+  col("TIME LEFT", -28, true, "left")
 
   f.list = UI.list(f, ROW, buildRow, fillRow)
   f.list:SetPoint("TOPLEFT", 0, -76)

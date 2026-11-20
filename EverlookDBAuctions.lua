@@ -59,6 +59,13 @@ do
       "PostCommodity", "CancelAuction" }) do
     if api[name] then hooksecurefunc(api, name, playerActed) end
   end
+  -- searches, a click on a column to sort (Blizzard asks the server again for every sort), More results: the scan
+  -- stops reading and loading item details for a few seconds, so the answer you wait for isn't stuck behind it
+  for _, name in ipairs({ "SendBrowseQuery", "SendSearchQuery", "SendSellSearchQuery", "SearchForFavorites",
+      "SearchForItemKeys", "RefreshItemSearchResults", "RefreshCommoditySearchResults", "RequestMoreBrowseResults",
+      "RequestMoreItemSearchResults", "RequestMoreCommoditySearchResults" }) do
+    if api[name] then hooksecurefunc(api, name, playerActed) end
+  end
   for _, name in ipairs({ "PlaceAuctionBid", "PostAuction", "StartAuction", "CancelAuction" }) do
     if _G[name] then hooksecurefunc(name, playerActed) end
   end
