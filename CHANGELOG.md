@@ -1,6 +1,7 @@
 # EverlookDB Auctions
 
 ## Unreleased
+- Tooltips: hold Ctrl over a stack in your bags for the price of that stack (14 flowers: 14 x the price). Shift is still a full stack, nothing held is one.
 - New: Crafting profit (`/eah profit`, works anywhere): every recipe you know whose result sells on the auction house for more than its materials cost, after the cut, best profit first, with the skill it needs, the cost, what it sells for, the profit and the margin. A material counts at the cheaper of its AH price and crafting it yourself (bolts, bars). Filter by skill and a minimum profit, type how many crafts you plan, and Make shopping list saves what they need, materials broken down and minus what you have, in the Shopping tab. Nothing is guessed: a material without an AH price shows ≈ (the real profit is lower), recipes whose result has no price are counted under the list, and old prices are grey. Settings on the new Crafting profit page in /eah.
 - For addon authors: EverlookDBAuctionsAPI version 2 adds `addShoppingList(name, { { itemID, count }, ... })`, so other addons can make shopping lists.
 - Prices anywhere: /eah prices opens Advanced search in a window of its own when you're away from the auction house. It searches everything in your faction's last full scan (by name or with the site's query language, e.g. `type has wand and reqlevel le 29 sort by price`). Live prices and buying still need the auction house.

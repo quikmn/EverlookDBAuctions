@@ -1106,10 +1106,40 @@ function ns.auctionLine(label, stack, it, row, scanned, now, serverNow)
   if scanned then return label, join("full scan " .. ago(scanned)), nil, false, "none listed" end
 end
 
+-- How many are in the stack the mouse is over (a bag or bank slot), or nil: from the slot itself, else the count the
+-- button shows.
+local function hoveredCount(tooltip)
+  if not tooltip or not tooltip.GetOwner then return nil end
+  local okO, owner = pcall(tooltip.GetOwner, tooltip)
+  if not okO or type(owner) ~= "table" then return nil end
+  if owner.GetBagID and owner.GetID and C_Container and C_Container.GetContainerItemInfo then
+    local okB, bag = pcall(owner.GetBagID, owner)
+    local okS, slot = pcall(owner.GetID, owner)
+    if okB and okS and bag and slot then
+      local okI, info = pcall(C_Container.GetContainerItemInfo, bag, slot)
+      local n = okI and info and ok(info.stackCount)
+      if type(n) == "number" and n > 0 then return n end
+    end
+  end
+  if type(owner.count) == "number" and owner.count > 0 then return owner.count end
+  local fs = owner.Count or (owner.GetName and owner:GetName() and _G[owner:GetName() .. "Count"])
+  local n = fs and fs.GetText and tonumber(ok(fs:GetText()) or "")
+  return n and n > 0 and n or nil
+end
+
+-- How many the price lines are for: Ctrl = the stack under the mouse (14 flowers), Shift = a full stack, else one.
+local function tipMultiplier(id, tooltip)
+  if IsControlKeyDown and IsControlKeyDown() and tipOn("stack") then
+    local n = hoveredCount(tooltip)
+    if n then return n end
+  end
+  return IsShiftKeyDown() and tipOn("stack") and stackSize(id) or 1
+end
+
 -- The auction house lines and their 30-day low and median, for the tooltip's item id.
 local function auctionLines(t, id, tooltip)
   if not db then return end
-  local stack = IsShiftKeyDown() and tipOn("stack") and stackSize(id) or 1
+  local stack = tipMultiplier(id, tooltip)
   local function each(p) return stack > 1 and (p * stack) or p end
   local suffix = stack > 1 and (" x" .. stack) or ""
   local keys = { factionKey() }
@@ -1202,7 +1232,7 @@ local function vendorLine(t, id, tt)
       tostring(tt.shownMoneyFrames)))
   end
   if not db or not tipOn("vendor") or gameShowsSellPrice(tt) then return end
-  local stack = IsShiftKeyDown() and tipOn("stack") and stackSize(id) or 1
+  local stack = tipMultiplier(id, tt)
   local info = { pcall(C_Item.GetItemInfo, id) }
   local sell = ok(info[1] and info[12])
   if sell and sell > 0 then

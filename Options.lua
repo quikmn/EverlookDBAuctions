@@ -1,7 +1,7 @@
 -- EverlookDB Auctions: the settings window (/eah), on the shared EverlookUI look (the same as Lattice and the other
 -- EverlookDB addons), with its entry in the game's Settings under AddOns.
 --   Selling   undercut, default duration
---   Tooltips  auction price, 30-day low and median, disenchant value, vendor price, full-stack price with Shift
+--   Tooltips  auction price, 30-day low and median, disenchant value, vendor price, full-stack price with Shift, the hovered stack's with Ctrl
 --   General   automatic price updates, the EverlookDB look for Blizzard's auction house, crafting cost
 -- Every setting is also a command: /eah <setting> <value> sets it, says so in chat and updates the open window;
 -- /eah get lists them. The core (EverlookDBAuctions.lua) routes /eah to this app, which follows the chat-command
@@ -19,7 +19,7 @@ local TIP_LINES = {
   { "tipdisenchant", "disenchant", "What disenchanting it is worth (an estimate from material prices)" },
   { "tipcraft", "craft", "What crafting one costs, for items you can craft (materials at the latest AH prices)" },
   { "tipvendor", "vendor", "Vendor price, where the game doesn’t show one (quest rewards, loot, links)" },
-  { "tipstack", "stack", "Hold Shift for the price of a full stack" },
+  { "tipstack", "stack", "Hold Shift for the price of a full stack, Ctrl for the stack under the mouse" },
 }
 
 local HOURS = { 12, 24, 48 }   -- the auction house's durations 1, 2, 3

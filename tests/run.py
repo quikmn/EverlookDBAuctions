@@ -2177,6 +2177,7 @@ def shared_tooltip():
     fire("ADDON_LOADED", "EverlookDBAuctions")
     show = lua.eval("""function(id)
       local tip = { lines = {} }
+      function tip:GetOwner() return MOCK_OWNER end
       function tip:AddLine(l) self.lines[#self.lines + 1] = (l:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
       function tip:AddDoubleLine(l, r)
         local function s(x) return (x:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T[^|]-UI%-(%a)%a+Icon[^|]*|t",function(c) return c:lower() end)) end
@@ -2198,6 +2199,14 @@ def shared_tooltip():
     lines = show(2589)
     check(lines[2].endswith("= 19s") and "x20" in lines[2], f"Shift: a full stack's price: {lines[2]}")
     G.SHIFT = False
+    # Ctrl: the stack under the mouse (a bag button showing 14), over Shift's full stack
+    lua.execute("MOCK_OWNER = { Count = { GetText = function() return '14' end } }; IsControlKeyDown = function() return true end")
+    lines = show(2589)
+    check("x14" in lines[2] and lines[2].endswith("= 13s 30c"), f"Ctrl: the hovered stack's price: {lines[2]}")
+    lua.execute("MOCK_OWNER = nil")
+    lines = show(2589)
+    check("x14" not in lines[2], f"Ctrl with no stack under the mouse: one: {lines[2]}")
+    lua.execute("IsControlKeyDown = nil")
     ns.tipDetail("shift")
     lines = show(2589)
     check(len(lines) == 4 and "30-day" not in "".join(lines[i] for i in range(1, len(lines) + 1)),
