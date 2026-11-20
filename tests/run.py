@@ -106,6 +106,7 @@ def main() -> int:
     failures += reload_logged()
     failures += scan_storage()
     failures += commodity_note()
+    failures += purchases()
     failures += item_cache()
     failures += full_scan()
 
@@ -2620,6 +2621,127 @@ def commodity_note():
     check(got == 658, "more than for sale: only what is listed")
     t = N.text(655, want, 499, 9)
     check("655" in t and "9 rows" in t and "cheapest first" in t, f"the line: {t}")
+    return failures
+
+def purchases():
+    """AH purchases: what is logged from the auction house's buy calls, the marks, and a recipe's cost per craft."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute("""
+      MOCK_TIME = 1000; function time() return MOCK_TIME end
+      function date(fmt, t) return 'd' .. tostring(t) end
+      UISpecialFrames = {}; tinsert = table.insert
+      function IsShiftKeyDown() return false end
+      MOCK_RESULTS = { { auctionID = 77, itemLink = '|cff1eff00|Hitem:6218::|h[Runed Copper Rod]|h|r', buyoutAmount = 900 } }
+      C_AuctionHouse = {
+        PlaceBid = function() end, StartCommoditiesPurchase = function() end, ConfirmCommoditiesPurchase = function() end,
+        GetNumItemSearchResults = function() return #MOCK_RESULTS end,
+        GetItemSearchResultInfo = function(_, i) return MOCK_RESULTS[i] end,
+      }
+    """)
+    ns = lua.table()
+    DB = lua.table()
+    lua.globals().MOCK_DB = DB
+    ns.db = lua.eval("function() return MOCK_DB end")
+    ns.money = lua.eval("function(c) return tostring(c) .. 'c' end")
+    ns.num = lua.eval("function(n) return tostring(n) end")
+    ns.house = lua.eval("function() return 'Realm-Alliance' end")
+    ns.itemFor = lua.eval("function(id) local p = MOCK_PRICES[id]; return p and { p, 1, 1, MOCK_TIME } end")
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
+    for name in ["PurchaseLog.lua", "Purchases.lua"]:
+        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+    P = ns.purchaseLog
+    G = lua.globals()
+    fire = lua.eval("function(e, a, b) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a, b) end end end")
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("purchases: " + what)
+
+    AH = G.C_AuctionHouse
+    # an item: seen in the search results, bought out, then the auction house says it went through
+    fire("ITEM_SEARCH_RESULTS_UPDATED", lua.eval("{ itemID = 6218 }"))
+    AH.PlaceBid(77, 900)
+    check(DB.bought is None or len(DB.bought) == 0, "nothing logged before the auction house answers")
+    fire("AUCTION_HOUSE_PURCHASE_COMPLETED", 77)
+    check(len(DB.bought) == 1 and DB.bought[1].id == 6218 and DB.bought[1].c == 900 and DB.bought[1].q == 1
+          and DB.bought[1].h == "Realm-Alliance" and "Runed Copper Rod" in DB.bought[1].link, "an item buyout is logged")
+    # a bid below the buyout is not
+    AH.PlaceBid(77, 500)
+    fire("AUCTION_HOUSE_PURCHASE_COMPLETED", 77)
+    check(len(DB.bought) == 1, "a bid isn't logged")
+    # a commodity: 20 Copper Bars for 700, quoted then confirmed
+    AH.StartCommoditiesPurchase(2840, 20)
+    fire("COMMODITY_PRICE_UPDATED", 35, 700)
+    AH.ConfirmCommoditiesPurchase(2840, 20)
+    fire("COMMODITY_PURCHASE_SUCCEEDED")
+    check(len(DB.bought) == 2 and DB.bought[2].id == 2840 and DB.bought[2].q == 20 and DB.bought[2].c == 700,
+          "a commodity purchase is logged with its quoted total")
+    # a failed one is not
+    AH.StartCommoditiesPurchase(2840, 5)
+    fire("COMMODITY_PRICE_UPDATED", 40, 200)
+    AH.ConfirmCommoditiesPurchase(2840, 5)
+    fire("COMMODITY_PURCHASE_FAILED")
+    fire("COMMODITY_PURCHASE_SUCCEEDED")
+    check(len(DB.bought) == 2, "a failed commodity purchase isn't logged")
+    # another lot of bars, dearer: 10 for 500
+    AH.StartCommoditiesPurchase(2840, 10)
+    fire("COMMODITY_PRICE_UPDATED", 50, 500)
+    AH.ConfirmCommoditiesPurchase(2840, 10)
+    fire("COMMODITY_PURCHASE_SUCCEEDED")
+    check(len(DB.bought) == 3, "second lot logged")
+
+    # the recipe: 4 Copper Bars + 1 Weak Flux (no purchase; AH price none) + 1 Copper Rod (AH 120)
+    w = lua.eval("{ recipeID = 9, name = 'Runed Copper Rod', mats = { { 2840, 4, 35 }, { 6217, 1, 120 }, { 2880, 1 } }, out = 6218, makes = 1 }")
+    ns.purchases.noteRecipe(w, True)
+    check(len(DB.recipes) == 1 and DB.boughtRecipe == 9 and DB.recipes[1].mats[1][2] == 4, "the recipe is remembered")
+    ns.purchases.noteRecipe(w, False)
+    check(len(DB.recipes) == 1, "the same recipe once")
+    priceOf = lua.eval("function(id) return MOCK_PRICES[id] end")
+    c = P.cost(DB.bought, DB.recipes[1], priceOf)
+    check(c.mats[1].src == "ah" and c.paidAll is False and c.crafts is None, "nothing marked: AH prices")
+    # mark both bar lots: 30 bars for 1200 = 40 each
+    DB.bought[2].m = True
+    DB.bought[3].m = True
+    c = P.cost(DB.bought, DB.recipes[1], priceOf)
+    m1 = c.mats[1]
+    check(m1.src == "paid" and m1.unit == 40 and m1.have == 30 and m1.lots == 2, f"marked bars average 40 each: {m1.unit}")
+    check(c.mats[2].src == "ah" and c.mats[3].src is None and c.unpriced == 1, "rod from the AH, flux without a price")
+    check(c.total == 4 * 40 + 120, f"cost per craft {c.total}")
+    n, q, cc = P.markedTotal(DB.bought)
+    check(n == 2 and q == 30 and cc == 1200, "marked totals")
+    # a recipe of bars only: 30 bars cover 7 crafts
+    only = lua.eval("{ id = 10, mats = { { 2840, 4 } } }")
+    c = P.cost(DB.bought, only, priceOf)
+    check(c.paidAll is True and c.crafts == 7 and c.total == 160, f"bars only: {c.crafts} crafts, {c.total}")
+
+    # the view: newest first, filter, marked only
+    nameOf = lua.eval("function(e) return MOCK_ITEMS[e.id] end")
+    v = P.view(DB.bought, "", False, nameOf)
+    check(len(v) == 3 and v[1].c == 500 and v[3].c == 900, "newest first")
+    check(len(P.view(DB.bought, "rod", False, nameOf)) == 1, "filter by name")
+    check(len(P.view(DB.bought, "", True, nameOf)) == 2, "marked only")
+
+    # the window opens and draws (the mock has no real layout; this catches errors)
+    try:
+        ns.purchases.open()
+        f = G.EverlookAuctionsPurchases
+        check(f.shown and "Marked: 2" in f.sum.text, f"window shows the marked total: {f.sum.text}")
+        rows = [f.rows[i] for i in range(1, len(f.rows) + 1)]
+        rows[0].scripts.OnClick(rows[0])
+        check(DB.bought[3].m is None, "a click unmarks")
+        check("Marked: 1" in f.sum.text, "the total follows")
+    except Exception as e:
+        failures.append(f"purchases: window error {e}")
+
+    # the cap: the oldest go first
+    lst = lua.table()
+    for i in range(5):
+        P.add(lst, lua.eval("function(i) return { id = 1, q = 1, c = i } end")(i + 1), 3)
+    check(len(lst) == 3 and lst[1].c == 3, "keeps the newest")
+    check(P.add(lst, lua.eval("{ id = 1, q = 0, c = 5 }")) is None, "nothing bought: not logged")
     return failures
 
 

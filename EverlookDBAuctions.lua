@@ -1412,6 +1412,7 @@ SlashCmdList.EVERLOOKAUCTIONS = function(msg)
   if ns.app then ns.app:HandleSlash(msg) return end
   if ns.slash and ns.slash(msg) then return end
   if msg == "scan" then startScan(); return end
+  if msg == "bought" or msg == "purchases" then if ns.purchases then ns.purchases.toggle() end return end
   if msg == "debug" then ns.debugReport() return end
   if msg == "tipdebug" then tipDebug = true; print("|cff4fc3f7EverlookDB Auctions|r: hover an item; its tooltip prints what the vendor line saw.") return end
   if msg == "test" then ns.toggleTestMode() return end

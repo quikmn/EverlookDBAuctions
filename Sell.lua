@@ -326,12 +326,18 @@ end
 local function collect()
   local s = sdb()
   local groups, byKey = {}, {}
+  -- items left out, by name, with why: a search that finds nothing says so instead of "Nothing matches."
+  local refused = {}
   for bag = 0, NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4 do   -- the reagent bag (bag 5) too
     for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
       local info = C_Container.GetContainerItemInfo(bag, slot)
-      if info and info.itemID and not info.isBound then
+      local name = info and info.hyperlink and info.hyperlink:match("%[(.-)%]")
+      if info and info.itemID and info.isBound then
+        if name then refused[name] = "soulbound" end
+      elseif info and info.itemID then
         local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
         local okValid, valid = pcall(AH.IsSellItemValid, loc, false)
+        if not (okValid and valid) and name then refused[name] = "refused" end
         if okValid and valid then
           local key = ns.variantOf(info.itemID, info.hyperlink) or (info.itemID .. ":0")
           local g = byKey[key]
@@ -367,6 +373,7 @@ local function collect()
     return a.name < b.name
   end)
   S.groups = groups
+  S.refused = refused
 end
 
 -- A bag slot that still holds this item version.
@@ -807,6 +814,25 @@ local function applySuggestion()
   updateTotals()
 end
 
+-- Why a search finds nothing although the item is in your bags: hidden (the Hidden tab), soulbound, or the auction
+-- house itself won't take it (an empty bag only: a bag with items in it, a quest item...).
+local function whyNot(s)
+  local hits = {}
+  for _, g in ipairs(S.groups) do
+    if s.hidden[g.key] and g.name:lower():find(S.filter, 1, true) then
+      return ("%s is hidden. It's in the Hidden tab; shift+right-click it there to show it again."):format(g.name)
+    end
+  end
+  for name, why in pairs(S.refused or {}) do
+    if name:lower():find(S.filter, 1, true) then hits[#hits + 1] = { name, why } end
+  end
+  table.sort(hits, function(a, b) return a[1] < b[1] end)
+  local h = hits[1]
+  if not h then return "Nothing matches." end
+  if h[2] == "soulbound" then return ("%s is soulbound, so it can't be sold."):format(h[1]) end
+  return ("The auction house won't take %s right now. A bag has to be empty and not equipped; Blizzard's Sell tab says the exact reason if you drag it there."):format(h[1])
+end
+
 local function renderBags()
   local f = S.frame
   if not f then return end
@@ -819,7 +845,7 @@ local function renderBags()
   end
   f.bags.empty:SetText(S.mode == "fav" and "No favourites in your bags. Right-click an item to make it one."
     or S.mode == "hidden" and "Nothing hidden. Shift+right-click an item to hide it."
-    or S.filter ~= "" and "Nothing matches." or "Nothing in your bags can be sold here.")
+    or S.filter ~= "" and (#out == 0 and whyNot(s) or "Nothing matches.") or "Nothing in your bags can be sold here.")
   f.bags:SetItems(out)
   S.visible = out
   f.bagCount:SetText(num(#S.groups) .. " items")

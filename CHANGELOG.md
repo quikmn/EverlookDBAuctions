@@ -1,5 +1,9 @@
 # EverlookDB Auctions
 
+## Unreleased
+- New: AH purchases (`/eah bought`, or Your buys in the crafting box beside the profession window). It's a log of everything you buy at the auction house, through our Buy panel, Blizzard's window or another addon, and it opens anywhere. Click the purchases you crafted with to mark them, pick a recipe, and it shows the cost per craft at what you actually paid (the average of the marked purchases of each material), how many crafts they cover, and the profit at today's price. Materials you haven't marked use the lowest AH price, in grey. Buyouts are logged once the auction house confirms them; bids aren't logged.
+- Quick sell: a search that finds nothing says why when the item is in your bags: hidden (Hidden tab), soulbound, or refused by the auction house.
+
 ## v0.12.3 (2026-11-19)
 - The vendor price line only steps aside when the game's own Sell Price is really on the tooltip (a leftover from an earlier tooltip could hide it on quest rewards). `/eah tipdebug` prints what the next item tooltip saw.
 

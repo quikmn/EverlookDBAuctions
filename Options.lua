@@ -117,6 +117,9 @@ local function build()
   app:Command("scan", "scan", "update prices now (auction house open)", function() if ns.startScan then ns.startScan() end end)
   app:Command("sell", "sell", "open Quick sell (auction house open)", function() ns.slash("sell") end, { "selling", "quicksell", "quick" })
   app:Command("shop", "shop", "open Shopping (auction house open)", function() ns.slash("shop") end, { "shopping", "lists" })
+  app:Command("bought", "bought", "your auction house purchases, and a recipe's cost from what you paid (works anywhere)", function()
+    if ns.purchases then ns.purchases.toggle() end
+  end, { "purchases", "buys", "log" })
   app:Command("run", "run <list>", "run a shopping list (auction house open)", function(rest)
     ns.slash(rest == "" and "run" or ("run " .. rest))
   end)
@@ -147,7 +150,7 @@ local function build()
     app:Widget(stack, "skin")
     app:Widget(stack, "crafting")
     UI.Header(stack, "Chat commands")
-    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting")
+    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting")
   end)
 end
 

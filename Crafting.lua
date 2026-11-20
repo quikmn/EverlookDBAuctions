@@ -277,6 +277,22 @@ local function makeFrame()
     GameTooltip:Show()
   end)
   f.shop:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+  -- the cost per craft from what you actually paid (Purchases.lua)
+  f.buys = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+  f.buys:SetSize(110, 22)
+  f.buys:SetText("Your buys")
+  f.buys:SetScript("OnClick", function()
+    if ns.purchases and C.work then ns.purchases.open(C.work.recipeID) end
+  end)
+  f.buys:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Your buys", 1, 1, 1)
+    GameTooltip:AddLine("Everything you bought at the auction house. Mark the purchases you craft with: this recipe's cost per craft then uses what you paid. Also /eah bought.",
+      nil, nil, nil, true)
+    GameTooltip:Show()
+  end)
+  f.buys:SetScript("OnLeave", function() GameTooltip:Hide() end)
   f:Hide()
   C.frame = f
   return f
@@ -294,6 +310,7 @@ local function render()
   end
   local changed = not C.work or C.work.recipeID ~= w.recipeID
   C.work = w
+  if ns.purchases then ns.purchases.noteRecipe(w, changed) end
   place(f, ProfessionsFrame)
 
   -- how old the prices are: the oldest one used (a price over a day old is grey)
@@ -378,6 +395,8 @@ local function render()
   y = y - 8
   f.shop:ClearAllPoints()
   f.shop:SetPoint("TOPLEFT", PAD - 2, y)
+  f.buys:ClearAllPoints()
+  f.buys:SetPoint("LEFT", f.shop, "RIGHT", 6, 0)
   y = y - 22 - PAD
   f:SetHeight(-y)
   f:Show()

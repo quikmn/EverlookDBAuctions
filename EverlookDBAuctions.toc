@@ -21,6 +21,8 @@ Search.lua
 Shopping.lua
 Buy.lua
 RecipeList.lua
+PurchaseLog.lua
+Purchases.lua
 Crafting.lua
 Options.lua
 API.lua
