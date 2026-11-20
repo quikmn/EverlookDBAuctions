@@ -1107,7 +1107,13 @@ local function renderList(f)
     or (#shown > 0 and ("%d %s"):format(#shown, income and "entries" or (sale and "auctions") or (looted and "loots") or "purchases") or ""))
   if looted then
     local n, worth, coins = B.lootToday()
-    f.sum:SetText(((B.lay and B.lay.mini) and "Today: %d items, ~%s, money %s" or "Today: %d items, worth about %s, and %s in money"):format(n, money(worth), money(coins)))
+    if B.lay and B.lay.mini then
+      -- one number: what the items are worth plus the money, without copper once it is gold
+      local all = worth + coins
+      f.sum:SetText(("Today: %d items, ~%s"):format(n, money(all >= 10000 and math.floor(all / 100) * 100 or all)))
+    else
+      f.sum:SetText(("Today: %d items, worth about %s, and %s in money"):format(n, money(worth), money(coins)))
+    end
     f.sum:SetTextColor(rgba(T.text))
     return
   end
