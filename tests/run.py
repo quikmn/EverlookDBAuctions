@@ -2664,7 +2664,7 @@ def purchases():
     ns.itemFor = lua.eval("function(id) local p = MOCK_PRICES[id]; return p and { p, 1, 1, MOCK_TIME } end")
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
-    for name in ["Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua", "PurchaseLog.lua", "Purchases.lua"]:
+    for name in ["Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua", "PurchaseLog.lua", "Purchases.lua", "LootCards.lua"]:
         run(source_of(name), name, "EverlookDBAuctions", ns)
     P = ns.purchaseLog
     G = lua.globals()
@@ -2826,6 +2826,19 @@ def purchases():
         check(B.leftText(fs.list[2]) in ("10m", "9m"), f"time left: {B.leftText(fs.list[2])}")
         B.noteSold("Runed Copper Rod", 1800, 2)
         check(len(fs.list) == 1 and fs.list[1].name == "Copper Bar", "the sold rod is off sale and waits in the mail")
+        # Loot: a loot line is parsed, logged with time, and the Looted tab and today's sum show it
+        link = "|cff1eff00|Hitem:7909::::::::20:::::|h[Aquamarine]|h|r"
+        LC = ns.lootCards
+        lk, n = LC.parseItem("You receive loot: " + link + "x3.")
+        check(lk == link and n == 3, f"loot line parsed: {lk} {n}")
+        check(LC.parseMoney("You loot 1 Gold, 5 Silver, 3 Copper") == 10503, "money parsed")
+        B.noteLoot(LC.itemFrom(link, 3), link)
+        B.noteLoot(lua.eval("{ copper = 250 }"))
+        lt = G.EverlookAuctionsCharDB.looted
+        check(len(lt) == 2 and lt[1].q == 3 and lt[1].name == "Aquamarine" and lt[2].copper == 250, "two loots logged")
+        B.mode = "looted"
+        B.render()
+        check("Today: 3 items" in f.sum.text, f"loot sum: {f.sum.text}")
     except Exception as e:
         failures.append(f"purchases: income view error {e}")
 

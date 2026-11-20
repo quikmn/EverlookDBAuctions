@@ -8,6 +8,8 @@
 ## IconTexture: Interface\AddOns\EverlookDBAuctions\Media\icon
 
 Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\EverlookUI\EverlookUI.lua
 Libs\EverlookUI\EverlookTooltip.lua
 EverlookDBAuctions.lua
@@ -25,6 +27,7 @@ RecipeList.lua
 PurchaseLog.lua
 Purchases.lua
 Celebrate.lua
+LootCards.lua
 Crafting.lua
 Options.lua
 API.lua

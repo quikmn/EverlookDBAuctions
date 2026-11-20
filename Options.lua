@@ -143,6 +143,32 @@ local function build()
     set = function(v) db().cheer = v end,
   })
   app:Setting({
+    key = "logloot", type = "bool", label = "Log everything you loot (the Looted tab, /eah loot)",
+    chatLabel = "Logging loot", keywords = { "loot", "looted", "log", "history", "pickup", "drops" },
+    get = function() return db().logLoot ~= false end,
+    set = function(v) db().logLoot = v end,
+  })
+  app:Setting({
+    key = "lootcards", type = "bool", label = "A card at the top of the screen for everything you loot (5 seconds, with what it's worth)",
+    chatLabel = "Loot cards", keywords = { "loot", "looted", "pickup", "toast", "card", "notification" },
+    get = function() return db().lootCards ~= false end,
+    set = function(v) db().lootCards = v end,
+  })
+  app:Setting({
+    key = "lootmoney", type = "bool", label = "Loot cards for money too",
+    chatLabel = "Loot cards for money", keywords = { "loot", "money", "gold", "coins" },
+    get = function() return db().lootMoney ~= false end,
+    set = function(v) db().lootMoney = v end,
+  })
+  app:Setting({
+    key = "lootmin", type = "choice", label = "Loot cards from this quality up", chatLabel = "Loot card quality",
+    keywords = { "loot", "quality", "grey", "gray", "junk", "rarity" },
+    choices = { { value = 0, text = "Poor (everything)" }, { value = 1, text = "Common" }, { value = 2, text = "Uncommon" },
+      { value = 3, text = "Rare" }, { value = 4, text = "Epic" } }, width = 180,
+    get = function() return db().lootMin or 0 end,
+    set = function(v) db().lootMin = tonumber(v) or 0 end,
+  })
+  app:Setting({
     key = "crafting", type = "bool", label = "Crafting cost beside the profession window", keywords = { "reagents", "materials", "profit", "tradeskill" },
     get = function() return db().craft ~= false end,
     set = function(v) db().craft = v end,
@@ -157,6 +183,9 @@ local function build()
   app:Command("bought", "bought", "your auction house purchases, and a recipe's cost from what you paid (works anywhere)", function()
     if ns.purchases then ns.purchases.toggle() end
   end, { "purchases", "buys", "log" })
+  app:Command("loot", "loot", "everything you looted, with when and where (works anywhere; also on Everlook Bar)", function()
+    if ns.purchases then ns.purchases.toggle("looted") end
+  end, { "looted", "loots", "drops" })
   app:Command("forsale", "forsale", "your auctions up for sale, as the auction house last showed them (works anywhere)", function()
     if ns.purchases then ns.purchases.toggle("forsale") end
   end, { "listed", "posted", "up" })
@@ -172,6 +201,16 @@ local function build()
   app:Command("test", "test", "reload after every full scan, so it is saved at once", function()
     if ns.toggleTestMode then ns.toggleTestMode() end
   end).hidden = true
+  app:Command("loottest", "loottest", "show a few loot cards once", function()
+    if not ns.lootCards then return end
+    local d = db()
+    local was = d.lootCards
+    d.lootCards = nil
+    ns.lootCards.show({ id = 4306, name = "Silk Cloth", count = 4, quality = 1, icon = 132905 })
+    ns.lootCards.show({ id = 7909, name = "Aquamarine", count = 1, quality = 2, icon = 134132 })
+    ns.lootCards.show({ copper = 1234 })
+    d.lootCards = was
+  end)
   app:Command("cheertest", "cheertest", "show the sale celebration once", function()
     if ns.cheer then
       local d = ns.db()
@@ -196,10 +235,12 @@ local function build()
     app:Widget(stack, "tipdetail")
   end)
   app:Section("ahlog", "AH log", function(stack)
-    UI.Header(stack, "AH log", "What you bought and what you sold, with what a craft cost you. Open it anywhere with /eah bought, /eah forsale or /eah income.")
+    UI.Header(stack, "AH log", "What you bought and what you sold, with what a craft cost you. Open it anywhere with /eah bought, /eah forsale, /eah income or /eah loot, or from its Loot plugin on Everlook Bar.")
     UI.ButtonRow(stack, {
       { label = "Open purchases", width = 150, style = "accent", onClick = function() if ns.purchases then ns.purchases.open() end end,
         desc = "Everything you bought, and a recipe's cost per craft from what you paid.", keywords = { "bought", "log" } },
+      { label = "Open loot log", width = 150, onClick = function() if ns.purchases then ns.purchases.toggle("looted") end end,
+        desc = "Everything you looted, with when and where.", keywords = { "loot", "looted", "drops" } },
       { label = "Open for sale", width = 150, onClick = function() if ns.purchases then ns.purchases.toggle("forsale") end end,
         desc = "Your auctions up for sale, as the auction house last showed them.", keywords = { "for sale", "listed", "posted", "auctions" } },
       { label = "Open income", width = 150, onClick = function() if ns.purchases then ns.purchases.toggle("income") end end,
@@ -211,7 +252,12 @@ local function build()
     UI.Header(stack, "Logging")
     app:Widget(stack, "logbuys")
     app:Widget(stack, "logincome")
+    app:Widget(stack, "logloot")
     app:Widget(stack, "cheer")
+    UI.Header(stack, "Loot cards")
+    app:Widget(stack, "lootcards")
+    app:Widget(stack, "lootmoney")
+    app:Widget(stack, "lootmin")
     UI.Note(stack, "Sales show up when you take their money from the mail. Bids aren't logged. Nothing about other players is saved: no sellers, buyers or senders.")
   end, { icon = "coins" })
   app:Section("general", "General", function(stack)

@@ -1,6 +1,9 @@
 # EverlookDB Auctions
 
 ## Unreleased
+- Loot cards: everything you loot shows as a card at the top of the screen for 5 seconds: icon, name in its quality colour, how many, and roughly what it's worth (last AH scan, else a vendor). Money too. Looting more of the same adds to its card. Settings: on/off, money on/off, lowest quality (Logging section). /eah loottest shows a few.
+- Loot log: a new Looted tab (/eah loot) lists everything you picked up on this character, newest first, with date and time, where, how many and what it's worth today. The last 5000 loots are kept.
+- Everlook Bar (or any data-broker bar): a new Loot plugin shows what you looted today. Click opens the loot log, Shift-click Income, right-click your purchases.
 - AH log, new For sale tab (/eah forsale): your auctions as the auction house showed them on your last visit, soonest to end first, with time left, price and what crafting one costs now. A sale takes its auction off the list.
 - AH log, Income: sales the game told you about while you played show at the top as "in your mail", with roughly what they bring, until you take the money from the mailbox. Sales while you were logged off only show once you open the mail.
 

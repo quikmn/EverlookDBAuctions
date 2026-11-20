@@ -62,6 +62,7 @@ local function itemName(id)
 end
 local function entryName(e)
   if e.kind == "mail" then return "Gold from mail" end
+  if e.loot then return e.copper and "Money" or (e.link and e.link:match("%[(.-)%]")) or e.name or "?" end
   if e.pending or e.sale then return (e.link and e.link:match("%[(.-)%]")) or e.name or "?" end
   if e.kind == "ah" then return "Auction house (refund or other)" end
   return (e.link and e.link:match("%[(.-)%]")) or e.name or (e.id and itemName(e.id)) or "?"
@@ -272,6 +273,33 @@ ahev:SetScript("OnEvent", function()
   if C_Timer and ns.sellQueryOwned then C_Timer.After(2, function() pcall(ns.sellQueryOwned) end) end
 end)
 
+-- Everything you looted (per character, EverlookAuctionsCharDB.looted, oldest first: { t, id, name, link, q, quality,
+-- zone } or { t, copper, zone }), newest LOOT_MAX kept. LootCards.lua reads the loot lines and calls B.noteLoot.
+local LOOT_MAX = 5000
+function B.looted()
+  local c = charDB()
+  c.looted = c.looted or {}
+  return c.looted
+end
+function B.noteLoot(e, link)
+  local d = db()
+  if d and d.logLoot == false then return end
+  local zone = GetRealZoneText and okv(GetRealZoneText()) or nil
+  local r = { t = time(), zone = zone, loot = true }
+  if e.copper then
+    r.copper = e.copper
+  else
+    r.id, r.name, r.q, r.quality = e.id, e.name, e.count or 1, e.quality
+    -- the link only when it says more than the id (random stats: "of the Bear")
+    if link and link:match("|Hitem:%d+:[^|]*[1-9]") then r.link = link:match("|c%x+|Hitem:.-|h|r") or nil end
+  end
+  local list = B.looted()
+  list[#list + 1] = r
+  while #list > LOOT_MAX do table.remove(list, 1) end
+  if B.frame and B.frame:IsShown() and B.mode == "looted" then B.render() end
+  if B.broker then B.broker() end
+end
+
 -- Sales still in the mail (Celebrate.lua calls B.noteSold when the game says one of your auctions sold).
 function B.pending()
   local d = db()
@@ -457,6 +485,16 @@ local function rowTooltip(self)
   local e = self.entry
   if not e then return end
   GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  if B.mode == "looted" then
+    if e.copper then
+      GameTooltip:SetText(money(e.copper), 1, 0.82, 0)
+    elseif e.link then pcall(GameTooltip.SetHyperlink, GameTooltip, e.link)
+    elseif e.id then pcall(GameTooltip.SetItemByID, GameTooltip, e.id) end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(("Looted %s%s"):format(date("%d %b %Y %H:%M", e.t), e.zone and (" in " .. e.zone) or ""), 1, 0.82, 0)
+    GameTooltip:Show()
+    return
+  end
   if B.mode == "forsale" then
     if e.link then pcall(GameTooltip.SetHyperlink, GameTooltip, e.link) elseif e.id then pcall(GameTooltip.SetItemByID, GameTooltip, e.id) end
     GameTooltip:AddLine(" ")
@@ -706,7 +744,7 @@ local function makeFrame()
   f.title:SetText("AH log")
   f.tabs = {}
   local prev
-  for _, t in ipairs({ { "bought", "Bought" }, { "forsale", "For sale" }, { "income", "Income" } }) do
+  for _, t in ipairs({ { "bought", "Bought" }, { "forsale", "For sale" }, { "income", "Income" }, { "looted", "Looted" } }) do
     local b = CreateFrame("Button", nil, f)
     b:SetSize(84, 26)
     if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0) else b:SetPoint("LEFT", f.title, "RIGHT", 18, 0) end
@@ -862,8 +900,9 @@ end
 local function renderList(f)
   local income = B.mode == "income"
   local sale = B.mode == "forsale"
-  local side = income or sale   -- the layout with the craft column, no marks
-  local all = income and incomeList() or (sale and (B.forSale().list or {})) or list()
+  local looted = B.mode == "looted"
+  local side = income or sale or looted   -- the layout with the third money column, no marks
+  local all = income and incomeList() or (sale and (B.forSale().list or {})) or (looted and B.looted()) or list()
   local shown = P.view(all, B.filter, B.markedOnly and not side, entryName)
   if sale then
     -- what runs out first, first
@@ -886,7 +925,7 @@ local function renderList(f)
       row.date:SetText(date("%d %b %H:%M", e.t))
       if sale then row.date:SetText(B.leftText(e)) end
       local id = income and saleID(e) or e.id
-      row.icon:SetTexture(id and try(C_Item.GetItemIconByID, id) or (e.kind and e.kind ~= "sale" and 133784) or 134400)
+      row.icon:SetTexture(id and try(C_Item.GetItemIconByID, id) or ((e.copper or (e.kind and e.kind ~= "sale")) and 133784) or 134400)
       row.name:SetText(entryName(e))
       row.name:SetTextColor(qualityColor(id))
       -- a sold item you can craft: what one costs to make again today, green when you sold above it
@@ -898,7 +937,16 @@ local function renderList(f)
       row.craft:SetShown(side and true or false)
       if e.pending then row.date:SetTextColor(rgba(T.accent)) else row.date:SetTextColor(rgba(T.muted)) end
       row.qty:SetText(e.q and ns.num(e.q) or "")
-      if sale and not e.c then
+      if looted then
+        -- where it dropped, then what it is worth today (the last scan, else a vendor)
+        quiet(row.craft, e.zone or "")
+        if e.copper then
+          quiet(row.each, ""); setMoney(row.total, e.copper, T.accent)
+        else
+          local each = ns.lootCards and ns.lootCards.worth(e.id)
+          if each then setMoney(row.each, each); setMoney(row.total, each * q) else quiet(row.each, ""); quiet(row.total, "") end
+        end
+      elseif sale and not e.c then
         quiet(row.each, ""); quiet(row.total, "bids only")
       elseif e.pending then
         -- not taken yet: what it likely brings, in grey ("~"), or "in mail" with no guess
@@ -920,7 +968,9 @@ local function renderList(f)
     end
   end
   f.empty:SetShown(#shown == 0)
-  if #all == 0 and sale then
+  if #all == 0 and looted then
+    f.empty:SetText("Nothing looted yet on this character. From now on every item and coin you pick up shows here, with when and where.")
+  elseif #all == 0 and sale then
     f.empty:SetText(B.forSale().at and "Nothing of yours was up for sale on your last visit to the auction house."
       or "Visit the auction house once on this character and your auctions show here, with how long each has left. Sales after that move to Income (in your mail).")
   elseif #all == 0 and income then
@@ -943,7 +993,13 @@ local function renderList(f)
   f.pos:SetPoint("TOPRIGHT", -PAD, -(bottom + 10))
   f.list:SetHeight(bottom + 32)
   f.pos:SetText(#shown > n and ("%d-%d of %d, scroll for more"):format(B.offset + 1, math.min(#shown, B.offset + n), #shown)
-    or (#shown > 0 and ("%d %s"):format(#shown, income and "entries" or (sale and "auctions") or "purchases") or ""))
+    or (#shown > 0 and ("%d %s"):format(#shown, income and "entries" or (sale and "auctions") or (looted and "loots") or "purchases") or ""))
+  if looted then
+    local n, worth, coins = B.lootToday()
+    f.sum:SetText(("Today: %d items, worth about %s, and %s in money"):format(n, money(worth), money(coins)))
+    f.sum:SetTextColor(rgba(T.text))
+    return
+  end
   if sale then
     local worth, n = 0, 0
     for _, e in ipairs(all) do n = n + 1; worth = worth + (e.c or 0) end
@@ -1068,13 +1124,62 @@ function B.leftText(e)
   return ("%dm"):format(math.max(1, math.floor(s / 60)))
 end
 
+-- What you looted since midnight: items, their worth today, and money.
+function B.lootToday()
+  local d = date("*t")
+  local since = time({ year = d.year, month = d.month, day = d.day, hour = 0 })
+  local n, worth, coins = 0, 0, 0
+  local list = B.looted()
+  for i = #list, 1, -1 do
+    local e = list[i]
+    if e.t < since then break end
+    if e.copper then coins = coins + e.copper
+    else
+      n = n + (e.q or 1)
+      local each = ns.lootCards and ns.lootCards.worth(e.id)
+      if each then worth = worth + each * (e.q or 1) end
+    end
+  end
+  return n, worth, coins
+end
+
+-- The Everlook Bar (or any LibDataBroker display) plugin: today's loot; left-click the loot log, right-click the AH log.
+local function setupBroker()
+  local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
+  if not LDB or B.ldb then return end
+  B.ldb = LDB:NewDataObject("EverlookDBAuctionsLog", {
+    type = "data source", label = "Loot", text = "", icon = 133784,
+    OnClick = function(_, button)
+      if button == "RightButton" then B.toggle("bought") elseif IsShiftKeyDown() then B.toggle("income") else B.toggle("looted") end
+    end,
+    OnTooltipShow = function(tip)
+      local n, worth, coins = B.lootToday()
+      tip:AddLine("Loot today", 1, 0.82, 0)
+      tip:AddLine(("%d items, worth about %s"):format(n, money(worth)), 1, 1, 1)
+      tip:AddLine(("Money: %s"):format(money(coins)), 1, 1, 1)
+      tip:AddLine(" ")
+      tip:AddLine("Click: loot log   Shift-click: income   Right-click: purchases", 0.6, 0.6, 0.6)
+    end,
+  })
+  B.broker()
+end
+function B.broker()
+  if not B.ldb then return end
+  local _, worth, coins = B.lootToday()
+  B.ldb.text = money(worth + coins)
+end
+local brokerEv = CreateFrame("Frame")
+brokerEv:RegisterEvent("PLAYER_LOGIN")
+brokerEv:SetScript("OnEvent", function() setupBroker() end)
+
 function B.render()
   local f = B.frame
   if not (f and f:IsShown()) then return end
   paintAlpha(f)
   local income = B.mode == "income"
   local sale = B.mode == "forsale"
-  local side = income or sale
+  local looted = B.mode == "looted"
+  local side = income or sale or looted
   for _, b in ipairs(f.tabs) do
     local on = b.mode == (B.mode or "bought")
     b.active = on
@@ -1084,7 +1189,8 @@ function B.render()
     b.label:SetTextColor(rgba(on and T.accent or T.muted))
   end
   local fs = B.forSale()
-  f.sub:SetText(income and "Gold you took from the mail. Hover a sale for its margin over crafting it again."
+  f.sub:SetText(looted and "Everything you picked up on this character, newest first, with what it is worth today."
+    or income and "Gold you took from the mail. Hover a sale for its margin over crafting it again."
     or sale and (fs.at and ("Your auctions as the auction house showed them on %s. Sales since then move to Income."):format(date("%d %b %H:%M", fs.at))
       or "Your auctions, read on every visit to the auction house.")
     or "Everything you bought at the auction house. Click the purchases you crafted with to mark them.")
@@ -1094,6 +1200,7 @@ function B.render()
   f.qtyHead:SetPoint("RIGHT", -(TOTAL_W + CRAFT_W + EACH_W + 24) + shift, 0)
   for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not side) end
   f.headWhen:SetText(sale and "TIME LEFT" or "WHEN")
+  f.craftHead:SetText(looted and "WHERE" or "CRAFT NOW, EACH")
   renderList(f)
   local listH = f.list:GetHeight() or 0
   if side then
