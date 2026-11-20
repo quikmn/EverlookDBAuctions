@@ -124,6 +124,7 @@ def main() -> int:
     failures += buy_sort()
     failures += item_cache()
     failures += full_scan()
+    failures += profit()
 
     if failures:
         for f in failures:
@@ -2953,6 +2954,289 @@ def cheer():
     G.MOCK_DB.cheer = False
     fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Copper Bar.")
     check(not f.shown, "turned off: no banner")
+    return failures
+
+
+def profit():
+    """The profit finder (Profit.lua): the cost of a craft with the cheaper of buying and crafting each material, the
+    auction house cut, loops (transmutes), unpriced materials, the filters, the shopping list it makes (RecipeList's
+    saveCounts) and the API's addShoppingList; then the window over the same data."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    ns = lua.table()
+    run(source_of("RecipeList.lua"), "RecipeList.lua", "EverlookDBAuctions", ns)
+    run(source_of("Profit.lua"), "Profit.lua", "EverlookDBAuctions", ns)
+    Pr, R = ns.profit, ns.recipeList
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("profit: " + what)
+
+    def seq(t):
+        return [t[i] for i in range(1, len(t) + 1)]
+
+    # Linen: cloth 18c, bolt on the AH 95c (crafting one from 2 cloth is 36c), thread 12c; a bag of 3 bolts + 3 thread
+    # sells for 520c. Fire and Earth: a transmute loop. Wood has no price.
+    lua.execute("""
+      PRICES = { [2589] = 18, [2996] = 95, [2320] = 12, [4238] = 520, [2570] = 140, [7068] = 400, [7067] = 300,
+                 [9000] = 1000, [11287] = 3500, [10938] = 1450 }
+      function PRICE(id) return PRICES[id], 1000 end
+      RECIPES = {
+        [2996] = { mats = { { 2589, 2 } }, makes = 1, rid = 1, name = "Bolt of Linen Cloth" },
+        [4238] = { mats = { { 2996, 3 }, { 2320, 3 } }, makes = 1, rid = 2, name = "Linen Bag" },
+        [2570] = { mats = { { 2996, 1 }, { 2320, 1 } }, makes = 1, rid = 3, name = "Linen Shirt" },
+        [7068] = { mats = { { 7067, 1 } }, makes = 1, rid = 4, name = "Transmute Earth to Fire" },
+        [7067] = { mats = { { 7068, 1 } }, makes = 1, rid = 5, name = "Transmute Fire to Earth" },
+        [9000] = { mats = { { 2996, 2 } }, makes = 2, rid = 6, name = "Two at a time" },
+        [11287] = { mats = { { 4470, 1 }, { 10938, 1 } }, makes = 1, rid = 7, name = "Lesser Magic Wand" },
+        [5001] = { mats = { { 2589, 1 } }, makes = 1, rid = 8, name = "Nobody buys it" },
+      }
+      SKILL = { [4238] = 45, [2570] = 1, [2996] = 1, [7068] = 275, [7067] = 275, [9000] = 100, [11287] = 10 }
+      function INFO(id) return SKILL[id] end
+      function PICKS(...)
+        local out, a = {}, { ... }
+        for i = 1, #a, 2 do out[#out + 1] = { row = a[i], crafts = a[i + 1] } end
+        return out
+      end
+    """)
+    G = lua.globals()
+    ctxOf = lua.eval("function(Pr, opts) opts = opts or {}; return Pr.context({ recipes = RECIPES, price = PRICE, "
+                     "cut = opts.cut or 0.05, craftMats = opts.craftMats, info = INFO }) end")
+    PICKS = G.PICKS
+
+    ctx = ctxOf(Pr)
+    bolt = Pr.unitCost(ctx, 2996)
+    check(bolt.cost == 36 and bolt.how == "craft", f"a bolt: crafting (36c) beats buying (95c): {bolt.cost} {bolt.how}")
+    cloth = Pr.unitCost(ctx, 2589)
+    check(cloth.cost == 18 and cloth.how == "buy", "cloth is bought")
+    bag = Pr.row(ctx, 4238, G.RECIPES[4238])
+    check(bag.cost == 3 * 36 + 3 * 12, f"bag cost uses crafted bolts: {bag.cost}")
+    check(bag.sale == 494, f"sale after the 5% cut: 520 x 0.95 = 494, got {bag.sale}")
+    check(bag.profit == 494 - 144 and not bag.approx, f"bag profit {bag.profit}")
+    check(abs(bag.margin - (350 / 144)) < 1e-9, "margin is profit over cost")
+    check(bag.skill == 45, "skill from the item data")
+    mats = [(m.id, m.how) for m in seq(bag.mats)]
+    check(mats == [(2996, "craft"), (2320, "buy")], f"materials say how they are got: {mats}")
+
+    # a neutral house: 15%
+    nctx = ctxOf(Pr, lua.eval("{ cut = 0.15 }"))
+    check(Pr.row(nctx, 4238, G.RECIPES[4238]).sale == 442, "15% cut at a neutral house: 520 x 0.85 = 442")
+
+    # buy everything: no crafting of materials
+    bctx = ctxOf(Pr, lua.eval("{ craftMats = false }"))
+    check(Pr.unitCost(bctx, 2996).cost == 95, "craftMats off: the bolt is bought")
+    check(Pr.row(bctx, 4238, G.RECIPES[4238]).cost == 3 * 95 + 36, "craftMats off: bag cost at bought bolts")
+
+    # cheaper to buy than craft: buy wins
+    G.PRICES[2996] = 30
+    check(Pr.unitCost(ctxOf(Pr), 2996).how == "buy", "buying wins when it is cheaper")
+    G.PRICES[2996] = 95
+
+    # yield: a recipe that makes 2 sells 2 at a time
+    two = Pr.row(ctxOf(Pr), 9000, G.RECIPES[9000])
+    check(two.cost == 72 and two.sale == 1900, f"makes 2: cost {two.cost}, sale 2 x 1000 x 0.95 = {two.sale}")
+
+    # loops: Fire <-> Earth are cut, not followed for ever; each keeps its bought price
+    lctx = ctxOf(Pr)
+    fire = Pr.row(lctx, 7068, G.RECIPES[7068])
+    check(fire.cost == 300 and fire.mats[1].how == "buy", f"transmute loop cut: Fire costs one bought Earth: {fire.cost}")
+    earth = Pr.unitCost(lctx, 7067)
+    check(earth.cost == 300 and earth.how == "buy", "Earth stays bought (crafting it needs Fire, which needs Earth)")
+    G.PRICES[7067] = None
+    fire2 = Pr.row(ctxOf(Pr), 7068, G.RECIPES[7068])
+    check(fire2.cost == 400 and fire2.mats[1].how == "craft" and not fire2.approx,
+          f"Earth without a price is made from a bought Fire, and the walk ends: {fire2.cost}")
+    G.PRICES[7067] = 300
+
+    # unpriced material: approx, left out of the cost, named, never 0
+    wand = Pr.row(ctxOf(Pr), 11287, G.RECIPES[11287])
+    check(wand.approx and wand.unpriced == 1 and wand.cost == 1450, f"wand: wood has no price: approx, cost {wand.cost}")
+    check(wand.missing[1] == 4470, "the unpriced material is named")
+    check(wand.mats[1].each is None, "no price is nil, not 0")
+
+    # the list: no sale price left out and counted, best profit first, filters
+    rows, counts = Pr.list(ctxOf(Pr), lua.eval("{}"))
+    names = [r.name for r in seq(rows)]
+    check("Nobody buys it" not in names and counts.noSale == 1, f"a result without a price is left out and counted: {counts.noSale}")
+    profits = [r.profit for r in seq(rows)]
+    check(profits == sorted(profits, reverse=True), "best profit first")
+    check(counts.known == 8, f"known recipes counted: {counts.known}")
+    check(counts.approx == 1, f"rows with an unpriced material counted: {counts.approx}")
+    rows2, _ = Pr.list(ctxOf(Pr), lua.eval("{ from = 40, to = 120 }"))
+    check(sorted(r.name for r in seq(rows2)) == ["Linen Bag", "Two at a time"], "skill range filter")
+    rows3, _ = Pr.list(ctxOf(Pr), lua.eval("{ min = 300 }"))
+    check(len(rows3) >= 2 and all(r.profit >= 300 for r in seq(rows3)), "minimum profit filter")
+    G.SKILL[9000] = None
+    rows4, _ = Pr.list(ctxOf(Pr), lua.eval("{ from = 1, to = 300 }"))
+    check(any(r.name == "Two at a time" for r in seq(rows4)), "unknown skill passes the whole range")
+    rows5, _ = Pr.list(ctxOf(Pr), lua.eval("{ from = 50, to = 300 }"))
+    check(not any(r.name == "Two at a time" for r in seq(rows5)), "unknown skill is out of a narrowed range")
+    G.SKILL[9000] = 100
+
+    # totals of a selection
+    cost, prof, crafts, approx = Pr.totals(PICKS(bag, 4, wand, 0))
+    check(cost == 4 * 144 and prof == 4 * 350 and crafts == 4 and not approx, f"totals: {cost} {prof} {crafts}")
+    approx2 = Pr.totals(PICKS(wand, 1))[3]
+    check(approx2, "a selection with an unpriced material is approx")
+
+    # shopping: 4 bags = 12 bolts (1 in the bags, so 11 crafted: 22 cloth, 5 in the bags) and 12 thread
+    have = {2589: 5, 2996: 1}
+    need = Pr.shopping(ctxOf(Pr), PICKS(bag, 4), lambda i: have.get(i, 0))
+    got = {m.id: (m.need, m.have, m.buy) for m in seq(need)}
+    check(got.get(2589) == (22, 5, 17), f"cloth: 22 needed, have 5, buy 17: {got.get(2589)}")
+    check(got.get(2320) == (12, 0, 12), f"thread: 12: {got.get(2320)}")
+    check(2996 not in got, "the crafted bolt is broken down, not bought")
+    need2 = Pr.shopping(ctxOf(Pr, lua.eval("{ craftMats = false }")), PICKS(bag, 4), None)
+    got2 = {m.id: m.buy for m in seq(need2)}
+    check(got2 == {2996: 12, 2320: 12}, f"craftMats off: bolts bought: {got2}")
+    # a recipe making 2 needs half the crafts of its material's recipe... and a material making 2 is rounded up
+    lua.execute("RECIPES[2996].makes = 2")
+    need4 = Pr.shopping(ctxOf(Pr), PICKS(Pr.row(ctxOf(Pr), 2570, G.RECIPES[2570]), 3), None)
+    got4 = {m.id: m.buy for m in seq(need4)}
+    check(got4.get(2589) == 4, f"3 bolts at 2 a craft: 2 crafts, 4 cloth: {got4.get(2589)}")
+    lua.execute("RECIPES[2996].makes = 1")
+    # a loop in the shopping list ends
+    fctx = ctxOf(Pr)
+    fr = Pr.row(fctx, 7068, G.RECIPES[7068])
+    need3 = Pr.shopping(fctx, PICKS(fr, 2), None)
+    check(len(need3) == 1 and need3[1].id == 7067 and need3[1].buy == 2, "transmute: buys 2 Earth, no loop")
+
+    # short money text for the columns
+    check(Pr.short(123456) == "12g 34s" and Pr.short(520) == "5s 20c" and Pr.short(80) == "80c" and Pr.short(-350) == "-3s 50c"
+          and Pr.short(None) == "?", "short money text")
+
+    # the list from counts (what the window and the API save)
+    lists = lua.table()
+    nm = {2589: "Linen Cloth", 2320: "Coarse Thread"}
+    l, new, i = R.saveCounts(lists, " Linen Bag ", lua.eval("{ { 2589, 17 }, { 2320, 12 }, { 2589, 3 }, { 99, 0 } }"), lambda i: nm.get(i))
+    check(new is True and i == 1 and l.name == "Linen Bag", "saveCounts makes a list named as asked")
+    check(l.want['name is "Linen Cloth"'] == 20 and l.want['name is "Coarse Thread"'] == 12 and len(l.queries) == 2,
+          "the same item twice adds up; a count of 0 is skipped")
+    l2, new2, _ = R.saveCounts(lists, "Linen Bag", lua.eval("{ { 2320, 2 } }"), lambda i: nm.get(i))
+    check(new2 is False and len(lists) == 1 and l2.want['name is "Coarse Thread"'] == 2 and l2.want['name is "Linen Cloth"'] is None,
+          "the same name replaces the list")
+    r = R.saveCounts(lists, "X", lua.eval("{ { 777, 1 } }"), lambda i: None)
+    check(r[0] is None and r[1] == "loading" and r[2][1] == 777, "an unloaded name: nothing saved, says loading")
+    check(R.saveCounts(lists, "  ", lua.eval("{ { 2589, 1 } }"), lambda i: "x")[1] == "no name", "no name refused")
+    check(R.saveCounts(lists, "Y", lua.eval("{}"), lambda i: "x")[1] == "no items", "no items refused")
+    check(len(lists) == 1, "refused calls save nothing")
+
+    failures += profit_api()
+    failures += profit_window()
+    return failures
+
+
+def profit_api():
+    """EverlookDBAuctionsAPI v2: addShoppingList writes a list; everything else stays read-only."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+      NAMES = { [2589] = "Linen Cloth", [2320] = "Coarse Thread" }
+      C_Item = { GetItemNameByID = function(id) return NAMES[id] end, RequestLoadItemDataByID = function() end }
+      function GetServerTime() return 0 end
+    """)
+    ns = lua.table()
+    DB = lua.table()
+    lua.globals().MOCK_DB = DB
+    ns.db = lua.eval("function() return MOCK_DB end")
+    refreshed = []
+    ns.shoppingRefresh = lambda: refreshed.append(1)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(source_of("RecipeList.lua"), "RecipeList.lua", "EverlookDBAuctions", ns)
+    run(source_of("API.lua"), "API.lua", "EverlookDBAuctions", ns)
+    api = lua.globals().EverlookDBAuctionsAPI
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("profit api: " + what)
+
+    check(api.version == 2, "version 2")
+    ok_add, new = api.addShoppingList("Linen Bags", lua.eval("{ { 2589, 24 }, { 2320, 12 } }"))
+    check(ok_add is True and new is True and len(DB.lists) == 1 and DB.lists[1].want['name is "Linen Cloth"'] == 24,
+          "addShoppingList saves a list")
+    check(refreshed, "the Shopping tab is told")
+    ok2, new2 = api.addShoppingList("Linen Bags", lua.eval("{ { 2589, 2 } }"))
+    check(ok2 is True and new2 is False and len(DB.lists) == 1, "again with the same name: replaced")
+    bad, why = api.addShoppingList("Mystery", lua.eval("{ { 31337, 1 } }"))
+    check(bad is False and why == "loading", f"unknown item name: false, loading ({why})")
+    bad2, why2 = api.addShoppingList("", lua.eval("{ { 2589, 1 } }"))
+    check(bad2 is False and why2 == "no name", "no name")
+    bad3, why3 = api.addShoppingList("Z", "not a table")
+    check(bad3 is False and why3 == "no items", "items not a table")
+    setter = lua.eval("function(api) return (pcall(function() api.price = nil end)) end")
+    check(setter(api) is False, "the API table is still read-only")
+    return failures
+
+
+def profit_window():
+    """The window over a few recipes: rows best first, planned crafts, Make shopping list, the minimum profit box."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("""
+      MOCK_TIME = 100000; function time() return MOCK_TIME end
+      UISpecialFrames = UISpecialFrames or {}; tinsert = tinsert or table.insert
+      function IsShiftKeyDown() return false end
+      wipe = wipe or function(t) for k in pairs(t) do t[k] = nil end return t end
+      GetRealmName = GetRealmName or function() return "Realm" end
+      UnitFactionGroup = UnitFactionGroup or function() return "Alliance" end
+      MOCK_ITEMS[2589], MOCK_ITEMS[2996], MOCK_ITEMS[2320] = "Linen Cloth", "Bolt of Linen Cloth", "Coarse Thread"
+      MOCK_ITEMS[4238], MOCK_ITEMS[2570] = "Linen Bag", "Linen Shirt"
+    """)
+    ns = lua.table()
+    realm = lua.eval("GetRealmName()") + "-" + lua.eval("UnitFactionGroup('player')")
+    lua.globals().MOCK_HOUSE = realm
+    DB = lua.eval("""{ houses = { [MOCK_HOUSE] = { scanned = 99000, items = {
+        [2589] = { 18, 1, 1, 99000 }, [2996] = { 95, 1, 1, 99000 }, [2320] = { 12, 1, 1, 99000 }, [4238] = { 520, 1, 1, 99000 },
+        [2570] = { 140, 1, 1, 99000 } } } },
+      crafts = {
+        [2996] = { mats = { { 2589, 2 } }, makes = 1, rid = 1, name = "Bolt of Linen Cloth" },
+        [4238] = { mats = { { 2996, 3 }, { 2320, 3 } }, makes = 1, rid = 2, name = "Linen Bag" },
+        [2570] = { mats = { { 2996, 1 }, { 2320, 1 } }, makes = 1, rid = 3, name = "Linen Shirt" },
+      } }""")
+    lua.globals().MOCK_DB = DB
+    ns.db = lua.eval("function() return MOCK_DB end")
+    ns.money = lua.eval("function(c) return tostring(c) .. 'c' end")
+    ns.ago = lua.eval("function() return '17 min ago' end")
+    ns.itemFor = lua.eval("function(id) return MOCK_DB.houses[MOCK_HOUSE].items[id] end")
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
+    for name in ["Libs/EverlookUI/EverlookUI.lua", "RecipeList.lua", "Profit.lua", "ProfitWindow.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    W = ns.profitWindow
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("profit window: " + what)
+
+    W.open()
+    f = W.frame
+    check(f is not None and f.shown, "the window opens")
+    if not f or not f.shown:
+        return failures
+
+    def shown_names():
+        return [f.rows[i].data.name for i in range(1, len(f.rows) + 1) if f.rows[i].shown]
+
+    check(shown_names() == ["Linen Bag", "Linen Shirt", "Bolt of Linen Cloth"], f"best profit first: {shown_names()}")
+    check(f.rows[1].profit.text == "+3s 50c", f"bag profit text: {f.rows[1].profit.text}")
+    check(f.rows[1].margin.text == "+243%", f"bag margin: {f.rows[1].margin.text}")
+    W.crafts[4238] = 4
+    W.footer()
+    check("4 crafts" in f.sum.text, f"the plan line: {f.sum.text}")
+    W.makeList()
+    lists = DB.lists
+    check(lists is not None and len(lists) == 1 and lists[1].name == "Linen Bag", "one recipe: the list is named after it")
+    if lists is not None and len(lists) == 1:
+        want = lists[1].want
+        check(want['name is "Linen Cloth"'] == 24 and want['name is "Coarse Thread"'] == 12 and want['name is "Bolt of Linen Cloth"'] is None,
+              f"bolts broken down into cloth: {[(k, want[k]) for k in want]}")
+    check(W.status is not None and "Saved as" in W.status[1], "says it was saved")
+    f.min.SetText(f.min, "3")
+    f.min.scripts.OnTextChanged(f.min, True)
+    check(shown_names() == ["Linen Bag"], f"profit at least 3 silver: {shown_names()}")
+    check(DB.profit.min == 300, "the minimum is kept in copper")
     return failures
 
 

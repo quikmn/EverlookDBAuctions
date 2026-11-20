@@ -73,3 +73,29 @@ function R.save(lists, recipeName, rows)
   lists[#lists + 1] = l
   return l, true, #lists
 end
+
+-- A list from item counts (the profit finder, and other addons through EverlookDBAuctionsAPI.addShoppingList):
+-- items = { { itemID, count }, ... }; the same item twice adds up. nameOf(id) gives the item's name, or nil while
+-- the game hasn't loaded it. Returns the list, whether it was new and its index, or nil and why: "no name",
+-- "no items", or "loading" plus the ids whose names aren't known yet (try again in a moment).
+function R.saveCounts(lists, listName, items, nameOf)
+  if type(lists) ~= "table" then return nil, "no lists" end
+  local name = tostring(listName or ""):match("^%s*(.-)%s*$")
+  if name == "" then return nil, "no name" end
+  local rows, loading = {}, {}
+  for _, it in ipairs(type(items) == "table" and items or {}) do
+    local id = type(it) == "table" and math.floor(tonumber(it[1] or it.itemID or it.id) or 0) or 0
+    local n = type(it) == "table" and math.floor(tonumber(it[2] or it.count) or 0) or 0
+    if id > 0 and n > 0 then
+      local itemName = nameOf and nameOf(id)
+      if not itemName or itemName == "" then
+        loading[#loading + 1] = id
+      else
+        rows[#rows + 1] = { id = id, name = itemName, buy = n, tick = true }
+      end
+    end
+  end
+  if #loading > 0 then return nil, "loading", loading end
+  if #rows == 0 then return nil, "no items" end
+  return R.save(lists, name, rows)
+end

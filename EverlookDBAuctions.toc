@@ -24,10 +24,12 @@ Search.lua
 Shopping.lua
 Buy.lua
 RecipeList.lua
+Profit.lua
 PurchaseLog.lua
 Purchases.lua
 Celebrate.lua
 LootCards.lua
 Crafting.lua
 Options.lua
+ProfitWindow.lua
 API.lua
