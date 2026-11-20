@@ -1157,25 +1157,29 @@ local function setupBroker()
   local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
   if not LDB or B.ldb then return end
   B.ldb = LDB:NewDataObject("EverlookDBAuctionsLog", {
-    type = "data source", label = "Loot", text = "", icon = 133784,
+    type = "data source", label = "Loot", text = "", icon = "Interface\Icons\INV_Misc_Bag_10",
     OnClick = function(_, button)
       if button == "RightButton" then B.toggle("bought") elseif IsShiftKeyDown() then B.toggle("income") else B.toggle("looted") end
     end,
     OnTooltipShow = function(tip)
       local n, worth, coins = B.lootToday()
       tip:AddLine("Loot today", 1, 0.82, 0)
-      tip:AddLine(("%d items, worth about %s"):format(n, money(worth)), 1, 1, 1)
-      tip:AddLine(("Money: %s"):format(money(coins)), 1, 1, 1)
+      tip:AddDoubleLine("Items", ("%d, worth about %s"):format(n, money(worth)), 1, 1, 1, 1, 1, 1)
+      tip:AddDoubleLine("Money", money(coins), 1, 1, 1, 1, 1, 1)
+      tip:AddDoubleLine("Together", money(worth + coins), 1, 1, 1, 1, 0.82, 0)
       tip:AddLine(" ")
-      tip:AddLine("Click: loot log   Shift-click: income   Right-click: purchases", 0.6, 0.6, 0.6)
+      tip:AddDoubleLine("Click", "loot log", 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
+      tip:AddDoubleLine("Shift-click", "income", 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
+      tip:AddDoubleLine("Right-click", "purchases", 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
     end,
   })
   B.broker()
 end
 function B.broker()
   if not B.ldb then return end
-  local _, worth, coins = B.lootToday()
-  B.ldb.text = money(worth + coins)
+  -- the number of items first, so it doesn't read like the Gold plugin
+  local n, worth, coins = B.lootToday()
+  B.ldb.text = ("%d |cff9aa3ad·|r %s"):format(n, money(worth + coins))
 end
 local brokerEv = CreateFrame("Frame")
 brokerEv:RegisterEvent("PLAYER_LOGIN")
