@@ -421,7 +421,7 @@ local function rows() return math.max(MIN_ROWS, math.min(MAX_ROWS, math.floor(to
 
 -- The window's width (drag its corner): narrow is the essentials (time, item, how many, total), normal adds each and
 -- the third column, wide gives names and sources more room.
-local MIN_W, MAX_W, COMPACT_W, WIDE_W = 460, 1200, 620, 860
+local MIN_W, MAX_W, COMPACT_W, WIDE_W = 480, 1200, 620, 860
 local function width() return math.max(MIN_W, math.min(MAX_W, math.floor(tonumber(setting("logW", W)) or W))) end
 local function layoutNow()
   local w = width()
@@ -1294,7 +1294,13 @@ function B.render()
   f.list:ClearAllPoints()
   f.list:SetPoint("TOPLEFT", 16, -L.top)
   f.list:SetPoint("RIGHT", -16, 0)
-  for _, b in ipairs(f.tabs) do b:SetWidth(L.compact and 68 or 84) end
+  -- narrow: smaller tabs closer together, so the gear and close button keep their room
+  for i, b in ipairs(f.tabs) do
+    b:SetWidth(L.compact and 62 or 84)
+    b:ClearAllPoints()
+    if i == 1 then b:SetPoint("LEFT", f.title, "RIGHT", L.compact and 10 or 18, 0)
+    else b:SetPoint("LEFT", f.tabs[i - 1], "RIGHT", L.compact and 2 or 4, 0) end
+  end
   f.note:SetWidth(L.w - 32 - PAD * 2)
   for _, m in ipairs(f.mats) do m.src:SetWidth(L.compact and 110 or 220) end
   f.headItem:ClearAllPoints()
