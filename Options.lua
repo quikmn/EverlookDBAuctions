@@ -201,6 +201,10 @@ local function build()
   app:Command("test", "test", "reload after every full scan, so it is saved at once", function()
     if ns.toggleTestMode then ns.toggleTestMode() end
   end).hidden = true
+  app:Command("lootmove", "lootmove", "move the loot cards: drag the green box, right-click it when done (lootmove reset puts them back)", function(rest)
+    if not ns.lootCards then return end
+    if (rest or ""):lower():match("reset") then ns.lootCards.resetPos() else ns.lootCards.move() end
+  end, { "lootpos", "movecards" })
   app:Command("loottest", "loottest", "show a few loot cards once", function()
     if not ns.lootCards then return end
     local d = db()
@@ -258,6 +262,12 @@ local function build()
     app:Widget(stack, "lootcards")
     app:Widget(stack, "lootmoney")
     app:Widget(stack, "lootmin")
+    UI.ButtonRow(stack, {
+      { label = "Move cards", width = 124, onClick = function() if ns.lootCards then ns.lootCards.move() end end,
+        desc = "Drag the green box where the loot cards should appear; right-click it when done.", keywords = { "move", "position", "loot", "cards" } },
+      { label = "Reset spot", width = 124, onClick = function() if ns.lootCards then ns.lootCards.resetPos() end end,
+        desc = "Back to the right side, under your buffs.", keywords = { "reset", "position", "loot" } },
+    })
     UI.Note(stack, "Sales show up when you take their money from the mail. Bids aren't logged. Nothing about other players is saved: no sellers, buyers or senders.")
   end, { icon = "coins" })
   app:Section("general", "General", function(stack)

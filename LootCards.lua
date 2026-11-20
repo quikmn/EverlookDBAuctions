@@ -11,7 +11,8 @@ local SHOW_FOR = 5      -- seconds on screen, then a fade of FADE
 local FADE = 0.6
 local MAX = 5           -- cards at once; the oldest goes first
 local W, H, ICON, GAP = 300, 46, 34, 6
-local TOP = -180        -- under the sale card (Celebrate.lua, at -90)
+-- Where the newest card goes: db.lootPos = { x, y } (its top right corner, from the screen's top right), else the right
+-- side under the buffs, left of the minimap. /eah lootmove to drag it.
 
 local function db() return ns.db and ns.db() end
 local function enabled()
@@ -122,11 +123,65 @@ local function makeCard()
   return f
 end
 
+local function anchorXY()
+  local d = db()
+  local p = d and d.lootPos
+  if p and tonumber(p[1]) and tonumber(p[2]) then return p[1], p[2] end
+  return -math.floor(UIParent:GetWidth() * 0.17), -math.floor(UIParent:GetHeight() * 0.19)
+end
+
 local function layout()
+  local x, y = anchorXY()
   for i, c in ipairs(cards) do
     c:ClearAllPoints()
-    c:SetPoint("TOP", UIParent, "TOP", 0, TOP - (i - 1) * (H + GAP))
+    c:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", x, y - (i - 1) * (H + GAP))
   end
+end
+
+-- /eah lootmove: a card-sized handle to drag; the cards follow, the spot is saved
+local mover
+function L.move()
+  if not mover then
+    mover = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    mover:SetSize(W, H)
+    mover:SetFrameStrata("DIALOG")
+    mover:SetMovable(true)
+    mover:EnableMouse(true)
+    mover:RegisterForDrag("LeftButton")
+    mover:SetClampedToScreen(true)
+    if mover.SetBackdrop then
+      mover:SetBackdrop({ bgFile = "Interface\Buttons\WHITE8x8", edgeFile = "Interface\Buttons\WHITE8x8", edgeSize = 1 })
+      mover:SetBackdropColor(0.2, 0.6, 0.3, 0.35)
+      mover:SetBackdropBorderColor(0.3, 0.9, 0.4, 1)
+    end
+    local t = mover:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    t:SetPoint("CENTER")
+    t:SetText("Loot cards: drag me, right-click when done")
+    mover:SetScript("OnDragStart", mover.StartMoving)
+    mover:SetScript("OnDragStop", function(self)
+      self:StopMovingOrSizing()
+      local d = db()
+      if d and self:GetRight() then
+        d.lootPos = { math.floor(self:GetRight() - UIParent:GetRight() + 0.5), math.floor(self:GetTop() - UIParent:GetTop() + 0.5) }
+      end
+      self:ClearAllPoints()
+      local x, y = anchorXY()
+      self:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", x, y)
+      layout()
+    end)
+    mover:SetScript("OnMouseUp", function(self, button) if button == "RightButton" then self:Hide() end end)
+  end
+  if mover:IsShown() then mover:Hide(); return end
+  local x, y = anchorXY()
+  mover:ClearAllPoints()
+  mover:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", x, y)
+  mover:Show()
+end
+
+function L.resetPos()
+  local d = db()
+  if d then d.lootPos = nil end
+  layout()
 end
 
 function L.drop(card)
