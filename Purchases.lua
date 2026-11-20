@@ -1157,7 +1157,7 @@ local function setupBroker()
   local LDB = LibStub and LibStub("LibDataBroker-1.1", true)
   if not LDB or B.ldb then return end
   B.ldb = LDB:NewDataObject("EverlookDBAuctionsLog", {
-    type = "data source", label = "Loot", text = "", icon = "Interface\Icons\INV_Misc_Bag_10",
+    type = "data source", label = "Loot", text = "", icon = "Interface\\Icons\\INV_Misc_Bag_10",
     OnClick = function(_, button)
       if button == "RightButton" then B.toggle("bought") elseif IsShiftKeyDown() then B.toggle("income") else B.toggle("looted") end
     end,
