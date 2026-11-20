@@ -16,7 +16,7 @@ local P = ns.purchaseLog
 local UI = ns.UI
 local B = {}
 
-local W, PAD, ROW = 640, 14, 22
+local W, PAD, ROW = 700, 14, 22
 local DATE_W, QTY_W, EACH_W, TOTAL_W, CRAFT_W = 96, 40, 104, 104, 108
 local REC_ROWS = 8
 local STALE = 24 * 3600
@@ -719,8 +719,9 @@ local function makeFrame()
   end
   col("TOTAL", 0, TOTAL_W)
   f.craftHead = col("CRAFT NOW, EACH", -(TOTAL_W + 8), CRAFT_W)
-  col("EACH", -(TOTAL_W + CRAFT_W + 16), EACH_W)
-  col("QTY", -(TOTAL_W + CRAFT_W + EACH_W + 24), QTY_W)
+  -- EACH and QTY move right in Bought, where there is no craft column, so names get the room
+  f.eachHead = col("EACH", -(TOTAL_W + CRAFT_W + 16), EACH_W)
+  f.qtyHead = col("QTY", -(TOTAL_W + CRAFT_W + EACH_W + 24), QTY_W)
   local hd = text(head, T.fontSmall, T.muted)
   hd:SetPoint("LEFT", 16, 0)
   hd:SetText("WHEN")
@@ -800,9 +801,13 @@ local function renderList(f)
       row.name:SetTextColor(qualityColor(id))
       -- a sold item you can craft: what one costs to make again today, green when you sold above it
       local cost = income and e.kind == "sale" and craftNow(id)
-      if cost then setMoney(row.craft, cost, math.floor(e.c / e.q + 0.5) >= cost and T.ok or T.danger) else row.craft:SetText("") end
-      row.qty:SetText(ns.num(e.q))
-      setMoney(row.each, math.floor(e.c / e.q + 0.5))
+      local q = math.max(1, tonumber(e.q) or 1)
+      if cost then setMoney(row.craft, cost, math.floor(e.c / q + 0.5) >= cost and T.ok or T.danger) else row.craft:SetText("") end
+      row.each:ClearAllPoints()
+      row.each:SetPoint("RIGHT", income and row.craft or row.total, "LEFT", -8, 0)
+      row.craft:SetShown(income and true or false)
+      row.qty:SetText(e.q and ns.num(e.q) or "")
+      setMoney(row.each, math.floor(e.c / q + 0.5))
       setMoney(row.total, e.c)
       paintRow(row)
       row:Show()
@@ -948,6 +953,9 @@ function B.render()
   f.sub:SetText(income and "Gold you took from the mail. Hover a sale for its margin over crafting it again."
     or "Everything you bought at the auction house. Click the purchases you crafted with to mark them.")
   f.craftHead:SetShown(income)
+  local shift = income and 0 or (CRAFT_W + 8)
+  f.eachHead:SetPoint("RIGHT", -(TOTAL_W + CRAFT_W + 16) + shift, 0)
+  f.qtyHead:SetPoint("RIGHT", -(TOTAL_W + CRAFT_W + EACH_W + 24) + shift, 0)
   for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not income) end
   renderList(f)
   local listH = f.list:GetHeight() or 0
