@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.13.1 (2026-11-20)
 - AH log: item names have the room they need. In Bought there is no empty craft column any more, and the window is a little wider.
 
 ## v0.13.0 (2026-11-20)
