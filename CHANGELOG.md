@@ -1,7 +1,7 @@
 # EverlookDB Auctions
 
 ## Unreleased
-- AH log: drag its bottom right corner to resize. Narrow shows only the essentials (time, item, how many, total), wide gives names and sources more room, taller shows more rows (3 to 40). A little more room after the date.
+- AH log: drag its bottom right corner to resize, down to 340 wide. Narrow shows only the essentials (time, item, how many, total), wide gives names and sources more room, taller shows more rows (3 to 40). A little more room after the date.
 - Loot cards: everything you loot shows as a card at the top of the screen for 5 seconds: icon, name in its quality colour, how many, and roughly what it's worth (last AH scan, else a vendor). Money too. Looting more of the same adds to its card. Settings: on/off, money on/off, lowest quality (Logging section). /eah loottest shows a few.
 - Loot log: a new Looted tab (/eah loot) lists everything you picked up on this character, newest first, with date and time, where, how many and what it's worth today. The last 5000 loots are kept. Each item and coin says where it came from: the mob, the node you gathered (with Mining, Herb Gathering, Skinning or Fishing) or the container you opened; search finds those too.
 - Everlook Bar (or any data-broker bar): a new Loot plugin shows what you looted today. Click opens the loot log, Shift-click Income, right-click your purchases.

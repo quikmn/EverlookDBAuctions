@@ -421,13 +421,14 @@ local function rows() return math.max(MIN_ROWS, math.min(MAX_ROWS, math.floor(to
 
 -- The window's width (drag its corner): narrow is the essentials (time, item, how many, total), normal adds each and
 -- the third column, wide gives names and sources more room.
-local MIN_W, MAX_W, COMPACT_W, WIDE_W = 480, 1200, 620, 860
+local MIN_W, MAX_W, MINI_W, COMPACT_W, WIDE_W = 340, 1200, 480, 1200, 620, 860
 local function width() return math.max(MIN_W, math.min(MAX_W, math.floor(tonumber(setting("logW", W)) or W))) end
 local function layoutNow()
   local w = width()
   local compact, wide = w < COMPACT_W, w >= WIDE_W
-  return { w = w, compact = compact, wide = wide, dateW = compact and 60 or DATE_W, craftW = wide and 170 or CRAFT_W,
-    top = compact and 84 or 104 }
+  local mini = w < MINI_W   -- narrower still: no title, short tabs, how many goes with the name
+  return { w = w, compact = compact, mini = mini, wide = wide, dateW = mini and 60 or (compact and 60 or DATE_W),
+    craftW = wide and 170 or CRAFT_W, totalW = mini and 80 or TOTAL_W, top = compact and 84 or 104 }
 end
 B.layoutNow = layoutNow
 local function alpha() return math.max(0.3, math.min(1, tonumber(setting("logAlpha", 0.97)) or 0.97)) end
@@ -764,7 +765,7 @@ local function makeFrame()
   f.title:SetText("AH log")
   f.tabs = {}
   local prev
-  for _, t in ipairs({ { "bought", "Bought" }, { "forsale", "For sale" }, { "income", "Income" }, { "looted", "Looted" } }) do
+  for _, t in ipairs({ { "bought", "Bought" }, { "forsale", "For sale", "Sale" }, { "income", "Income" }, { "looted", "Looted", "Loot" } }) do
     local b = CreateFrame("Button", nil, f)
     b:SetSize(84, 26)
     if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0) else b:SetPoint("LEFT", f.title, "RIGHT", 18, 0) end
@@ -778,6 +779,7 @@ local function makeFrame()
     b.bar:SetPoint("BOTTOMLEFT", 10, 0)
     b.bar:SetPoint("BOTTOMRIGHT", -10, 0)
     b.mode = t[1]
+    b.full, b.short = t[2], t[3] or t[2]
     b:SetScript("OnClick", function()
       B.mode, B.offset = t[1], 0
       if B.picker then B.picker:Hide() end
@@ -852,7 +854,7 @@ local function makeFrame()
     h:SetWidth(width)
     return h
   end
-  col("TOTAL", 0, TOTAL_W)
+  f.totalHead = col("TOTAL", 0, TOTAL_W)
   f.craftHead = col("CRAFT NOW, EACH", -(TOTAL_W + 8), CRAFT_W)
   -- EACH and QTY move right in Bought, where there is no craft column, so names get the room
   f.eachHead = col("EACH", -(TOTAL_W + CRAFT_W + 16), EACH_W)
@@ -1020,6 +1022,12 @@ local function renderList(f)
       row.qty:SetPoint("RIGHT", L.compact and row.total or row.each, "LEFT", -8, 0)
       if e.pending then row.date:SetTextColor(rgba(T.accent)) else row.date:SetTextColor(rgba(T.muted)) end
       row.qty:SetText(e.q and ns.num(e.q) or "")
+      row.total:SetWidth(L.totalW)
+      row.qty:SetShown(not L.mini)
+      row.qty:SetWidth(L.mini and 1 or QTY_W)
+      if L.mini and e.q and tonumber(e.q) and tonumber(e.q) > 1 then
+        row.name:SetText(entryName(e) .. " |cff8a93a0x" .. ns.num(e.q) .. "|r")
+      end
       if looted then
         -- where it dropped, then what it is worth today (the last scan, else a vendor)
         -- where it came from (a mob, a node, a container); the zone when that isn't known
@@ -1080,14 +1088,14 @@ local function renderList(f)
     or (#shown > 0 and ("%d %s"):format(#shown, income and "entries" or (sale and "auctions") or (looted and "loots") or "purchases") or ""))
   if looted then
     local n, worth, coins = B.lootToday()
-    f.sum:SetText(("Today: %d items, worth about %s, and %s in money"):format(n, money(worth), money(coins)))
+    f.sum:SetText(((B.lay and B.lay.mini) and "Today: %d items, ~%s, money %s" or "Today: %d items, worth about %s, and %s in money"):format(n, money(worth), money(coins)))
     f.sum:SetTextColor(rgba(T.text))
     return
   end
   if sale then
     local worth, n = 0, 0
     for _, e in ipairs(all) do n = n + 1; worth = worth + (e.c or 0) end
-    f.sum:SetText(n > 0 and ("Up for sale: %d auctions, %s if all sell (before the 5%% cut)"):format(n, money(worth)) or "")
+    f.sum:SetText(n > 0 and (((B.lay and B.lay.mini) and "%d up, %s if all sell" or "Up for sale: %d auctions, %s if all sell (before the 5%% cut)")):format(n, money(worth)) or "")
     f.sum:SetTextColor(rgba(T.text))
     return
   end
@@ -1096,8 +1104,12 @@ local function renderList(f)
     local earned, spent = P.sum(all, since), P.sum(list(), since)
     local net = earned - spent
     local np, cp = P.pendingTotal(B.pending())
-    f.sum:SetText(("Last 7 days: earned %s, spent %s, net %s%s"):format(money(earned), money(spent),
-      net < 0 and "-" or "", money(math.abs(net))))
+    if B.lay and B.lay.mini then
+      f.sum:SetText(("7 days: net %s%s"):format(net < 0 and "-" or "", money(math.abs(net))))
+    else
+      f.sum:SetText(("Last 7 days: earned %s, spent %s, net %s%s"):format(money(earned), money(spent),
+        net < 0 and "-" or "", money(math.abs(net))))
+    end
     if np > 0 then
       f.sub:SetText(("%d sold, money waiting in your mail%s. Below: gold you took from the mail."):format(np,
         cp > 0 and (" (about " .. money(cp) .. ")") or ""))
@@ -1107,7 +1119,8 @@ local function renderList(f)
   end
   local nm, q, c = P.markedTotal(all)
   if nm > 0 then
-    f.sum:SetText(("Marked: %d %s, %s items, %s"):format(nm, nm == 1 and "purchase" or "purchases", ns.num(q), money(c)))
+    f.sum:SetText((B.lay and B.lay.mini) and ("Marked: %s items, %s"):format(ns.num(q), money(c))
+      or ("Marked: %d %s, %s items, %s"):format(nm, nm == 1 and "purchase" or "purchases", ns.num(q), money(c)))
     f.sum:SetTextColor(rgba(T.accent))
   else
     quiet(f.sum, "Nothing marked")
@@ -1288,21 +1301,27 @@ function B.render()
   f.sub:SetShown(not L.compact)
   f.search:ClearAllPoints()
   f.search:SetPoint("TOPLEFT", 20, L.compact and -48 or -68)
-  f.search:SetWidth(L.compact and 150 or 220)
+  f.search:SetWidth(L.mini and (side and (L.w - 40) or 140) or (L.compact and 150 or 220))
   f.clear:ClearAllPoints()
   f.clear:SetPoint("TOPRIGHT", -20, L.compact and -49 or -69)
   f.list:ClearAllPoints()
   f.list:SetPoint("TOPLEFT", 16, -L.top)
   f.list:SetPoint("RIGHT", -16, 0)
   -- narrow: smaller tabs closer together, so the gear and close button keep their room
+  f.title:SetShown(not L.mini)
   for i, b in ipairs(f.tabs) do
-    b:SetWidth(L.compact and 62 or 84)
+    b:SetWidth(L.mini and 54 or (L.compact and 62 or 84))
+    b.label:SetText(L.mini and b.short or b.full)
     b:ClearAllPoints()
-    if i == 1 then b:SetPoint("LEFT", f.title, "RIGHT", L.compact and 10 or 18, 0)
+    if i == 1 then
+      if L.mini then b:SetPoint("LEFT", f.icon, "RIGHT", 8, 0) else b:SetPoint("LEFT", f.title, "RIGHT", L.compact and 10 or 18, 0) end
     else b:SetPoint("LEFT", f.tabs[i - 1], "RIGHT", L.compact and 2 or 4, 0) end
   end
+  f.totalHead:SetWidth(L.totalW)
+  f.qtyHead:SetShown(not L.mini)
+  f.pick:SetWidth(math.min(320, L.w - 32 - PAD * 2 - 70))
   f.note:SetWidth(L.w - 32 - PAD * 2)
-  for _, m in ipairs(f.mats) do m.src:SetWidth(L.compact and 110 or 220) end
+  for _, m in ipairs(f.mats) do m.src:SetWidth(L.mini and 1 or (L.compact and 110 or 220)); m.src:SetAlpha(L.mini and 0 or 1); m.cost:SetWidth(L.totalW) end
   f.headItem:ClearAllPoints()
   f.headItem:SetPoint("LEFT", L.dateW, 0)
   f.craftHead:SetWidth(L.craftW)
@@ -1314,6 +1333,7 @@ function B.render()
   f.eachHead:SetPoint("RIGHT", -(TOTAL_W + L.craftW + 16 + gap) + shift, 0)
   f.qtyHead:SetPoint("RIGHT", L.compact and -(TOTAL_W + 8) or (-(TOTAL_W + L.craftW + EACH_W + 24 + gap) + shift), 0)
   for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not side) end
+  if L.mini then f.clear:Hide() end
   f.headWhen:SetText(sale and (L.compact and "LEFT" or "TIME LEFT") or "WHEN")
   f.craftHead:SetText(looted and "FROM" or "CRAFT NOW, EACH")
   renderList(f)
