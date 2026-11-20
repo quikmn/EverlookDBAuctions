@@ -17,6 +17,7 @@ local TIP_LINES = {
   { "tipprice", "auction", "Auction price, how many are up and how old the price is" },
   { "tiphistory", "history", "30-day low and median" },
   { "tipdisenchant", "disenchant", "What disenchanting it is worth (an estimate from material prices)" },
+  { "tipcraft", "craft", "What crafting one costs, for items you can craft (materials at the latest AH prices)" },
   { "tipvendor", "vendor", "Vendor price, where the game doesn’t show one (quest rewards, loot, links)" },
   { "tipstack", "stack", "Hold Shift for the price of a full stack" },
 }
@@ -106,6 +107,12 @@ local function build()
     set = function(v) db().skin = v end,
   })
   app:Setting({
+    key = "cheer", type = "bool", label = "Celebrate when an auction sells (Hurray! and fireworks at the top of the screen)",
+    chatLabel = "Sale celebration", keywords = { "sold", "sale", "hurray", "fireworks", "banner", "celebrate" },
+    get = function() return db().cheer ~= false end,
+    set = function(v) db().cheer = v end,
+  })
+  app:Setting({
     key = "crafting", type = "bool", label = "Crafting cost beside the profession window", keywords = { "reagents", "materials", "profit", "tradeskill" },
     get = function() return db().craft ~= false end,
     set = function(v) db().craft = v end,
@@ -120,6 +127,9 @@ local function build()
   app:Command("bought", "bought", "your auction house purchases, and a recipe's cost from what you paid (works anywhere)", function()
     if ns.purchases then ns.purchases.toggle() end
   end, { "purchases", "buys", "log" })
+  app:Command("income", "income", "what you sold and other gold from the mail, with what crafting a sold item again costs", function()
+    if ns.purchases then ns.purchases.toggle("income") end
+  end, { "sales", "sold", "earned" })
   app:Command("run", "run <list>", "run a shopping list (auction house open)", function(rest)
     ns.slash(rest == "" and "run" or ("run " .. rest))
   end)
@@ -128,6 +138,15 @@ local function build()
   -- for bug reports and testing: they work, but help doesn't list them
   app:Command("test", "test", "reload after every full scan, so it is saved at once", function()
     if ns.toggleTestMode then ns.toggleTestMode() end
+  end).hidden = true
+  app:Command("cheertest", "cheertest", "show the sale celebration once", function()
+    if ns.cheer then
+      local d = ns.db()
+      local was = d.cheer
+      d.cheer = nil
+      ns.cheer.show("Black Silk Pack", 1020 * 100, 1)
+      d.cheer = was
+    end
   end).hidden = true
   app:Command("debug", "debug", "the technical details: auction API, update log, scans kept, what is shown where", function()
     if ns.debugReport then ns.debugReport() end
@@ -149,8 +168,9 @@ local function build()
     app:Widget(stack, "auto")
     app:Widget(stack, "skin")
     app:Widget(stack, "crafting")
+    app:Widget(stack, "cheer")
     UI.Header(stack, "Chat commands")
-    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting")
+    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah income  what you sold (from the mail), with what crafting it again costs\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting")
   end)
 end
 

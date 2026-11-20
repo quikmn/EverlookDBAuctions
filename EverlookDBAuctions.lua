@@ -1139,6 +1139,19 @@ local function disenchantLine(t, id)
   end
 end
 
+-- What crafting one costs from the latest AH prices, for items you know a recipe for (Purchases.lua reads your
+-- recipes when a profession window opens).
+local function craftLine(t, id)
+  if not db or not tipOn("craft") or not (ns.purchases and ns.purchases.craftLine) then return end
+  local cost, missing, oldest, makes = ns.purchases.craftLine(id)
+  if cost then
+    t:Line("Craft cost", Tip.Money(cost), { note = join(makes and makes > 1 and "each" or nil, "materials at AH prices",
+      oldest and ago(oldest) or nil), stale = oldest ~= nil and time() - oldest >= STALE })
+  elseif missing and missing > 0 then
+    t:Line("Craft cost", missing == 1 and "1 material has no AH price" or (missing .. " materials have no AH price"), { stale = true })
+  end
+end
+
 -- Whether the game already put its own "Sell Price" on this tooltip (it does in bags, not on quest rewards, loot or links)
 local tipDebug   -- /eah tipdebug: the next item tooltip prints what the vendor line saw
 local function gameShowsSellPrice(tt)
@@ -1195,10 +1208,12 @@ local function hookTooltips()
     add = function(t, ctx) if ctx.id then auctionLines(t, ctx.id, ctx.tooltip) end end })
   Tip:Register({ id = "EverlookDBAuctions.disenchant", kind = "item", order = Tip.ORDER.disenchant,
     add = function(t, ctx) if ctx.id then disenchantLine(t, ctx.id) end end })
+  Tip:Register({ id = "EverlookDBAuctions.craft", kind = "item", order = Tip.ORDER.disenchant + 2,
+    add = function(t, ctx) if ctx.id then craftLine(t, ctx.id) end end })
   Tip:Register({ id = "EverlookDBAuctions.vendor", kind = "item", order = Tip.ORDER.vendor,
     add = function(t, ctx) if ctx.id then vendorLine(t, ctx.id, ctx.tooltip) end end })
 end
-ns.tooltipLines = { auction = auctionLines, disenchant = disenchantLine, vendor = vendorLine }
+ns.tooltipLines = { auction = auctionLines, disenchant = disenchantLine, vendor = vendorLine, craft = craftLine }
 
 ---------------------------------------------------------------------------------------------------------------------
 -- Events and commands

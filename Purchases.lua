@@ -1,5 +1,7 @@
 -- EverlookDB Auctions: AH purchases, a window of everything you bought at the auction house (/eah bought), open
--- anywhere, not only at the auction house.
+-- anywhere, not only at the auction house. Its Income view (/eah income) lists the money you took from the mail:
+-- auctions sold (item, how many, what you got after the cut) and any other gold, with what you earned and spent in the
+-- last 7 days. A sold item you can craft also says what one costs to craft again at today's lowest AH prices.
 --   Catching purchases: the game's buy calls are watched (hooksecurefunc, so purchases through Blizzard's window, our
 --   Buy panel or another addon all count), and an entry is written only once the auction house says the purchase went
 --   through. Commodities (cloth, herbs, bars): the quantity and the total price the auction house quoted. Other items:
@@ -14,8 +16,8 @@ local P = ns.purchaseLog
 local UI = ns.UI
 local B = {}
 
-local W, PAD, ROW, ROWS = 520, 12, 18, 12
-local DATE_W, QTY_W, EACH_W, TOTAL_W = 84, 40, 100, 100
+local W, PAD, ROW, ROWS = 600, 12, 18, 12
+local DATE_W, QTY_W, EACH_W, TOTAL_W, CRAFT_W = 84, 40, 100, 100, 100
 local REC_ROWS = 8
 local STALE = 24 * 3600
 
@@ -39,6 +41,18 @@ local function list()
   d.bought = d.bought or {}
   return d.bought
 end
+local function incomeList()
+  local d = db()
+  if not d then return {} end
+  d.income = d.income or {}
+  return d.income
+end
+local function crafts()
+  local d = db()
+  if not d then return {} end
+  d.crafts = d.crafts or {}
+  return d.crafts
+end
 local function recipes()
   local d = db()
   if not d then return {} end
@@ -51,8 +65,13 @@ local function itemName(id)
   if not name and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, id) end
   return name or ("item " .. id)
 end
-local function entryName(e) return (e.link and e.link:match("%[(.-)%]")) or itemName(e.id) end
+local function entryName(e)
+  if e.kind == "mail" then return "Gold from mail" end
+  if e.kind == "ah" then return "Auction house (refund or other)" end
+  return (e.link and e.link:match("%[(.-)%]")) or e.name or (e.id and itemName(e.id)) or "?"
+end
 local function qualityColor(id)
+  if not id then return 1, 0.82, 0 end
   local q = try(C_Item.GetItemQualityByID, id)
   local c = q and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q]
   if c then return c.r, c.g, c.b end
@@ -63,6 +82,29 @@ local function priceOf(id)
   return it and it[1], it and it[4]
 end
 local function money(c) return ns.money(c) end
+
+-- A sold item's id: saved with the sale, or found from its name once the game knows the item.
+local function saleID(e)
+  if e.id or e.kind ~= "sale" or not e.name then return e.id end
+  local okId, id = pcall(C_Item.GetItemInfoInstant, e.name)
+  if okId and type(id) == "number" then e.id = id end
+  return e.id
+end
+
+-- What one more costs to craft at the latest AH prices (nil when you don't know a recipe for it, or a material has
+-- no price), how many materials have no price, and when the oldest price used was seen.
+local function craftNow(id)
+  local r = id and crafts()[id]
+  if not r then return nil, nil end
+  local oldest
+  local cost, missing = P.craftEach(r, function(m)
+    local p, at = priceOf(m)
+    if p and at and (not oldest or at < oldest) then oldest = at end
+    return p
+  end)
+  return cost, missing, oldest, r
+end
+B.craftNow = craftNow
 
 ---------------------------------------------------------------------------------------------------------------------
 -- Catching purchases
@@ -161,6 +203,119 @@ ev:SetScript("OnEvent", function(_, e, a1, a2)
 end)
 
 ---------------------------------------------------------------------------------------------------------------------
+-- Money from the mail: read the mail as its money is taken (Blizzard's Open All, a click on the coins, or a mail addon),
+-- before the server removes it. One mail is logged once even when both calls reach it.
+
+local AH_SENDER = BUTTON_LAG_AUCTIONHOUSE or "Auction House"
+local recentMail = {}
+
+local function takeMail(i)
+  if not GetInboxHeaderInfo then return end
+  local okH, _, _, sender, subject, cash, _, daysLeft = pcall(GetInboxHeaderInfo, i)
+  cash = okH and ok(cash)
+  if type(cash) ~= "number" or cash <= 0 then return end
+  local sig = tostring(subject) .. "|" .. cash .. "|" .. tostring(daysLeft)
+  local now = GetTime and GetTime() or time()
+  if recentMail[sig] and now - recentMail[sig] < 10 then return end
+  recentMail[sig] = now
+  local e = { c = cash, kind = "mail" }
+  local okI, kind, item, _, bid, _, _, _, _, _, _, count = pcall(GetInboxInvoiceInfo or function() end, i)
+  if okI and ok(kind) == "seller" and ok(item) then
+    e.kind, e.name, e.q, e.gross = "sale", ok(item), ok(count) or 1, ok(bid)
+    saleID(e)
+  elseif ok(sender) == AH_SENDER then
+    e.kind = "ah"
+  end
+  e.t, e.h = time(), houseKey()
+  if P.addIncome(incomeList(), e) and B.frame and B.frame:IsShown() then B.render() end
+end
+for _, name in ipairs({ "TakeInboxMoney", "AutoLootMailItem" }) do
+  if _G[name] then hooksecurefunc(name, takeMail) end
+end
+B.takeMail = takeMail
+
+-- Every recipe you know, read when a profession window opens: what it makes and from what.
+local function readRecipes()
+  local T = C_TradeSkillUI
+  if not (T and T.GetAllRecipeIDs and T.GetRecipeSchematic) then return end
+  local ids = try(T.GetAllRecipeIDs)
+  if type(ids) ~= "table" then return end
+  local store = crafts()
+  for _, rid in ipairs(ids) do
+    local info = T.GetRecipeInfo and try(T.GetRecipeInfo, rid)
+    if not info or ok(info.learned) ~= false then
+      local sc = try(T.GetRecipeSchematic, rid, false)
+      local out = sc and ok(sc.outputItemID)
+      if out then
+        local r = { mats = {}, makes = ((sc.quantityMin or 1) + (sc.quantityMax or sc.quantityMin or 1)) / 2 }
+        for _, slot in ipairs(sc.reagentSlotSchematics or {}) do
+          local rg = slot.reagents and slot.reagents[1]
+          local need = ok(slot.quantityRequired) or 0
+          if rg and rg.itemID and need > 0 and not slot.hiddenInCraftingForm then r.mats[#r.mats + 1] = { rg.itemID, need } end
+        end
+        r.rid, r.name = rid, ok(info and info.name) or ok(sc.name)
+        if #r.mats > 0 then store[out] = r end
+      end
+    end
+  end
+end
+B.readRecipes = readRecipes
+
+-- A recipe from a link: a recipe link (shift-click in the profession window) or an item you know how to craft.
+local function recipeFromLink(link)
+  if type(link) ~= "string" then return nil end
+  local T = C_TradeSkillUI
+  local rid = link:match("|Henchant:(%d+)") or link:match("|Hspell:(%d+)") or link:match("|Htrade:[^:]*:(%d+)")
+  rid = tonumber(rid)
+  if rid and T and T.GetRecipeSchematic then
+    local sc = try(T.GetRecipeSchematic, rid, false)
+    if sc then
+      local w = { recipeID = rid, name = ok(sc.name) or link:match("%[(.-)%]"), mats = {}, out = ok(sc.outputItemID),
+        makes = ((sc.quantityMin or 1) + (sc.quantityMax or sc.quantityMin or 1)) / 2 }
+      for _, slot in ipairs(sc.reagentSlotSchematics or {}) do
+        local rg = slot.reagents and slot.reagents[1]
+        local need = ok(slot.quantityRequired) or 0
+        if rg and rg.itemID and need > 0 and not slot.hiddenInCraftingForm then w.mats[#w.mats + 1] = { rg.itemID, need } end
+      end
+      if #w.mats > 0 then return w end
+    end
+  end
+  local id = tonumber(link:match("|Hitem:(%d+)"))
+  local r = id and crafts()[id]
+  if r and r.rid then
+    return { recipeID = r.rid, name = r.name or itemName(id), mats = r.mats, out = id, makes = r.makes }
+  end
+end
+
+local function linked(link)
+  if not (B.frame and B.frame:IsShown()) then return end
+  local w = recipeFromLink(link)
+  if not w then return end
+  P.noteRecipe(recipes(), w)
+  local d = db()
+  if d then d.boughtRecipe = w.recipeID end
+  B.mode = "bought"
+  B.render()
+end
+B.linked = linked
+if ChatEdit_InsertLink then hooksecurefunc("ChatEdit_InsertLink", linked) end
+if ChatFrameUtil and ChatFrameUtil.InsertLink then hooksecurefunc(ChatFrameUtil, "InsertLink", linked) end
+
+-- The tooltip line (EverlookDBAuctions.lua registers it with the other price lines): what crafting one costs.
+function B.craftLine(id)
+  local cost, missing, oldest, r = craftNow(id)
+  return cost, missing, oldest, r and r.makes
+end
+local readQueued
+local rev = CreateFrame("Frame")
+for _, e in ipairs({ "TRADE_SKILL_SHOW", "TRADE_SKILL_LIST_UPDATE" }) do pcall(rev.RegisterEvent, rev, e) end
+rev:SetScript("OnEvent", function()
+  if readQueued then return end
+  readQueued = true
+  C_Timer.After(1, function() readQueued = nil; pcall(readRecipes) end)
+end)
+
+---------------------------------------------------------------------------------------------------------------------
 -- The window
 
 local function text(parent, font, justify)
@@ -229,8 +384,11 @@ local function makeRow(f)
   row.total = text(row, "GameFontHighlightSmall", "RIGHT")
   row.total:SetPoint("RIGHT", 0, 0)
   row.total:SetWidth(TOTAL_W)
+  row.craft = text(row, "GameFontHighlightSmall", "RIGHT")
+  row.craft:SetPoint("RIGHT", row.total, "LEFT", -6, 0)
+  row.craft:SetWidth(CRAFT_W)
   row.each = text(row, "GameFontHighlightSmall", "RIGHT")
-  row.each:SetPoint("RIGHT", row.total, "LEFT", -6, 0)
+  row.each:SetPoint("RIGHT", row.craft, "LEFT", -6, 0)
   row.each:SetWidth(EACH_W)
   row.qty = text(row, "GameFontHighlightSmall", "RIGHT")
   row.qty:SetPoint("RIGHT", row.each, "LEFT", -6, 0)
@@ -258,12 +416,36 @@ local function makeRow(f)
       if link and ChatEdit_InsertLink then ChatEdit_InsertLink(link) end
       return
     end
-    toggleMark(e)
+    if B.mode ~= "income" then toggleMark(e) end
   end)
   row:SetScript("OnEnter", function(self)
     local e = self.entry
     if not e then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    if B.mode == "income" then
+      local id = saleID(e)
+      if id then pcall(GameTooltip.SetItemByID, GameTooltip, id) else GameTooltip:SetText(entryName(e), 1, 0.82, 0) end
+      GameTooltip:AddLine(" ")
+      if e.kind == "sale" then
+        local each = math.floor(e.c / e.q + 0.5)
+        GameTooltip:AddLine(("Sold %d; money taken %s: %s (%s each)"):format(e.q, date("%d %b %Y %H:%M", e.t), money(e.c), money(each)), 1, 0.82, 0)
+        if e.gross and e.gross > e.c then
+          GameTooltip:AddLine(("The buyer paid %s; the auction house kept %s."):format(money(e.gross), money(e.gross - e.c)), 0.6, 0.6, 0.6)
+        end
+        local cost, missing = craftNow(id)
+        if cost then
+          local m = each - cost
+          GameTooltip:AddLine(("Crafting one again costs about %s at today's lowest AH prices: %s %s each."):format(money(cost),
+            m >= 0 and "you made" or "you lost", money(math.abs(m))), m >= 0 and 0.25 or 1, m >= 0 and 1 or 0.35, m >= 0 and 0.25 or 0.35, true)
+        elseif missing then
+          GameTooltip:AddLine("You can craft this, but a material has no AH price yet.", 0.6, 0.6, 0.6, true)
+        end
+      else
+        GameTooltip:AddLine(("Taken from the mail %s: %s"):format(date("%d %b %Y %H:%M", e.t), money(e.c)), 1, 0.82, 0)
+      end
+      GameTooltip:Show()
+      return
+    end
     if e.link then pcall(GameTooltip.SetHyperlink, GameTooltip, e.link) else pcall(GameTooltip.SetItemByID, GameTooltip, e.id) end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(("Bought %s: %d for %s"):format(date("%d %b %Y %H:%M", e.t), e.q, money(e.c)), 1, 0.82, 0)
@@ -389,9 +571,35 @@ local function makeFrame()
 
   f.title = text(f, "GameFontNormal")
   f.title:SetPoint("TOPLEFT", PAD, -PAD)
-  f.title:SetText("AH purchases")
+  f.title:SetText("AH log")
+  -- two views: what you bought, and the money you took from the mail
+  f.tabs = {}
+  local prev = f.title
+  for _, t in ipairs({ { "bought", "Bought" }, { "income", "Income" } }) do
+    local b = CreateFrame("Button", nil, f)
+    b:SetSize(64, 18)
+    b:SetPoint("LEFT", prev, "RIGHT", prev == f.title and 14 or 4, 0)
+    b.label = text(b, "GameFontHighlightSmall", "CENTER")
+    b.label:SetAllPoints()
+    b.label:SetText(t[2])
+    b.line = b:CreateTexture(nil, "ARTWORK")
+    b.line:SetHeight(2)
+    b.line:SetPoint("BOTTOMLEFT")
+    b.line:SetPoint("BOTTOMRIGHT")
+    b.line:SetColorTexture(1, 0.82, 0, 1)
+    local hl = b:CreateTexture(nil, "HIGHLIGHT")
+    hl:SetAllPoints()
+    hl:SetColorTexture(1, 1, 1, 0.06)
+    b.mode = t[1]
+    b:SetScript("OnClick", function()
+      B.mode, B.offset = t[1], 0
+      B.render()
+    end)
+    f.tabs[#f.tabs + 1] = b
+    prev = b
+  end
   f.sub = text(f, "GameFontDisableSmall")
-  f.sub:SetPoint("LEFT", f.title, "RIGHT", 10, 0)
+  f.sub:SetPoint("LEFT", prev, "RIGHT", 12, 0)
   f.sub:SetText("click the ones you used to mark them")
   local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
   close:SetSize(24, 24)
@@ -417,6 +625,7 @@ local function makeFrame()
     B.render()
   end)
   local ml = text(f, "GameFontHighlightSmall")
+  f.markedLabel = ml
   ml:SetPoint("LEFT", f.marked, "RIGHT", 2, 0)
   ml:SetText("Marked only")
   f.clear = button(f, "Clear marks", 100, function()
@@ -438,11 +647,15 @@ local function makeFrame()
     h:SetWidth(width)
   end
   col("Total", 0, TOTAL_W)
-  col("Each", -(TOTAL_W + 6), EACH_W)
-  col("Qty", -(TOTAL_W + EACH_W + 12), QTY_W)
+  f.craftHead = text(head, "GameFontDisableSmall", "RIGHT")
+  f.craftHead:SetText("Craft now, each")
+  f.craftHead:SetPoint("RIGHT", -(TOTAL_W + 6), 0)
+  f.craftHead:SetWidth(CRAFT_W)
+  col("Each", -(TOTAL_W + CRAFT_W + 12), EACH_W)
+  col("Qty", -(TOTAL_W + CRAFT_W + EACH_W + 18), QTY_W)
   local hd = text(head, "GameFontDisableSmall")
   hd:SetPoint("LEFT", 14, 0)
-  hd:SetText("Bought")
+  hd:SetText("When")
   local hi = text(head, "GameFontDisableSmall")
   hi:SetPoint("LEFT", DATE_W, 0)
   hi:SetText("Item")
@@ -473,11 +686,12 @@ local function makeFrame()
 
   -- the recipe
   local rl = text(f, "GameFontNormal")
+  f.recipeLabel = rl
   rl:SetPoint("TOPLEFT", PAD, y - 3)
   rl:SetText("Recipe")
   f.pick = button(f, "Pick a recipe", 300, function(self) openPicker(self) end)
   f.pick:SetPoint("TOPLEFT", PAD + 60, y)
-  tipFor(f.pick, "Recipe", "The recipes you picked in a profession window. Open your profession window and pick one to add it.")
+  tipFor(f.pick, "Recipe", "The recipes you picked in a profession window. Or shift-click a recipe, or an item you can craft, while this window is open.")
   f.recipeTop = y - 28
   f.mats, f.lines = {}, {}
   for i = 1, REC_ROWS do f.mats[i] = makeMatRow(f) end
@@ -495,8 +709,9 @@ local function makeFrame()
 end
 
 local function renderList(f)
-  local all = list()
-  local shown = P.view(all, B.filter, B.markedOnly, entryName)
+  local income = B.mode == "income"
+  local all = income and incomeList() or list()
+  local shown = P.view(all, B.filter, B.markedOnly and not income, entryName)
   local maxOff = math.max(0, #shown - ROWS)
   B.offset = math.min(B.offset or 0, maxOff)
   for i = 1, ROWS do
@@ -504,12 +719,16 @@ local function renderList(f)
     local e = shown[i + B.offset]
     row.entry = e
     if e then
-      row.check:SetShown(e.m == true)
-      row.bg:SetShown(e.m == true)
+      row.check:SetShown(not income and e.m == true)
+      row.bg:SetShown(not income and e.m == true)
       row.date:SetText(date("%d %b %H:%M", e.t))
-      row.icon:SetTexture(try(C_Item.GetItemIconByID, e.id) or 134400)
+      local id = income and saleID(e) or e.id
+      row.icon:SetTexture(id and try(C_Item.GetItemIconByID, id) or (e.kind and e.kind ~= "sale" and 133784) or 134400)
       row.name:SetText(entryName(e))
-      row.name:SetTextColor(qualityColor(e.id))
+      row.name:SetTextColor(qualityColor(id))
+      -- a sold item you can craft: what one costs to make again today, green when you sold above it
+      local cost = income and e.kind == "sale" and craftNow(id)
+      if cost then setMoney(row.craft, cost, math.floor(e.c / e.q + 0.5) >= cost and GOOD or BAD) else row.craft:SetText("") end
       row.qty:SetText(ns.num(e.q))
       setMoney(row.each, math.floor(e.c / e.q + 0.5))
       setMoney(row.total, e.c)
@@ -519,7 +738,9 @@ local function renderList(f)
     end
   end
   f.empty:SetShown(#shown == 0)
-  if #all == 0 then
+  if #all == 0 and income then
+    f.empty:SetText("No money from the mail yet. From now on, gold you take from the mail shows up here: every auction you sold (item, how many, what you got after the cut) and any other gold. A sold item you can craft shows what one costs to craft again at today's prices (open your profession window once so the addon knows your recipes).")
+  elseif #all == 0 then
     f.empty:SetText("Nothing bought yet. Every buyout from now on shows up here: from our Buy panel, Blizzard's auction house or another addon. Bids aren't logged.")
   elseif B.markedOnly then
     f.empty:SetText("Nothing marked" .. ((B.filter or "") ~= "" and " matches." or ". Untick Marked only and click the purchases you crafted with."))
@@ -527,7 +748,16 @@ local function renderList(f)
     f.empty:SetText("Nothing matches.")
   end
   f.pos:SetText(#shown > ROWS and ("%d-%d of %d · scroll for more"):format(B.offset + 1, math.min(#shown, B.offset + ROWS), #shown)
-    or (#shown > 0 and ("%d purchases"):format(#shown) or ""))
+    or (#shown > 0 and ("%d %s"):format(#shown, income and "entries" or "purchases") or ""))
+  if income then
+    local since = time() - 7 * 86400
+    local earned, spent = P.sum(all, since), P.sum(list(), since)
+    local net = earned - spent
+    f.sum:SetText(("Last 7 days: earned %s, spent %s, net %s%s"):format(money(earned), money(spent),
+      net < 0 and "-" or "", money(math.abs(net))))
+    f.sum:SetTextColor(unpack(net >= 0 and GOOD or BAD))
+    return
+  end
   local n, q, c = P.markedTotal(all)
   if n > 0 then
     f.sum:SetText(("Marked: %d %s, %s items, %s"):format(n, n == 1 and "purchase" or "purchases", ns.num(q), money(c)))
@@ -603,7 +833,7 @@ local function renderRecipe(f)
   end
   local note
   if not r then
-    note = "Open your profession window and pick a recipe: it shows up here, with its cost from the purchases you marked."
+    note = "Pick a recipe in your profession window, or shift-click a recipe or an item you can craft: it shows up here, with its cost per craft."
   elseif c.unpriced > 0 then
     note = "A material with no marked purchase and no AH price isn't counted."
   elseif not c.paidAll then
@@ -622,21 +852,41 @@ end
 function B.render()
   local f = B.frame
   if not (f and f:IsShown()) then return end
+  local income = B.mode == "income"
+  for _, b in ipairs(f.tabs) do
+    local on = (b.mode == "income") == income
+    b.line:SetShown(on)
+    b.label:SetTextColor(unpack(on and GOLD or QUIET))
+  end
+  f.sub:SetText(income and "gold you took from the mail; hover a sale for its margin" or "click the ones you used to mark them")
+  f.craftHead:SetShown(income)
+  for _, w in ipairs({ f.marked, f.markedLabel, f.clear, f.mid, f.recipeLabel, f.pick }) do w:SetShown(not income) end
   renderList(f)
+  if income then
+    for _, r in ipairs(f.mats) do r:Hide() end
+    for _, l in ipairs(f.lines) do l:Hide() end
+    f.note:Hide()
+    if B.picker then B.picker:Hide() end
+    f:SetHeight(-(f.recipeTop + 28 - 8) + PAD)
+    return
+  end
   renderRecipe(f)
 end
 
 function B.open(recipeID)
   local f = makeFrame()
   local d = db()
+  if recipeID then B.mode = "bought" end
   if recipeID and d then d.boughtRecipe = recipeID end
   f:Show()
   B.render()
 end
 
-function B.toggle()
+function B.toggle(mode)
   local f = makeFrame()
-  if f:IsShown() then f:Hide() else B.open() end
+  if f:IsShown() and (mode or "bought") == (B.mode or "bought") then f:Hide(); return end
+  B.mode = mode or "bought"
+  B.open()
 end
 
 -- The crafting box tells us each recipe you pick, so the window can show it later without the profession window.

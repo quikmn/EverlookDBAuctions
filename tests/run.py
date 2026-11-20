@@ -107,6 +107,7 @@ def main() -> int:
     failures += scan_storage()
     failures += commodity_note()
     failures += purchases()
+    failures += cheer()
     failures += item_cache()
     failures += full_scan()
 
@@ -2736,12 +2737,111 @@ def purchases():
     except Exception as e:
         failures.append(f"purchases: window error {e}")
 
+    # income: an auction sold (net 950 of 1000), another mail with gold, and the same mail reached twice
+    lua.execute("""
+      GetTime = function() return MOCK_TIME end
+      MOCK_MAIL = {
+        { 'Auction House', 'Auction successful: Runed Copper Rod', 950, 'seller', 'Runed Copper Rod', 1000, 2 },
+        { 'Somebody', 'hi', 500 },
+      }
+      function GetInboxHeaderInfo(i) local m = MOCK_MAIL[i]; return nil, nil, m[1], m[2], m[3], 0, 29 end
+      function GetInboxInvoiceInfo(i) local m = MOCK_MAIL[i]
+        if m[4] then return m[4], m[5], nil, m[6], 0, 0, 0, 0, 0, 0, m[7] end end
+      C_Item.GetItemInfoInstant = function(name) for id, n in pairs(MOCK_ITEMS) do if n == name then return id end end end
+    """)
+    B = ns.purchases
+    B.takeMail(1)
+    B.takeMail(1)
+    B.takeMail(2)
+    inc = DB.income
+    check(len(inc) == 2, f"two mails, one logged once: {len(inc)}")
+    check(inc[1].kind == "sale" and inc[1].c == 950 and inc[1].q == 2 and inc[1].gross == 1000 and inc[1].id == 6218,
+          "a sale: net, count, what the buyer paid, the item")
+    check(inc[2].kind == "mail" and inc[2].c == 500 and inc[2].name is None, "other gold: the amount, no sender or subject")
+    for k in inc[2].keys():
+        check(k in ("c", "kind", "t", "h", "q"), f"no names kept in a mail entry: {k}")
+    check(P.sum(inc) == 1450, "income sum")
+
+    # the recipes you know, and what crafting one costs now: Runed Copper Rod = Copper Rod 120 + 4 bars 35 + flux (no price)
+    lua.execute("""
+      C_TradeSkillUI = {
+        GetAllRecipeIDs = function() return { 9, 11 } end,
+        GetRecipeInfo = function(id) return { name = id == 9 and 'Runed Copper Rod' or 'Copper Bar', learned = true } end,
+        GetRecipeSchematic = function(id)
+          if id == 9 then return { name = 'Runed Copper Rod', outputItemID = 6218, quantityMin = 1, quantityMax = 1,
+            reagentSlotSchematics = { { quantityRequired = 1, reagents = { { itemID = 6217 } } },
+              { quantityRequired = 4, reagents = { { itemID = 2840 } } } } } end
+          return { name = 'Copper Bar', outputItemID = 2840, quantityMin = 1, quantityMax = 1,
+            reagentSlotSchematics = { { quantityRequired = 1, reagents = { { itemID = 2770 } } } } }
+        end,
+      }
+    """)
+    B.readRecipes()
+    cost, missing, _, _ = B.craftNow(6218)
+    check(cost == 120 + 4 * 35 and missing == 0, f"crafting a rod now: {cost}")
+    cost, missing, _, _ = B.craftNow(2840)
+    check(cost is None and missing == 1, "a material without a price: no cost")
+    check(B.craftNow(6217)[0] is None, "no recipe: nothing")
+
+    # shift-clicking a recipe link or a craftable item picks it in the window
+    B.mode = "income"
+    B.linked("|cffffd000|Henchant:11|h[Smelting: Copper Bar]|h|r")
+    check(DB.boughtRecipe == 11 and B.mode == "bought", "a recipe link picks that recipe")
+    B.linked("|cff1eff00|Hitem:6218::::::::|h[Runed Copper Rod]|h|r")
+    check(DB.boughtRecipe == 9, "an item you can craft picks its recipe")
+    try:
+        B.mode = "income"
+        B.render()
+        f = G.EverlookAuctionsPurchases
+        check("Last 7 days" in f.sum.text, f"the income view sums the week: {f.sum.text}")
+    except Exception as e:
+        failures.append(f"purchases: income view error {e}")
+
     # the cap: the oldest go first
     lst = lua.table()
     for i in range(5):
         P.add(lst, lua.eval("function(i) return { id = 1, q = 1, c = i } end")(i + 1), 3)
     check(len(lst) == 3 and lst[1].c == 3, "keeps the newest")
     check(P.add(lst, lua.eval("{ id = 1, q = 0, c = 5 }")) is None, "nothing bought: not logged")
+    return failures
+
+
+def cheer():
+    """The sale celebration: the game's message, what it likely sold for, and one banner for sales close together."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute("""
+      ERR_AUCTION_SOLD_S = 'A buyer has been found for your auction of %s.'
+      GetTime = function() return 100 end
+      MOCK_DB = {}
+      MOCK_SELL = { memory = { ['6218:0'] = { p = 900, q = 2 } } }
+      C_Item.GetItemInfoInstant = function(name) for id, n in pairs(MOCK_ITEMS) do if n == name then return id end end end
+    """)
+    ns = lua.table()
+    ns.db = lua.eval("function() return MOCK_DB end")
+    ns.sellSettings = lua.eval("function() return MOCK_SELL end")
+    ns.money = lua.eval("function(c) return tostring(c) .. 'c' end")
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run((ROOT / "Celebrate.lua").read_text(encoding="utf-8"), "Celebrate.lua", "EverlookDBAuctions", ns)
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    G = lua.globals()
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("cheer: " + what)
+
+    fire("CHAT_MSG_SYSTEM", "You have learned something.")
+    check(G.EverlookAuctionsCheer is None or not G.EverlookAuctionsCheer.shown, "another message: nothing")
+    fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Runed Copper Rod.")
+    f = G.EverlookAuctionsCheer
+    check(f is not None and f.shown and f.line.text == "2x Runed Copper Rod sold for about 1800c", f"banner: {f and f.line.text}")
+    fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Copper Bar.")
+    check(f.line.text == "2 auctions sold", f"two sales, one unpriced: {f.line.text}")
+    f.shown = False
+    G.MOCK_DB.cheer = False
+    fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Copper Bar.")
+    check(not f.shown, "turned off: no banner")
     return failures
 
 

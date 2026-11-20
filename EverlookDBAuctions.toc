@@ -23,6 +23,7 @@ Buy.lua
 RecipeList.lua
 PurchaseLog.lua
 Purchases.lua
+Celebrate.lua
 Crafting.lua
 Options.lua
 API.lua
