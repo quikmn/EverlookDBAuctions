@@ -426,9 +426,23 @@ local function width() return math.max(MIN_W, math.min(MAX_W, math.floor(tonumbe
 local function layoutNow()
   local w = width()
   local compact, wide = w < COMPACT_W, w >= WIDE_W
-  local mini = w < MINI_W   -- narrower still: no title, short tabs, how many goes with the name
-  return { w = w, compact = compact, mini = mini, wide = wide, dateW = mini and 60 or (compact and 60 or DATE_W),
+  local mini = w < MINI_W   -- narrower still: no title, short tabs
+  local mode = B.mode or "bought"
+  local L = { w = w, compact = compact, mini = mini, wide = wide, looted = mode == "looted",
     craftW = wide and 170 or CRAFT_W, totalW = mini and 80 or TOTAL_W, top = compact and 84 or 104 }
+  -- Columns by what matters most in each view, each only while item names keep NAME_MIN of room: in Looted where it
+  -- came from first; elsewhere how many, then each, then the craft cost. The full date last.
+  local NAME_MIN = 150
+  local order = mode == "looted" and { "craft", "qty", "each" } or (mode == "bought" and { "qty", "each" } or { "qty", "each", "craft" })
+  local widths = { qty = QTY_W, each = EACH_W, craft = L.craftW }
+  local room = w - 32 - PAD * 2 - 22 - L.totalW - 60
+  for _, c in ipairs(order) do
+    local need = widths[c] + 8 + ((c == "craft" and L.looted) and 8 or 0)
+    if room - need >= NAME_MIN then L[c] = true; room = room - need end
+  end
+  L.fullDate = room - (DATE_W - 60) >= NAME_MIN
+  L.dateW = L.fullDate and DATE_W or 60
+  return L
 end
 B.layoutNow = layoutNow
 local function alpha() return math.max(0.3, math.min(1, tonumber(setting("logAlpha", 0.97)) or 0.97)) end
@@ -994,13 +1008,13 @@ local function renderList(f)
     if e then
       row.check:SetShown(not side and e.m == true)
       local L = B.lay or layoutNow()
-      if L.compact then
+      if not L.fullDate then
         -- today: the time; before: the day
         row.date:SetText(date("%d %b", e.t) == date("%d %b") and date("%H:%M", e.t) or date("%d %b", e.t))
       else
         row.date:SetText(date("%d %b %H:%M", e.t))
       end
-      if sale then row.date:SetText(L.compact and (B.leftText(e):match("^(%S+)") or "") or B.leftText(e)) end
+      if sale then row.date:SetText(not L.fullDate and (B.leftText(e):match("^(%S+)") or "") or B.leftText(e)) end
       row.date:SetWidth(L.dateW - 16)
       row.icon:ClearAllPoints()
       row.icon:SetPoint("LEFT", L.dateW, 0)
@@ -1025,7 +1039,7 @@ local function renderList(f)
       row.total:SetWidth(L.totalW)
       row.qty:SetShown(not L.mini)
       row.qty:SetWidth(L.mini and 1 or QTY_W)
-      if L.mini and e.q and tonumber(e.q) and tonumber(e.q) > 1 then
+      if not L.qty and e.q and tonumber(e.q) and tonumber(e.q) > 1 then
         row.name:SetText(entryName(e) .. " |cff8a93a0x" .. ns.num(e.q) .. "|r")
       end
       if looted then
@@ -1053,6 +1067,7 @@ local function renderList(f)
         setMoney(row.each, math.floor(e.c / q + 0.5))
         setMoney(row.total, e.c)
       end
+      B.placeRow(row, L)
       paintRow(row)
       row:Show()
     else
@@ -1209,6 +1224,56 @@ local function renderRecipe(f)
   f.recipe:SetHeight(-y + 12)
 end
 
+-- The columns right to left: total, then the ones this width has room for (B.layoutNow). Hidden ones keep a 1 wide
+-- place in the chain so the item name always ends before the first shown column.
+local CHAIN = { "craft", "each", "qty" }
+local function colWidth(L, c) return c == "craft" and L.craftW or c == "each" and EACH_W or QTY_W end
+function B.placeRow(row, L)
+  row.date:SetWidth(L.dateW - 16)
+  row.icon:ClearAllPoints()
+  row.icon:SetPoint("LEFT", L.dateW, 0)
+  row.total:SetWidth(L.totalW)
+  row.craft:SetJustifyH(L.looted and "LEFT" or "RIGHT")
+  local prev = row.total
+  for _, c in ipairs(CHAIN) do
+    local fs = row[c]
+    fs:ClearAllPoints()
+    if L[c] then
+      fs:SetWidth(colWidth(L, c))
+      -- a left-aligned FROM needs air after it
+      fs:SetPoint("RIGHT", prev, "LEFT", (prev == row.craft and L.looted) and -16 or -8, 0)
+      fs:Show()
+      prev = fs
+    else
+      fs:SetWidth(1)
+      fs:SetPoint("RIGHT", prev, "LEFT", 0, 0)
+      fs:Hide()
+    end
+  end
+end
+function B.placeHeads(f, L)
+  f.totalHead:SetWidth(L.totalW)
+  f.headItem:ClearAllPoints()
+  f.headItem:SetPoint("LEFT", L.dateW, 0)
+  f.craftHead:SetJustifyH(L.looted and "LEFT" or "RIGHT")
+  local heads = { craft = f.craftHead, each = f.eachHead, qty = f.qtyHead }
+  local x, afterCraft = L.totalW, false
+  for _, c in ipairs(CHAIN) do
+    local h = heads[c]
+    if L[c] then
+      local gap = (afterCraft and L.looted) and 16 or 8
+      local cw = colWidth(L, c)
+      h:ClearAllPoints()
+      h:SetPoint("RIGHT", -(x + gap), 0)
+      h:SetWidth(cw)
+      h:Show()
+      x, afterCraft = x + gap + cw, c == "craft"
+    else
+      h:Hide()
+    end
+  end
+end
+
 -- How long an auction has left: "5h 20m", "40m", or "ended" (it comes back by mail if it didn't sell).
 function B.leftText(e)
   if not e.ends then
@@ -1334,7 +1399,8 @@ function B.render()
   f.qtyHead:SetPoint("RIGHT", L.compact and -(TOTAL_W + 8) or (-(TOTAL_W + L.craftW + EACH_W + 24 + gap) + shift), 0)
   for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not side) end
   if L.mini then f.clear:Hide() end
-  f.headWhen:SetText(sale and (L.compact and "LEFT" or "TIME LEFT") or "WHEN")
+  B.placeHeads(f, L)
+  f.headWhen:SetText(sale and (L.fullDate and "TIME LEFT" or "LEFT") or "WHEN")
   f.craftHead:SetText(looted and "FROM" or "CRAFT NOW, EACH")
   renderList(f)
   local listH = f.list:GetHeight() or 0
