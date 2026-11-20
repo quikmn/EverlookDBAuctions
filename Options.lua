@@ -237,14 +237,14 @@ local function build()
   app:Section("ahlog", "AH log", function(stack)
     UI.Header(stack, "AH log", "What you bought and what you sold, with what a craft cost you. Open it anywhere with /eah bought, /eah forsale, /eah income or /eah loot, or from its Loot plugin on Everlook Bar.")
     UI.ButtonRow(stack, {
-      { label = "Open purchases", width = 150, style = "accent", onClick = function() if ns.purchases then ns.purchases.open() end end,
-        desc = "Everything you bought, and a recipe's cost per craft from what you paid.", keywords = { "bought", "log" } },
-      { label = "Open loot log", width = 150, onClick = function() if ns.purchases then ns.purchases.toggle("looted") end end,
-        desc = "Everything you looted, with when and where.", keywords = { "loot", "looted", "drops" } },
-      { label = "Open for sale", width = 150, onClick = function() if ns.purchases then ns.purchases.toggle("forsale") end end,
-        desc = "Your auctions up for sale, as the auction house last showed them.", keywords = { "for sale", "listed", "posted", "auctions" } },
-      { label = "Open income", width = 150, onClick = function() if ns.purchases then ns.purchases.toggle("income") end end,
-        desc = "Money you took from the mail: auctions sold and other gold.", keywords = { "income", "sold" } },
+      { label = "Purchases", width = 124, style = "accent", onClick = function() if ns.purchases then ns.purchases.open() end end,
+        desc = "Everything you bought, and a recipe's cost per craft from what you paid.", keywords = { "bought", "log", "open" } },
+      { label = "For sale", width = 124, onClick = function() if ns.purchases then ns.purchases.toggle("forsale") end end,
+        desc = "Your auctions up for sale, as the auction house last showed them.", keywords = { "for sale", "listed", "posted", "auctions", "open" } },
+      { label = "Income", width = 124, onClick = function() if ns.purchases then ns.purchases.toggle("income") end end,
+        desc = "Money you took from the mail: auctions sold and other gold.", keywords = { "income", "sold", "open" } },
+      { label = "Loot log", width = 124, onClick = function() if ns.purchases then ns.purchases.toggle("looted") end end,
+        desc = "Everything you looted, with when and where.", keywords = { "loot", "looted", "drops", "open" } },
     })
     UI.Header(stack, "Window")
     app:Widget(stack, "logopacity")
