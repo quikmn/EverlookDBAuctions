@@ -45,12 +45,12 @@ local function parseItem(msg)
     itemPatterns = {}
     for _, f in ipairs(ITEM_FORMATS) do
       local p = pattern(_G[f[1]] or f[2])
-      if p then itemPatterns[#itemPatterns + 1] = p end
+      if p then itemPatterns[#itemPatterns + 1] = { p, f[1]:find("PUSHED") ~= nil } end
     end
   end
   for _, p in ipairs(itemPatterns) do
-    local link, n = msg:match(p)
-    if link then return link, tonumber(n) or 1 end
+    local link, n = msg:match(p[1])
+    if link then return link, tonumber(n) or 1, p[2] end
   end
 end
 L.parseItem = parseItem
@@ -412,9 +412,68 @@ if C_Container and C_Container.UseContainerItem then
   end)
 end
 
+---------------------------------------------------------------------------------------------------------------------
+-- Items that arrive without being looted: taken from the mail (an expired, cancelled or won auction, a letter), bought
+-- from a merchant or traded. The game says "You receive item" for those too; they go in the log with where they came
+-- from, marked as not loot (no card, not in today's loot).
+
+local mailTaken        -- { from, how, t }: the mail you just took an item from
+local atMerchant       -- the merchant's name while its window is open
+local tradingWith      -- the other player's name while a trade window is open
+
+local function subjectIs(subject, global, fallback)
+  local pat = pattern(_G[global] or fallback)
+  return type(subject) == "string" and pat and subject:match(pat) ~= nil
+end
+
+local function noteMail(index)
+  local ok, _, _, sender, subject = pcall(GetInboxHeaderInfo, index)
+  if not ok then return end
+  sender, subject = okv(sender), okv(subject)
+  local from
+  if subjectIs(subject, "AUCTION_EXPIRED_MAIL_SUBJECT", "Auction expired: %s") then from = "Expired auction"
+  elseif subjectIs(subject, "AUCTION_REMOVED_MAIL_SUBJECT", "Auction cancelled: %s") then from = "Cancelled auction"
+  elseif subjectIs(subject, "AUCTION_WON_MAIL_SUBJECT", "Auction won: %s") then from = "Won auction"
+  elseif type(sender) == "string" and sender ~= "" then from = "Mail from " .. sender
+  else from = "Mail" end
+  mailTaken = { from = from, how = "Mailbox", t = GetTime() }
+end
+for _, fn in ipairs({ "TakeInboxItem", "AutoLootMailItem" }) do
+  if type(_G[fn]) == "function" then hooksecurefunc(fn, function(index) noteMail(index) end) end
+end
+
+local where = CreateFrame("Frame")
+for _, e in ipairs({ "MERCHANT_SHOW", "MERCHANT_CLOSED", "TRADE_SHOW", "TRADE_CLOSED" }) do pcall(where.RegisterEvent, where, e) end
+where:SetScript("OnEvent", function(_, event)
+  if event == "MERCHANT_SHOW" then
+    local ok, n = pcall(UnitName, "npc")
+    atMerchant = ok and okv(n) or "a merchant"
+  elseif event == "MERCHANT_CLOSED" then atMerchant = nil
+  elseif event == "TRADE_SHOW" then
+    local ok, n = pcall(UnitName, "NPC")
+    tradingWith = ok and okv(n) or "a player"
+  elseif event == "TRADE_CLOSED" then
+    -- the trade's items arrive just after the window closes
+    local who = tradingWith
+    if C_Timer and C_Timer.After then C_Timer.After(3, function() if tradingWith == who then tradingWith = nil end end) else tradingWith = nil end
+  end
+end)
+local function mailOpen() return MailFrame and MailFrame.IsShown and MailFrame:IsShown() end
+
+-- Where a "You receive item" line came from when it wasn't loot: { from, how, got } or nil
+local function notLoot(pushed)
+  if not pushed then return nil end
+  if mailTaken and GetTime() - mailTaken.t < 10 then return { from = mailTaken.from, how = mailTaken.how, got = "mail" } end
+  if mailOpen() then return { from = "Mail", how = "Mailbox", got = "mail" } end
+  if atMerchant then return { from = atMerchant, how = "Bought", got = "bought" } end
+  if tradingWith then return { from = tradingWith, how = "Trade", got = "trade" } end
+end
+L.notLoot = notLoot
+L.noteMail = noteMail
+
 local function log(e, link)
   if not (ns.purchases and ns.purchases.noteLoot) then return end
-  local s = sourceFor(e)
+  local s = e.got and e or sourceFor(e)
   if s then e.from, e.how, e.npc = s.from, s.how, s.npc end
   -- a failure here shows as a Lua error (the card still shows), never silently
   local ok, err = pcall(ns.purchases.noteLoot, e, link)
@@ -431,10 +490,13 @@ ev:SetScript("OnEvent", function(_, event, msg)
     if enabled() and not (d and d.lootMoney == false) then L.show({ copper = c }) end
     return
   end
-  local link, n = parseItem(msg)
+  local link, n, pushed = parseItem(msg)
   if not link then return end
   local e = itemFrom(link, n)
+  local other = notLoot(pushed)
+  if other then e.from, e.how, e.got = other.from, other.how, other.got end
   log(e, link)
+  if e.got then return end   -- not loot: no card
   if e.quality and d and d.lootMin and e.quality < d.lootMin then return end
   if enabled() then L.show(e) end
 end)

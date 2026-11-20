@@ -289,7 +289,7 @@ function B.noteLoot(e, link)
   local d = db()
   if d and d.logLoot == false then return end
   local zone = GetRealZoneText and okv(GetRealZoneText()) or nil
-  local r = { t = time(), zone = zone, loot = true, from = e.from, how = e.how, npc = e.npc }
+  local r = { t = time(), zone = zone, loot = true, from = e.from, how = e.how, npc = e.npc, got = e.got }
   if e.copper then
     r.copper = e.copper
   else
@@ -1305,7 +1305,8 @@ function B.lootToday()
   for i = #list, 1, -1 do
     local e = list[i]
     if e.t < since then break end
-    if e.copper then coins = coins + e.copper
+    if e.got then   -- from the mail, a merchant or a trade: not loot
+    elseif e.copper then coins = coins + e.copper
     else
       n = n + (e.q or 1)
       local each = ns.lootCards and ns.lootCards.worth(e.id)

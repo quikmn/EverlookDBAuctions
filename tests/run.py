@@ -2844,8 +2844,10 @@ def purchases():
         # Loot: a loot line is parsed, logged with time, and the Looted tab and today's sum show it
         link = "|cff1eff00|Hitem:7909::::::::20:::::|h[Aquamarine]|h|r"
         LC = ns.lootCards
-        lk, n = LC.parseItem("You receive loot: " + link + "x3.")
-        check(lk == link and n == 3, f"loot line parsed: {lk} {n}")
+        lk, n, pushed = LC.parseItem("You receive loot: " + link + "x3.")
+        check(lk == link and n == 3 and not pushed, f"loot line parsed: {lk} {n}")
+        lk, n, pushed = LC.parseItem("You receive item: " + link + ".")
+        check(lk == link and n == 1 and pushed is True, "an item given to you is marked as pushed")
         check(LC.parseMoney("You loot 1 Gold, 5 Silver, 3 Copper") == 10503, "money parsed")
         lua.execute("GetRealZoneText = function() return 'Tanaris' end")
         e1 = LC.itemFrom(link, 3); e1["from"] = "Sandfury Shadowcaster"; e1.npc = 5648
@@ -2875,6 +2877,19 @@ def purchases():
         B.mode = "looted"
         B.render()
         check("Today: 3 items" in f.sum.text, f"loot sum: {f.sum.text}")
+        # an expired auction taken from the mail: logged with where it came from, not counted as loot
+        lua.execute("""
+          GetInboxHeaderInfo = function(i) return nil, nil, 'Auction House', 'Auction expired: Black Silk Pack' end
+        """)
+        LC.noteMail(1)
+        other = LC.notLoot(True)
+        check(other is not None and other["from"] == "Expired auction" and other.got == "mail", f"mail item: {other and other['from']}")
+        check(LC.notLoot(False) is None, "a real loot line is never taken for mail")
+        e3 = LC.itemFrom(link, 5); e3["from"], e3.how, e3.got = other["from"], other.how, other.got
+        B.noteLoot(e3, link)
+        check(lt[3].got == "mail" and lt[3]["from"] == "Expired auction", "logged as from the mail")
+        B.render()
+        check("Today: 3 items" in f.sum.text, f"mail items don't count as loot: {f.sum.text}")
     except Exception as e:
         failures.append(f"purchases: income view error {e}")
 
