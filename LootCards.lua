@@ -242,6 +242,14 @@ local function remember(guid, name)
   names[guid] = name
 end
 
+local function rememberUnit(unit)
+  local okG, g = pcall(UnitGUID, unit)
+  g = okG and okv(g)
+  if type(g) ~= "string" or not g:match("^Creature") and not g:match("^Vehicle") then return end
+  local okN, n = pcall(UnitName, unit)
+  if okN then remember(g, n) end
+end
+
 local function unitName(guid)
   for _, u in ipairs({ "target", "mouseover", "focus", "softinteract", "softenemy" }) do
     local okG, g = pcall(UnitGUID, u)
@@ -313,10 +321,21 @@ end
 L.sourceFor = sourceFor
 
 local src = CreateFrame("Frame")
-for _, e in ipairs({ "LOOT_READY", "LOOT_OPENED", "COMBAT_LOG_EVENT_UNFILTERED", "UNIT_SPELLCAST_SENT" }) do
+for _, e in ipairs({ "LOOT_READY", "LOOT_OPENED", "COMBAT_LOG_EVENT_UNFILTERED", "UNIT_SPELLCAST_SENT",
+    "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "NAME_PLATE_UNIT_ADDED", "PLAYER_SOFT_INTERACT_CHANGED", "UNIT_TARGET" }) do
   pcall(src.RegisterEvent, src, e)
 end
 src:SetScript("OnEvent", function(_, event, ...)
+  if event == "PLAYER_TARGET_CHANGED" then rememberUnit("target"); return end
+  if event == "UPDATE_MOUSEOVER_UNIT" then rememberUnit("mouseover"); return end
+  if event == "PLAYER_SOFT_INTERACT_CHANGED" then rememberUnit("softinteract"); return end
+  if event == "NAME_PLATE_UNIT_ADDED" then local u = ...; if type(u) == "string" then rememberUnit(u) end; return end
+  if event == "UNIT_TARGET" then
+    -- what your party is fighting
+    local u = ...
+    if type(u) == "string" and (u == "player" or u:match("^party%d$") or u == "pet") then rememberUnit(u .. "target") end
+    return
+  end
   if event == "COMBAT_LOG_EVENT_UNFILTERED" then
     if not CombatLogGetCurrentEventInfo then return end
     local ok, _, sub, _, _, _, _, _, guid, name = pcall(CombatLogGetCurrentEventInfo)

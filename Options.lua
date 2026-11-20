@@ -117,11 +117,11 @@ local function build()
     after = logRefresh,
   })
   app:Setting({
-    key = "logrows", type = "number", label = "Rows shown", min = 6, max = 30, step = 1,
+    key = "logrows", type = "number", label = "Rows shown", min = 3, max = 40, step = 1,
     chatLabel = "AH log rows", keywords = { "lines", "height", "size", "log" },
-    desc = "How many purchases or sales the list shows before you scroll.",
+    desc = "How many rows the list shows before you scroll. Or drag the window's bottom right corner: taller for more rows, narrower for only the essentials.",
     get = function() return tonumber(db().logRows) or 12 end,
-    set = function(v) db().logRows = math.max(6, math.min(30, math.floor(tonumber(v) or 12))) end,
+    set = function(v) db().logRows = math.max(3, math.min(40, math.floor(tonumber(v) or 12))) end,
     after = logRefresh,
   })
   app:Setting({

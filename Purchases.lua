@@ -17,7 +17,7 @@ local UI = ns.UI
 local B = {}
 
 local W, PAD, ROW = 700, 14, 22
-local DATE_W, QTY_W, EACH_W, TOTAL_W, CRAFT_W = 96, 40, 104, 104, 108
+local DATE_W, QTY_W, EACH_W, TOTAL_W, CRAFT_W = 110, 40, 104, 104, 108
 local REC_ROWS = 8
 local STALE = 24 * 3600
 
@@ -416,7 +416,20 @@ local function setting(key, default)
   if v == nil then return default end
   return v
 end
-local function rows() return math.max(6, math.min(30, math.floor(tonumber(setting("logRows", 12)) or 12))) end
+local MIN_ROWS, MAX_ROWS = 3, 40
+local function rows() return math.max(MIN_ROWS, math.min(MAX_ROWS, math.floor(tonumber(setting("logRows", 12)) or 12))) end
+
+-- The window's width (drag its corner): narrow is the essentials (time, item, how many, total), normal adds each and
+-- the third column, wide gives names and sources more room.
+local MIN_W, MAX_W, COMPACT_W, WIDE_W = 460, 1200, 620, 860
+local function width() return math.max(MIN_W, math.min(MAX_W, math.floor(tonumber(setting("logW", W)) or W))) end
+local function layoutNow()
+  local w = width()
+  local compact, wide = w < COMPACT_W, w >= WIDE_W
+  return { w = w, compact = compact, wide = wide, dateW = compact and 60 or DATE_W, craftW = wide and 170 or CRAFT_W,
+    top = compact and 84 or 104 }
+end
+B.layoutNow = layoutNow
 local function alpha() return math.max(0.3, math.min(1, tonumber(setting("logAlpha", 0.97)) or 0.97)) end
 
 local function text(parent, size, color, justify)
@@ -851,6 +864,7 @@ local function makeFrame()
   local hi = text(head, T.fontSmall, T.muted)
   hi:SetPoint("LEFT", DATE_W, 0)
   hi:SetText("ITEM")
+  f.headItem = hi
   f.rows = {}
   f.empty = text(f.list, T.font, T.muted)
   f.empty:SetWordWrap(true)
@@ -880,6 +894,53 @@ local function makeFrame()
   f.note = text(f.recipe, T.font - 1, T.muted)
   f.note:SetWordWrap(true)
   f.note:SetWidth(W - 32 - PAD * 2)
+
+  -- the corner grip: drag for width (narrow, normal, wide layouts) and rows
+  f.grip = CreateFrame("Button", nil, f)
+  f.grip:SetSize(16, 16)
+  f.grip:SetPoint("BOTTOMRIGHT", -4, 4)
+  f.grip:SetFrameLevel(f:GetFrameLevel() + 20)
+  f.grip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+  f.grip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+  f.grip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+  f.grip:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("Resize", 1, 1, 1)
+    GameTooltip:AddLine("Narrower shows only the essentials, wider shows more. Taller shows more rows.", nil, nil, nil, true)
+    GameTooltip:Show()
+  end)
+  f.grip:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  f.grip:SetScript("OnMouseDown", function()
+    local s = f:GetEffectiveScale()
+    local x, y = GetCursorPosition()
+    -- the top left corner stays put while you drag
+    local left, top = f:GetLeft(), f:GetTop()
+    if left and top then
+      f:ClearAllPoints()
+      f:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+    end
+    f.sizing = { x = x / s, y = y / s, w = width(), rows = rows() }
+    GameTooltip:Hide()
+  end)
+  f.grip:SetScript("OnMouseUp", function()
+    f.sizing = nil
+    local d = db()
+    if d and f:GetLeft() then d.boughtPos = { "TOPLEFT", "BOTTOMLEFT", f:GetLeft(), f:GetTop() } end
+  end)
+  f.grip:SetScript("OnUpdate", function()
+    local z = f.sizing
+    if not z then return end
+    if not IsMouseButtonDown("LeftButton") then f.grip:GetScript("OnMouseUp")(); return end
+    local s = f:GetEffectiveScale()
+    local x, y = GetCursorPosition()
+    local w = math.max(MIN_W, math.min(MAX_W, math.floor(z.w + x / s - z.x)))
+    local n = math.max(MIN_ROWS, math.min(MAX_ROWS, z.rows + math.floor((z.y - y / s) / ROW + 0.5)))
+    local d = db()
+    if d and (w ~= width() or n ~= rows()) then
+      d.logW, d.logRows = w, n
+      B.render()
+    end
+  end)
 
   f:SetScript("OnShow", function() end)
   EUI.CloseOnEscape(f)
@@ -930,8 +991,19 @@ local function renderList(f)
     row.entry = e
     if e then
       row.check:SetShown(not side and e.m == true)
-      row.date:SetText(date("%d %b %H:%M", e.t))
-      if sale then row.date:SetText(B.leftText(e)) end
+      local L = B.lay or layoutNow()
+      if L.compact then
+        -- today: the time; before: the day
+        row.date:SetText(date("%d %b", e.t) == date("%d %b") and date("%H:%M", e.t) or date("%d %b", e.t))
+      else
+        row.date:SetText(date("%d %b %H:%M", e.t))
+      end
+      if sale then row.date:SetText(L.compact and (B.leftText(e):match("^(%S+)") or "") or B.leftText(e)) end
+      row.date:SetWidth(L.dateW - 16)
+      row.icon:ClearAllPoints()
+      row.icon:SetPoint("LEFT", L.dateW, 0)
+      row.craft:SetWidth(L.craftW)
+      row.craft:SetJustifyH((looted and L.wide) and "LEFT" or "RIGHT")
       local id = income and saleID(e) or e.id
       row.icon:SetTexture(id and try(C_Item.GetItemIconByID, id) or ((e.copper or (e.kind and e.kind ~= "sale")) and 133784) or 134400)
       row.name:SetText(entryName(e))
@@ -941,8 +1013,11 @@ local function renderList(f)
       local q = math.max(1, tonumber(e.q) or 1)
       if cost then setMoney(row.craft, cost, math.floor(e.c / q + 0.5) >= cost and T.ok or T.danger) else row.craft:SetText("") end
       row.each:ClearAllPoints()
-      row.each:SetPoint("RIGHT", side and row.craft or row.total, "LEFT", -8, 0)
-      row.craft:SetShown(side and true or false)
+      row.each:SetPoint("RIGHT", side and row.craft or row.total, "LEFT", (looted and L.wide) and -24 or -8, 0)
+      row.craft:SetShown((side and not L.compact) and true or false)
+      row.each:SetShown(not L.compact)
+      row.qty:ClearAllPoints()
+      row.qty:SetPoint("RIGHT", L.compact and row.total or row.each, "LEFT", -8, 0)
       if e.pending then row.date:SetTextColor(rgba(T.accent)) else row.date:SetTextColor(rgba(T.muted)) end
       row.qty:SetText(e.q and ns.num(e.q) or "")
       if looted then
@@ -1207,25 +1282,48 @@ function B.render()
     or sale and (fs.at and ("Your auctions as the auction house showed them on %s. Sales since then move to Income."):format(date("%d %b %H:%M", fs.at))
       or "Your auctions, read on every visit to the auction house.")
     or "Everything you bought at the auction house. Click the purchases you crafted with to mark them.")
-  f.craftHead:SetShown(side)
-  local shift = side and 0 or (CRAFT_W + 8)
-  f.eachHead:SetPoint("RIGHT", -(TOTAL_W + CRAFT_W + 16) + shift, 0)
-  f.qtyHead:SetPoint("RIGHT", -(TOTAL_W + CRAFT_W + EACH_W + 24) + shift, 0)
+  local L = layoutNow()
+  B.lay = L
+  f:SetWidth(L.w)
+  f.sub:SetShown(not L.compact)
+  f.search:ClearAllPoints()
+  f.search:SetPoint("TOPLEFT", 20, L.compact and -48 or -68)
+  f.search:SetWidth(L.compact and 150 or 220)
+  f.clear:ClearAllPoints()
+  f.clear:SetPoint("TOPRIGHT", -20, L.compact and -49 or -69)
+  f.list:ClearAllPoints()
+  f.list:SetPoint("TOPLEFT", 16, -L.top)
+  f.list:SetPoint("RIGHT", -16, 0)
+  for _, b in ipairs(f.tabs) do b:SetWidth(L.compact and 68 or 84) end
+  f.note:SetWidth(L.w - 32 - PAD * 2)
+  for _, m in ipairs(f.mats) do m.src:SetWidth(L.compact and 110 or 220) end
+  f.headItem:ClearAllPoints()
+  f.headItem:SetPoint("LEFT", L.dateW, 0)
+  f.craftHead:SetWidth(L.craftW)
+  f.craftHead:SetJustifyH((looted and L.wide) and "LEFT" or "RIGHT")
+  f.craftHead:SetShown(side and not L.compact)
+  f.eachHead:SetShown(not L.compact)
+  local shift = side and 0 or (L.craftW + 8)
+  local gap = (looted and L.wide) and 16 or 0   -- the left-aligned FROM column needs air after EACH
+  f.eachHead:SetPoint("RIGHT", -(TOTAL_W + L.craftW + 16 + gap) + shift, 0)
+  f.qtyHead:SetPoint("RIGHT", L.compact and -(TOTAL_W + 8) or (-(TOTAL_W + L.craftW + EACH_W + 24 + gap) + shift), 0)
   for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not side) end
-  f.headWhen:SetText(sale and "TIME LEFT" or "WHEN")
+  f.headWhen:SetText(sale and (L.compact and "LEFT" or "TIME LEFT") or "WHEN")
   f.craftHead:SetText(looted and "FROM" or "CRAFT NOW, EACH")
   renderList(f)
   local listH = f.list:GetHeight() or 0
   if side then
     if B.picker then B.picker:Hide() end
-    f:SetHeight(104 + listH + 16)
+    f:SetHeight(L.top + listH + 16)
+    f.pos:SetShown(not L.compact)
     return
   end
   renderRecipe(f)
   f.recipe:ClearAllPoints()
   f.recipe:SetPoint("TOPLEFT", f.list, "BOTTOMLEFT", 0, -10)
   f.recipe:SetPoint("RIGHT", -16, 0)
-  f:SetHeight(104 + listH + 10 + (f.recipe:GetHeight() or 0) + 16)
+  f.pos:SetShown(not L.compact)
+  f:SetHeight(L.top + listH + 10 + (f.recipe:GetHeight() or 0) + 16)
 end
 
 function B.open(recipeID)
