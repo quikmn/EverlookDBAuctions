@@ -189,6 +189,8 @@ local function sold(name)
   if name == lastName and now - lastAt < 0.5 then return end
   lastName, lastAt = name, now
   local total, count = C.guess(name)
+  -- remembered as sold, waiting in the mail, for the AH log's Income view (/eah income)
+  if ns.purchases and ns.purchases.noteSold and name ~= "An auction" then pcall(ns.purchases.noteSold, name, total, count) end
   C.show(name, total, count)
 end
 C.sold = sold

@@ -557,6 +557,7 @@ ns.sellLive, ns.sellRequest = Live, request   -- for the offline tests
 local function queryOwned()
   if AH.QueryOwnedAuctions then pcall(AH.QueryOwnedAuctions, SORTS) end
 end
+ns.sellQueryOwned = queryOwned
 
 -- Whether an owned commodity auction's buyoutAmount is the price of the whole auction or of one: learned from your
 -- own posts (the price you posted at is remembered), kept in db.sell.ownedTotal. Until then, one (as on retail).
@@ -2135,6 +2136,11 @@ function events.BAG_UPDATE_DELAYED() refreshBags() end
 
 
 function events.OWNED_AUCTIONS_UPDATED()
+  -- the AH log's For sale tab keeps what is up, whichever screen asked
+  if ns.purchases and ns.purchases.noteOwned then
+    readOwned()
+    pcall(ns.purchases.noteOwned, S.owned)
+  end
   if not S.frame or not S.frame:IsShown() then return end
   S.ownedLoaded = true
   readOwned()

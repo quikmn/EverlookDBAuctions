@@ -2764,7 +2764,12 @@ def purchases():
       C_Item.GetItemInfoInstant = function(name) for id, n in pairs(MOCK_ITEMS) do if n == name then return id end end end
     """)
     B = ns.purchases
+    # a sale the game told us about waits as "in your mail" until its money is taken
+    B.noteSold("Runed Copper Rod", 1800, 2)
+    B.noteSold("Copper Bar", None, None)
+    check(len(DB.soldPending) == 2 and DB.soldPending[1].est == 1800, "two sales waiting in the mail")
     B.takeMail(1)
+    check(len(DB.soldPending) == 1 and DB.soldPending[1].name == "Copper Bar", "taking the rod's money settles the rod only")
     B.takeMail(1)
     B.takeMail(2)
     inc = DB.income
@@ -2808,6 +2813,19 @@ def purchases():
         B.render()
         f = G.EverlookAuctionsPurchases
         check("Last 7 days" in f.sum.text, f"the income view sums the week: {f.sum.text}")
+        check("1 sold, money waiting in your mail" in f.sub.text, f"the waiting sale is counted: {f.sub.text}")
+        # For sale: what the auction house showed, sorted by time left; a sale takes its auction off
+        owned = lua.eval("""{ { itemID = 6218, name = 'Runed Copper Rod', qty = 2, unit = 900, left = 7200 },
+          { itemID = 2840, name = 'Copper Bar', qty = 20, unit = 35, left = 600 }, { itemID = 2840, name = 'Copper Bar', qty = 5, sold = true } }""")
+        B.noteOwned(owned)
+        fs = G.EverlookAuctionsCharDB.forSale
+        check(len(fs.list) == 2 and fs.list[1].c == 1800, "two auctions up (the sold one isn't), buyout of the whole auction")
+        B.mode = "forsale"
+        B.render()
+        check("Up for sale: 2 auctions" in f.sum.text, f"for sale sum: {f.sum.text}")
+        check(B.leftText(fs.list[2]) in ("10m", "9m"), f"time left: {B.leftText(fs.list[2])}")
+        B.noteSold("Runed Copper Rod", 1800, 2)
+        check(len(fs.list) == 1 and fs.list[1].name == "Copper Bar", "the sold rod is off sale and waits in the mail")
     except Exception as e:
         failures.append(f"purchases: income view error {e}")
 

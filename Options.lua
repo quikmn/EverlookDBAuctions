@@ -157,6 +157,9 @@ local function build()
   app:Command("bought", "bought", "your auction house purchases, and a recipe's cost from what you paid (works anywhere)", function()
     if ns.purchases then ns.purchases.toggle() end
   end, { "purchases", "buys", "log" })
+  app:Command("forsale", "forsale", "your auctions up for sale, as the auction house last showed them (works anywhere)", function()
+    if ns.purchases then ns.purchases.toggle("forsale") end
+  end, { "listed", "posted", "up" })
   app:Command("income", "income", "what you sold and other gold from the mail, with what crafting a sold item again costs", function()
     if ns.purchases then ns.purchases.toggle("income") end
   end, { "sales", "sold", "earned" })
@@ -193,10 +196,12 @@ local function build()
     app:Widget(stack, "tipdetail")
   end)
   app:Section("ahlog", "AH log", function(stack)
-    UI.Header(stack, "AH log", "What you bought and what you sold, with what a craft cost you. Open it anywhere with /eah bought or /eah income.")
+    UI.Header(stack, "AH log", "What you bought and what you sold, with what a craft cost you. Open it anywhere with /eah bought, /eah forsale or /eah income.")
     UI.ButtonRow(stack, {
       { label = "Open purchases", width = 150, style = "accent", onClick = function() if ns.purchases then ns.purchases.open() end end,
         desc = "Everything you bought, and a recipe's cost per craft from what you paid.", keywords = { "bought", "log" } },
+      { label = "Open for sale", width = 150, onClick = function() if ns.purchases then ns.purchases.toggle("forsale") end end,
+        desc = "Your auctions up for sale, as the auction house last showed them.", keywords = { "for sale", "listed", "posted", "auctions" } },
       { label = "Open income", width = 150, onClick = function() if ns.purchases then ns.purchases.toggle("income") end end,
         desc = "Money you took from the mail: auctions sold and other gold.", keywords = { "income", "sold" } },
     })
@@ -216,7 +221,7 @@ local function build()
     app:Widget(stack, "skin")
     app:Widget(stack, "crafting")
     UI.Header(stack, "Chat commands")
-    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah income  what you sold (from the mail), with what crafting it again costs\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting")
+    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah forsale  your auctions up for sale, with time left\n/eah income  what you sold (from the mail), with what crafting it again costs\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting")
   end)
 end
 

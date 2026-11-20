@@ -134,6 +134,40 @@ end
 
 -- The entries to show, newest first: only marked ones, or those whose name holds the words (any case).
 --   nameOf(entry) -> its item name.
+-- Sales the game told you about that are still in your mail (the money not taken yet): db.soldPending = { oldest
+-- first: { t, name, q = how many (a guess from Quick sell, may be nil), est = copper (a guess, may be nil), h } }.
+-- Auction house mail lasts 30 days, so older ones are dropped; taking a sale's money from the mail settles one.
+P.MAX_PENDING, P.PENDING_DAYS = 200, 30
+function P.addPending(list, e, now, max)
+  if type(list) ~= "table" or type(e) ~= "table" or type(e.name) ~= "string" or e.name == "" then return nil end
+  now = now or e.t or 0
+  for i = #list, 1, -1 do
+    if (list[i].t or 0) < now - P.PENDING_DAYS * 86400 then table.remove(list, i) end
+  end
+  list[#list + 1] = e
+  max = max or P.MAX_PENDING
+  while #list > max do table.remove(list, 1) end
+  return e
+end
+
+-- The money of a sale of this item was taken: the oldest waiting sale of it is settled. Returns it, or nil.
+function P.settlePending(list, name)
+  if type(list) ~= "table" or type(name) ~= "string" then return nil end
+  for i = 1, #list do
+    if list[i].name == name then return table.remove(list, i) end
+  end
+end
+
+-- What the waiting sales add up to: how many, and the copper of those with a guess.
+function P.pendingTotal(list)
+  local n, c = 0, 0
+  for _, e in ipairs(list or {}) do
+    n = n + 1
+    c = c + (tonumber(e.est) or 0)
+  end
+  return n, c
+end
+
 function P.view(list, filter, markedOnly, nameOf)
   local out = {}
   filter = filter and filter:lower():match("^%s*(.-)%s*$") or ""

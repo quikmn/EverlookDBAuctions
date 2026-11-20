@@ -4,6 +4,7 @@
 ## Author: quikmn
 ## Version: v0.13.1
 ## SavedVariables: EverlookAuctionsDB
+## SavedVariablesPerCharacter: EverlookAuctionsCharDB
 ## IconTexture: Interface\AddOns\EverlookDBAuctions\Media\icon
 
 Libs\LibStub\LibStub.lua

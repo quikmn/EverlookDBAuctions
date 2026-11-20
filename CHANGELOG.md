@@ -1,5 +1,9 @@
 # EverlookDB Auctions
 
+## Unreleased
+- AH log, new For sale tab (/eah forsale): your auctions as the auction house showed them on your last visit, soonest to end first, with time left, price and what crafting one costs now. A sale takes its auction off the list.
+- AH log, Income: sales the game told you about while you played show at the top as "in your mail", with roughly what they bring, until you take the money from the mailbox. Sales while you were logged off only show once you open the mail.
+
 ## v0.13.1 (2026-11-20)
 - AH log: item names have the room they need. In Bought there is no empty craft column any more, and the window is a little wider.
 

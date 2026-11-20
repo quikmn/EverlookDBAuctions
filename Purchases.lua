@@ -62,6 +62,7 @@ local function itemName(id)
 end
 local function entryName(e)
   if e.kind == "mail" then return "Gold from mail" end
+  if e.pending or e.sale then return (e.link and e.link:match("%[(.-)%]")) or e.name or "?" end
   if e.kind == "ah" then return "Auction house (refund or other)" end
   return (e.link and e.link:match("%[(.-)%]")) or e.name or (e.id and itemName(e.id)) or "?"
 end
@@ -80,7 +81,7 @@ local function money(c) return ns.money(c) end
 
 -- A sold item's id: saved with the sale, or found from its name once the game knows the item.
 local function saleID(e)
-  if e.id or e.kind ~= "sale" or not e.name then return e.id end
+  if e.id or (e.kind ~= "sale" and not e.pending) or not e.name then return e.id end
   local okId, id = pcall(C_Item.GetItemInfoInstant, e.name)
   if okId and type(id) == "number" then e.id = id end
   return e.id
@@ -220,6 +221,7 @@ local function takeMail(i)
   if okI and ok(kind) == "seller" and ok(item) then
     e.kind, e.name, e.q, e.gross = "sale", ok(item), ok(count) or 1, ok(bid)
     saleID(e)
+    P.settlePending(B.pending(), e.name)
   elseif ok(sender) == AH_SENDER then
     e.kind = "ah"
   end
@@ -230,6 +232,60 @@ for _, name in ipairs({ "TakeInboxMoney", "AutoLootMailItem" }) do
   if _G[name] then hooksecurefunc(name, takeMail) end
 end
 B.takeMail = takeMail
+
+-- Your auctions as the auction house last showed them (per character: EverlookAuctionsCharDB.forSale =
+-- { at = when, list = { { id, name, link, q, c = buyout of all of it (nil: bids only), ends = time it runs out } } }).
+-- Read on every visit to the auction house; a sale the game tells you about takes its auction off.
+local function charDB()
+  EverlookAuctionsCharDB = EverlookAuctionsCharDB or {}
+  return EverlookAuctionsCharDB
+end
+function B.forSale()
+  local c = charDB()
+  c.forSale = c.forSale or { list = {} }
+  return c.forSale
+end
+function B.noteOwned(owned)
+  if type(owned) ~= "table" then return end
+  local now = time()
+  local out = {}
+  for _, a in ipairs(owned) do
+    if not a.sold then
+      out[#out + 1] = { id = a.itemID, name = a.name, link = a.link, q = a.qty or 1, t = now,
+        c = a.unit and a.unit * (a.qty or 1) or nil, ends = a.left and (now + a.left) or nil, band = a.band, sale = true }
+    end
+  end
+  local fs = B.forSale()
+  fs.at, fs.list = now, out
+  if B.frame and B.frame:IsShown() then B.render() end
+end
+local function offSale(name)
+  local fs = B.forSale()
+  for i, e in ipairs(fs.list or {}) do
+    if e.name == name then table.remove(fs.list, i); return end
+  end
+end
+-- one look at your auctions per visit to the auction house, so For sale is fresh without opening Quick sell
+local ahev = CreateFrame("Frame")
+pcall(ahev.RegisterEvent, ahev, "AUCTION_HOUSE_SHOW")
+ahev:SetScript("OnEvent", function()
+  if C_Timer and ns.sellQueryOwned then C_Timer.After(2, function() pcall(ns.sellQueryOwned) end) end
+end)
+
+-- Sales still in the mail (Celebrate.lua calls B.noteSold when the game says one of your auctions sold).
+function B.pending()
+  local d = db()
+  if not d then return {} end
+  d.soldPending = d.soldPending or {}
+  return d.soldPending
+end
+function B.noteSold(name, est, count)
+  local d = db()
+  if not d or d.logIncome == false then return end
+  offSale(name)
+  local e = { t = time(), name = name, q = count, est = est, h = houseKey(), pending = true }
+  if P.addPending(B.pending(), e, e.t) and B.frame and B.frame:IsShown() then B.render() end
+end
 
 -- Every recipe you know, read when a profession window opens: what it makes and from what.
 local function readRecipes()
@@ -401,11 +457,32 @@ local function rowTooltip(self)
   local e = self.entry
   if not e then return end
   GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  if B.mode == "forsale" then
+    if e.link then pcall(GameTooltip.SetHyperlink, GameTooltip, e.link) elseif e.id then pcall(GameTooltip.SetItemByID, GameTooltip, e.id) end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(e.c and ("Up for sale: %d for %s (%s each)"):format(e.q, money(e.c), money(math.floor(e.c / math.max(1, e.q) + 0.5)))
+      or ("Up for sale: %d, bids only"):format(e.q), 1, 0.82, 0)
+    local cost = craftNow(e.id)
+    if cost and e.c then
+      local m = math.floor(e.c / math.max(1, e.q) + 0.5) - cost
+      GameTooltip:AddLine(("Crafting one costs about %s at today's lowest AH prices: %s %s each if it sells."):format(money(cost),
+        m >= 0 and "you make" or "you lose", money(math.abs(m))), m >= 0 and 0.38 or 0.94, m >= 0 and 0.81 or 0.37, m >= 0 and 0.53 or 0.37, true)
+    end
+    GameTooltip:AddLine("As the auction house showed it on your last visit.", 0.6, 0.6, 0.6, true)
+    GameTooltip:Show()
+    return
+  end
   if B.mode == "income" then
     local id = saleID(e)
     if id then pcall(GameTooltip.SetItemByID, GameTooltip, id) else GameTooltip:SetText(entryName(e), 1, 0.82, 0) end
     GameTooltip:AddLine(" ")
-    if e.kind == "sale" then
+    if e.pending then
+      GameTooltip:AddLine(("Sold %s: the money is waiting in your mail."):format(date("%d %b %Y %H:%M", e.t)), 1, 0.82, 0)
+      if e.est then
+        GameTooltip:AddLine(("About %s, from the price you last posted it at with Quick sell, before the auction house's cut."):format(money(e.est)), 0.6, 0.6, 0.6, true)
+      end
+      GameTooltip:AddLine("It moves to your income when you take the money from the mail.", 0.6, 0.6, 0.6, true)
+    elseif e.kind == "sale" then
       local each = math.floor(e.c / e.q + 0.5)
       GameTooltip:AddLine(("Sold %d; money taken %s: %s (%s each)"):format(e.q, date("%d %b %Y %H:%M", e.t), money(e.c), money(each)), 1, 0.82, 0)
       if e.gross and e.gross > e.c then
@@ -629,7 +706,7 @@ local function makeFrame()
   f.title:SetText("AH log")
   f.tabs = {}
   local prev
-  for _, t in ipairs({ { "bought", "Bought" }, { "income", "Income" } }) do
+  for _, t in ipairs({ { "bought", "Bought" }, { "forsale", "For sale" }, { "income", "Income" } }) do
     local b = CreateFrame("Button", nil, f)
     b:SetSize(84, 26)
     if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0) else b:SetPoint("LEFT", f.title, "RIGHT", 18, 0) end
@@ -725,6 +802,7 @@ local function makeFrame()
   local hd = text(head, T.fontSmall, T.muted)
   hd:SetPoint("LEFT", 16, 0)
   hd:SetText("WHEN")
+  f.headWhen = hd
   local hi = text(head, T.fontSmall, T.muted)
   hi:SetPoint("LEFT", DATE_W, 0)
   hi:SetText("ITEM")
@@ -783,8 +861,19 @@ end
 
 local function renderList(f)
   local income = B.mode == "income"
-  local all = income and incomeList() or list()
-  local shown = P.view(all, B.filter, B.markedOnly and not income, entryName)
+  local sale = B.mode == "forsale"
+  local side = income or sale   -- the layout with the craft column, no marks
+  local all = income and incomeList() or (sale and (B.forSale().list or {})) or list()
+  local shown = P.view(all, B.filter, B.markedOnly and not side, entryName)
+  if sale then
+    -- what runs out first, first
+    table.sort(shown, function(x, y) return (x.ends or math.huge) < (y.ends or math.huge) end)
+  end
+  -- sales waiting in the mail go on top, newest first
+  if income then
+    local waiting = P.view(B.pending(), B.filter, false, entryName)
+    for i = #waiting, 1, -1 do table.insert(shown, 1, waiting[i]) end
+  end
   local n = rows()
   addRows(f, n)
   local maxOff = math.max(0, #shown - n)
@@ -793,22 +882,37 @@ local function renderList(f)
     local e = i <= n and shown[i + B.offset] or nil
     row.entry = e
     if e then
-      row.check:SetShown(not income and e.m == true)
+      row.check:SetShown(not side and e.m == true)
       row.date:SetText(date("%d %b %H:%M", e.t))
+      if sale then row.date:SetText(B.leftText(e)) end
       local id = income and saleID(e) or e.id
       row.icon:SetTexture(id and try(C_Item.GetItemIconByID, id) or (e.kind and e.kind ~= "sale" and 133784) or 134400)
       row.name:SetText(entryName(e))
       row.name:SetTextColor(qualityColor(id))
       -- a sold item you can craft: what one costs to make again today, green when you sold above it
-      local cost = income and e.kind == "sale" and craftNow(id)
+      local cost = ((income and e.kind == "sale") or (sale and e.c)) and craftNow(id)
       local q = math.max(1, tonumber(e.q) or 1)
       if cost then setMoney(row.craft, cost, math.floor(e.c / q + 0.5) >= cost and T.ok or T.danger) else row.craft:SetText("") end
       row.each:ClearAllPoints()
-      row.each:SetPoint("RIGHT", income and row.craft or row.total, "LEFT", -8, 0)
-      row.craft:SetShown(income and true or false)
+      row.each:SetPoint("RIGHT", side and row.craft or row.total, "LEFT", -8, 0)
+      row.craft:SetShown(side and true or false)
+      if e.pending then row.date:SetTextColor(rgba(T.accent)) else row.date:SetTextColor(rgba(T.muted)) end
       row.qty:SetText(e.q and ns.num(e.q) or "")
-      setMoney(row.each, math.floor(e.c / q + 0.5))
-      setMoney(row.total, e.c)
+      if sale and not e.c then
+        quiet(row.each, ""); quiet(row.total, "bids only")
+      elseif e.pending then
+        -- not taken yet: what it likely brings, in grey ("~"), or "in mail" with no guess
+        quiet(row.craft, "in your mail")
+        if e.est then
+          row.each:SetText("~" .. money(math.floor(e.est / q + 0.5))); row.each:SetTextColor(rgba(T.muted))
+          row.total:SetText("~" .. money(e.est)); row.total:SetTextColor(rgba(T.muted))
+        else
+          quiet(row.each, ""); quiet(row.total, "")
+        end
+      else
+        setMoney(row.each, math.floor(e.c / q + 0.5))
+        setMoney(row.total, e.c)
+      end
       paintRow(row)
       row:Show()
     else
@@ -816,11 +920,14 @@ local function renderList(f)
     end
   end
   f.empty:SetShown(#shown == 0)
-  if #all == 0 and income then
+  if #all == 0 and sale then
+    f.empty:SetText(B.forSale().at and "Nothing of yours was up for sale on your last visit to the auction house."
+      or "Visit the auction house once on this character and your auctions show here, with how long each has left. Sales after that move to Income (in your mail).")
+  elseif #all == 0 and income then
     f.empty:SetText("No money from the mail yet. From now on, gold you take from the mail shows up here: every auction you sold (item, how many, what you got after the cut) and any other gold. A sold item you can craft shows what one costs to craft again at today's prices (open your profession window once so the addon knows your recipes).")
   elseif #all == 0 then
     f.empty:SetText("Nothing bought yet. Every buyout from now on shows up here: from our Buy panel, Blizzard's auction house or another addon. Bids aren't logged.")
-  elseif B.markedOnly and not income then
+  elseif B.markedOnly and not side then
     f.empty:SetText("Nothing marked" .. ((B.filter or "") ~= "" and " matches." or ". Turn off Marked only and click the purchases you crafted with."))
   else
     f.empty:SetText("Nothing matches.")
@@ -836,13 +943,25 @@ local function renderList(f)
   f.pos:SetPoint("TOPRIGHT", -PAD, -(bottom + 10))
   f.list:SetHeight(bottom + 32)
   f.pos:SetText(#shown > n and ("%d-%d of %d, scroll for more"):format(B.offset + 1, math.min(#shown, B.offset + n), #shown)
-    or (#shown > 0 and ("%d %s"):format(#shown, income and "entries" or "purchases") or ""))
+    or (#shown > 0 and ("%d %s"):format(#shown, income and "entries" or (sale and "auctions") or "purchases") or ""))
+  if sale then
+    local worth, n = 0, 0
+    for _, e in ipairs(all) do n = n + 1; worth = worth + (e.c or 0) end
+    f.sum:SetText(n > 0 and ("Up for sale: %d auctions, %s if all sell (before the 5%% cut)"):format(n, money(worth)) or "")
+    f.sum:SetTextColor(rgba(T.text))
+    return
+  end
   if income then
     local since = time() - 7 * 86400
     local earned, spent = P.sum(all, since), P.sum(list(), since)
     local net = earned - spent
+    local np, cp = P.pendingTotal(B.pending())
     f.sum:SetText(("Last 7 days: earned %s, spent %s, net %s%s"):format(money(earned), money(spent),
       net < 0 and "-" or "", money(math.abs(net))))
+    if np > 0 then
+      f.sub:SetText(("%d sold, money waiting in your mail%s. Below: gold you took from the mail."):format(np,
+        cp > 0 and (" (about " .. money(cp) .. ")") or ""))
+    end
     f.sum:SetTextColor(rgba(net >= 0 and T.ok or T.danger))
     return
   end
@@ -937,29 +1056,47 @@ local function renderRecipe(f)
   f.recipe:SetHeight(-y + 12)
 end
 
+-- How long an auction has left: "5h 20m", "40m", or "ended" (it comes back by mail if it didn't sell).
+function B.leftText(e)
+  if not e.ends then
+    -- only the auction house's band: Short (under 30 minutes), Medium (30 minutes to 2 hours), Long, Very long
+    return ({ "Short", "Medium", "Long", "Very long" })[(tonumber(e.band) or -1) + 1] or "?"
+  end
+  local s = e.ends - time()
+  if s <= 0 then return "ended" end
+  if s >= 3600 then return ("%dh %02dm"):format(math.floor(s / 3600), math.floor(s % 3600 / 60)) end
+  return ("%dm"):format(math.max(1, math.floor(s / 60)))
+end
+
 function B.render()
   local f = B.frame
   if not (f and f:IsShown()) then return end
   paintAlpha(f)
   local income = B.mode == "income"
+  local sale = B.mode == "forsale"
+  local side = income or sale
   for _, b in ipairs(f.tabs) do
-    local on = (b.mode == "income") == income
+    local on = b.mode == (B.mode or "bought")
     b.active = on
     b.bar:SetShown(on)
     b.bg:SetVertexColor(rgba(T.accentDim))
     b.bg:SetShown(on)
     b.label:SetTextColor(rgba(on and T.accent or T.muted))
   end
+  local fs = B.forSale()
   f.sub:SetText(income and "Gold you took from the mail. Hover a sale for its margin over crafting it again."
+    or sale and (fs.at and ("Your auctions as the auction house showed them on %s. Sales since then move to Income."):format(date("%d %b %H:%M", fs.at))
+      or "Your auctions, read on every visit to the auction house.")
     or "Everything you bought at the auction house. Click the purchases you crafted with to mark them.")
-  f.craftHead:SetShown(income)
-  local shift = income and 0 or (CRAFT_W + 8)
+  f.craftHead:SetShown(side)
+  local shift = side and 0 or (CRAFT_W + 8)
   f.eachHead:SetPoint("RIGHT", -(TOTAL_W + CRAFT_W + 16) + shift, 0)
   f.qtyHead:SetPoint("RIGHT", -(TOTAL_W + CRAFT_W + EACH_W + 24) + shift, 0)
-  for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not income) end
+  for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not side) end
+  f.headWhen:SetText(sale and "TIME LEFT" or "WHEN")
   renderList(f)
   local listH = f.list:GetHeight() or 0
-  if income then
+  if side then
     if B.picker then B.picker:Hide() end
     f:SetHeight(104 + listH + 16)
     return
