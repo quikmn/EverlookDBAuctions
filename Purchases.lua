@@ -30,6 +30,10 @@ end
 local function ok(v) return ns.ok and ns.ok(v) or v end
 
 local function db() return ns.db and ns.db() end
+local function okv(v)
+  if v == nil or (issecretvalue and issecretvalue(v)) then return nil end
+  return v
+end
 local function list()
   local d = db()
   if not d then return {} end

@@ -2832,9 +2832,11 @@ def purchases():
         lk, n = LC.parseItem("You receive loot: " + link + "x3.")
         check(lk == link and n == 3, f"loot line parsed: {lk} {n}")
         check(LC.parseMoney("You loot 1 Gold, 5 Silver, 3 Copper") == 10503, "money parsed")
+        lua.execute("GetRealZoneText = function() return 'Tanaris' end")
         B.noteLoot(LC.itemFrom(link, 3), link)
         B.noteLoot(lua.eval("{ copper = 250 }"))
         lt = G.EverlookAuctionsCharDB.looted
+        check(lt[1].zone == "Tanaris", "the zone is logged")
         check(len(lt) == 2 and lt[1].q == 3 and lt[1].name == "Aquamarine" and lt[2].copper == 250, "two loots logged")
         B.mode = "looted"
         B.render()

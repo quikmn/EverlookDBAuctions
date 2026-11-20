@@ -220,7 +220,10 @@ local ev = CreateFrame("Frame")
 pcall(ev.RegisterEvent, ev, "CHAT_MSG_LOOT")
 pcall(ev.RegisterEvent, ev, "CHAT_MSG_MONEY")
 local function log(e, link)
-  if ns.purchases and ns.purchases.noteLoot then pcall(ns.purchases.noteLoot, e, link) end
+  if not (ns.purchases and ns.purchases.noteLoot) then return end
+  -- a failure here shows as a Lua error (the card still shows), never silently
+  local ok, err = pcall(ns.purchases.noteLoot, e, link)
+  if not ok and geterrorhandler then geterrorhandler()(err) end
 end
 ev:SetScript("OnEvent", function(_, event, msg)
   msg = okv(msg)
