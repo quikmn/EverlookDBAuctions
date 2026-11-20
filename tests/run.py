@@ -2839,17 +2839,18 @@ def purchases():
         lt = G.EverlookAuctionsCharDB.looted
         check(lt[1].zone == "Tanaris", "the zone is logged")
         check(lt[1]["from"] == "Sandfury Shadowcaster" and lt[1].npc == 5648, "where it came from is logged")
-        # a loot window: slot 1 money and slot 2 an item, both from a mob that died (combat log)
+        # a loot window: slot 1 money and slot 2 an item, both from the mob you had targeted
         lua.execute("""
           GetTime = function() return 100 end
           local guid = 'Creature-0-1-2-3-5648-0000ABCD'
-          CombatLogGetCurrentEventInfo = function() return 0, 'UNIT_DIED', false, nil, nil, 0, 0, guid, 'Sandfury Shadowcaster' end
+          UnitGUID = function(u) if u == 'target' then return guid end end
+          UnitName = function(u) if u == 'target' then return 'Sandfury Shadowcaster' end end
           GetNumLootItems = function() return 2 end
           GetLootSourceInfo = function() return guid, 1 end
           GetLootSlotType = function(s) return s == 1 and 2 or 1 end
           GetLootSlotLink = function(s) return s == 2 and '|cff1eff00|Hitem:7909::|h[Aquamarine]|h|r' or nil end
         """)
-        fire("COMBAT_LOG_EVENT_UNFILTERED")
+        fire("PLAYER_TARGET_CHANGED")
         fire("LOOT_OPENED")
         s1 = LC.sourceFor(lua.eval("{ id = 7909 }"))
         s2 = LC.sourceFor(lua.eval("{ copper = 55 }"))

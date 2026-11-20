@@ -221,11 +221,11 @@ pcall(ev.RegisterEvent, ev, "CHAT_MSG_LOOT")
 pcall(ev.RegisterEvent, ev, "CHAT_MSG_MONEY")
 ---------------------------------------------------------------------------------------------------------------------
 -- Where loot came from. When the loot window opens, each slot says which corpse, node or container it is from (a
--- GUID); the name comes from the mob you killed (the combat log), your target or mouseover, the node you gathered
+-- GUID); the name comes from the mobs you targeted, moused over or saw a nameplate of, the node you gathered
 -- (the spell's target name), or the container you opened from your bags. The loot lines in chat come after that, so
 -- each item (and the money) is matched to its source by item id. Unknown stays unknown: no guessing.
 
-local names = {}       -- [guid] = name, for mobs that died near you (kept small)
+local names = {}       -- [guid] = name, for mobs you saw (kept small)
 local nameCount = 0
 local sent             -- the last gathering/opening spell: { target = name, spell = name, t }
 local opened           -- the last item you opened from your bags: { name, t }
@@ -321,7 +321,7 @@ end
 L.sourceFor = sourceFor
 
 local src = CreateFrame("Frame")
-for _, e in ipairs({ "LOOT_READY", "LOOT_OPENED", "COMBAT_LOG_EVENT_UNFILTERED", "UNIT_SPELLCAST_SENT",
+for _, e in ipairs({ "LOOT_READY", "LOOT_OPENED", "UNIT_SPELLCAST_SENT",
     "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "NAME_PLATE_UNIT_ADDED", "PLAYER_SOFT_INTERACT_CHANGED", "UNIT_TARGET" }) do
   pcall(src.RegisterEvent, src, e)
 end
@@ -336,12 +336,8 @@ src:SetScript("OnEvent", function(_, event, ...)
     if type(u) == "string" and (u == "player" or u:match("^party%d$") or u == "pet") then rememberUnit(u .. "target") end
     return
   end
-  if event == "COMBAT_LOG_EVENT_UNFILTERED" then
-    if not CombatLogGetCurrentEventInfo then return end
-    local ok, _, sub, _, _, _, _, _, guid, name = pcall(CombatLogGetCurrentEventInfo)
-    sub = ok and okv(sub)
-    if sub == "UNIT_DIED" or sub == "PARTY_KILL" then remember(guid, name) end
-  elseif event == "UNIT_SPELLCAST_SENT" then
+  -- no combat log: this client doesn't let addons register for it (ADDON_ACTION_FORBIDDEN)
+  if event == "UNIT_SPELLCAST_SENT" then
     local unit, target, _, spellID = ...
     if okv(unit) ~= "player" then return end
     local okS, info = pcall(C_Spell.GetSpellInfo, okv(spellID))
