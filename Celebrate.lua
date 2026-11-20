@@ -179,13 +179,48 @@ function C.show(name, total, count)
   end
 end
 
-local ev = CreateFrame("Frame")
-ev:RegisterEvent("CHAT_MSG_SYSTEM")
-ev:SetScript("OnEvent", function(_, _, msg)
+-- One sale can reach us more than one way (the auction house's notification, the system chat line, the line drawn in
+-- a chat window): the same item within a moment counts once.
+local lastName, lastAt = nil, 0
+local function sold(name)
+  if type(name) ~= "string" or name == "" or (issecretvalue and issecretvalue(name)) then return end
+  name = name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h%[?(.-)%]?|h", "%1")
+  local now = GetTime()
+  if name == lastName and now - lastAt < 0.5 then return end
+  lastName, lastAt = name, now
+  local total, count = C.guess(name)
+  C.show(name, total, count)
+end
+C.sold = sold
+
+local function fromText(msg)
   if type(msg) ~= "string" or (issecretvalue and issecretvalue(msg)) then return end
   C.pattern = C.pattern or soldPattern()
   local name = msg:match(C.pattern)
-  if not name then return end
-  local total, count = C.guess(name)
-  C.show(name, total, count)
+  if name then sold(name) end
+end
+C.fromText = fromText
+
+-- The ways a sale is told (the retail-style auction house sends a notification, which the game itself writes to chat;
+-- a plain system message on other clients), and, as a last resort, the line as a chat window draws it.
+local SOLD = Enum and Enum.AuctionHouseNotification and Enum.AuctionHouseNotification.AuctionSold or 4
+local ev = CreateFrame("Frame")
+for _, e in ipairs({ "CHAT_MSG_SYSTEM", "AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", "AUCTION_HOUSE_SHOW_NOTIFICATION",
+    "PLAYER_LOGIN" }) do
+  pcall(ev.RegisterEvent, ev, e)
+end
+ev:SetScript("OnEvent", function(_, e, a1, a2)
+  if e == "CHAT_MSG_SYSTEM" then
+    fromText(a1)
+  elseif e == "AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION" then
+    if a1 == SOLD then sold(a2) end
+  elseif e == "AUCTION_HOUSE_SHOW_NOTIFICATION" then
+    -- no item name with this one: say so without one
+    if a1 == SOLD then sold("An auction") end
+  elseif e == "PLAYER_LOGIN" then
+    for i = 1, (NUM_CHAT_WINDOWS or 10) do
+      local cf = _G["ChatFrame" .. i]
+      if cf and cf.AddMessage then pcall(hooksecurefunc, cf, "AddMessage", function(_, msg) fromText(msg) end) end
+    end
+  end
 end)

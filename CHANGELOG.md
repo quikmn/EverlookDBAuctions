@@ -6,6 +6,9 @@
 - New: shift-click a recipe in the profession window, or an item you can craft, while AH log is open: it shows that recipe's cost per craft.
 - New tooltip line (Tooltips page, on by default): Craft cost, what crafting one costs at the latest AH prices, for items you can craft.
 - New: Hurray! When one of your auctions sells, a card with fireworks at the top of the screen shows the item's icon, what sold and roughly for how much (the price you last posted it at with Quick sell). Turn it off on the General page or with `/eah cheer off`.
+- The auction house has the EverlookDB look of the settings window: the same slate colours, rounded corners on the window, panels, buttons, boxes and tabs, a thin gold line along the window's top, and the softer gold on Buy, Post and Search.
+- Quick sell, Shopping and Advanced search no longer have a coloured frame and tint: each shows its colour as a thin line along its top, in its tab and in its title, so the screens look like one family.
+- Hurray! now also works where the game tells you about a sale through the auction house's own notice instead of a plain chat message (you saw "A buyer has been found..." in chat but no card).
 - AH log has the EverlookDB look of the settings window: rounded slate window and cards, line icons, Bought and Income tabs, a search box, and a gear that opens its settings.
 - New settings page, AH log: window opacity (30-100%, solid by default), how many rows the list shows, switches for logging purchases and income, the sale celebration, and buttons to open the log.
 - Switches, buttons and sliders use a softer gold, and a switch's knob is dark when it's on, so it stands out on the gold.

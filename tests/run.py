@@ -12,11 +12,24 @@ from lupa import lua51
 ROOT = Path(__file__).resolve().parents[1]
 
 
+
+def source_of(name):
+    """A file's source. Skin.lua comes with LibStub and EverlookUI ahead of it, as the TOC loads them, so the rounded
+    look (EverlookUI's U.Round and U.RoundOutline) is what the tests draw."""
+    text = (ROOT / name).read_text(encoding="utf-8")
+    if str(name) == "Skin.lua":
+        libs = ""
+        for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua"):
+            libs += "(function(...) " + (ROOT / lib).read_text(encoding="utf-8") + chr(10) + "end)(...);" + chr(10)
+        text = libs + text
+    return text
+
+
 def main() -> int:
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
-    run((ROOT / "RecipeList.lua").read_text(encoding="utf-8"), "RecipeList.lua", "EverlookDBAuctions", ns)
+    run(source_of("RecipeList.lua"), "RecipeList.lua", "EverlookDBAuctions", ns)
     R = ns.recipeList
     failures = []
 
@@ -134,12 +147,12 @@ return db
 
 def crafting_box():
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     db = run(CRAFT_SETUP, "setup", ns)
     for name in ["RecipeList.lua", "Crafting.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
     fire("ADDON_LOADED", "Blizzard_Professions")
     fire("TRADE_SKILL_SHOW")
@@ -215,11 +228,11 @@ def crafting_box():
 def scroll_bars():
     """The scroll bar kit in Skin.lua: drag math, thumb size, and a list scrolled by its bar and the wheel."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(CRAFT_SETUP, "setup", ns)
-    run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
+    run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
     UI = ns.UI
     failures = []
 
@@ -331,12 +344,12 @@ return db
 def below_vendor():
     """Below vendor price: the profit math, the search words, results over a fake scan, and loading item details."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(VENDOR_SETUP, "setup", ns)
     for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     V = ns.vendor
     G = lua.globals()
     failures = []
@@ -407,12 +420,12 @@ def query_language():
     """The query language: steps without |, sort without a column, aliases, errors that say what's missing, and the
     query box's line breaks."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(VENDOR_SETUP, "setup", ns)
     for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     P = ns.queryParse
     perr = lua.eval("function(P, t) local ok, e = pcall(P, t); if ok then return nil end; "
                     "return type(e) == 'table' and e.query or tostring(e) end")
@@ -559,11 +572,11 @@ def search_queue():
     """The shared search queue (AHQuery.lua): one at a time, answers matched to the search, no answer is never zero,
     nobody selling only from a complete answer, and the right ItemKeys for random-stat versions."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     lua.execute(QUEUE_SETUP)
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
-    run((ROOT / "AHQuery.lua").read_text(encoding="utf-8"), "AHQuery.lua", "EverlookDBAuctions", ns)
+    run(source_of("AHQuery.lua"), "AHQuery.lua", "EverlookDBAuctions", ns)
     Q = ns.ahq
     G = lua.globals()
     failures = []
@@ -745,7 +758,7 @@ def undercut():
 
     for copper in (True, False):
         lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-        lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+        lua.execute(source_of("tests/mock.lua"))
         lua.execute("C_AuctionHouse = { SupportsCopperValues = function() return %s end }" % ("true" if copper else "false"))
         ns = lua.table()
         run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
@@ -753,7 +766,7 @@ def undercut():
         said = []
         ns.say = lambda m: said.append(m)
         for name in ["Skin.lua", "Sell.lua"]:
-            run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+            run(source_of(name), name, "EverlookDBAuctions", ns)
         check(ns.setUndercut("1c") is True, "1c is accepted")
         item = 44 * 100 + 14     # an item auction at 44s 14c
         goods = 5 * 100 + 50     # a stackable good at 5s 50c each
@@ -793,12 +806,12 @@ def deals():
     """Below vendor from the scan's single auctions: the list built when the scan finishes, the 10s threshold, and
     Start buying's order and running total."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(VENDOR_SETUP, "setup", ns)
     for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     V = ns.vendor
     tbl = lua.eval("function(...) return { ... } end")
     failures = []
@@ -870,13 +883,13 @@ def core_and_lists():
 
     def fresh_lua():
         lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-        lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+        lua.execute(source_of("tests/mock.lua"))
         run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
         return lua, run
 
     def load(run, ns, *names):
         for name in names:
-            run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+            run(source_of(name), name, "EverlookDBAuctions", ns)
 
     # --- the core: tooltip lines, pruning at load, the unknown-command echo
     lua, run = fresh_lua()
@@ -1041,7 +1054,7 @@ def audit_search():
     example, everyday words for slots and qualities, a search's own order found from the parse (not the text), and the
     live check: no answer is never "none up", and rows are asked again instead of staying at "checking..."."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(VENDOR_SETUP, "setup", ns)
@@ -1089,7 +1102,7 @@ def audit_search():
       AuctionHouseFrame.SearchBar = CreateFrame("Frame", nil, AuctionHouseFrame)
     """)
     for name in ["Skin.lua", "Vendor.lua", "AHQuery.lua", "Search.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     P = ns.queryParse
     G = lua.globals()
     perr = lua.eval("function(P, t) local ok, e = pcall(P, t); if ok then return nil end; "
@@ -1332,14 +1345,14 @@ def buy_panel():
     unknown vendor price never drops an item, a quote that can't be read or has run out can't be paid, purchase
     errors and late answers are reported, the panel shuts when hidden, and versions are named by their own part."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(VENDOR_SETUP, "setup", ns)
     lua.execute(BUY_SETUP)
     run(AHQ_FAKE, "ahq", ns)
     for name in ["Skin.lua", "Vendor.lua", "Buy.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     ns.calmSecs = 0   # the half-second click lockout after Buy turns into Confirm: off for these click scripts
     G = lua.globals()
     ev = G.MOCK_FRAMES[len(G.MOCK_FRAMES)]   # Buy.lua's event frame, made last
@@ -1487,14 +1500,14 @@ def buy_decisions():
     """Start buying uses the list's 10s bar, a commodity quote over 5% above the listed price is refused, and a
     complete live answer from the buy panel reaches Advanced search's row."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(VENDOR_SETUP, "setup", ns)
     lua.execute(BUY_SETUP)
     run(AHQ_FAKE, "ahq", ns)
     for name in ["Skin.lua", "Vendor.lua", "Buy.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     ns.calmSecs = 0   # the half-second click lockout after Buy turns into Confirm: off for these click scripts
     G = lua.globals()
     ev = G.MOCK_FRAMES[len(G.MOCK_FRAMES)]
@@ -1553,7 +1566,7 @@ def places():
             failures.append("places: " + what)
 
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     # the mock answers any unknown key with a function; the widgets' own fields (edb...) start out empty, as in game
     lua.execute("""
         local base = CreateFrame
@@ -1569,7 +1582,7 @@ def places():
     """)
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
-    run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
+    run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
     T, UI = ns.T, ns.UI
     names = ["search", "sell", "shopping", "prices"]
     check(all(T.places[n] is not None for n in names), "every place has a colour")
@@ -1607,7 +1620,7 @@ def places():
     check(UI.button(bar, "Post", 10, 10, "primary").edbRole == "primary", "a primary button is still primary")
 
     # every panel marks its place, and its colour is never hard-coded outside the theme
-    src = {n: (ROOT / n).read_text(encoding="utf-8") for n in
+    src = {n: source_of(n) for n in
            ["Search.lua", "Sell.lua", "Shopping.lua", "Buy.lua", "EverlookDBAuctions.lua"]}
     for file, place in [("Search.lua", "search"), ("Sell.lua", "sell"), ("Shopping.lua", "shopping"),
                         ("EverlookDBAuctions.lua", "prices")]:
@@ -1635,7 +1648,7 @@ def quick_sell():
             failures.append("quick sell: " + what)
 
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     lua.execute("""
         time = os.time
         wipe = wipe or function(t) for k in pairs(t) do t[k] = nil end return t end
@@ -1653,11 +1666,11 @@ def quick_sell():
     ns.num = lua.eval("tostring")
     ns.ago = lua.eval("function() return 'a while ago' end")
     for name in ["Skin.lua", "Sell.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
 
     # Blizzard's popups are never hidden or changed from our code (that taints the popup system)
     for name in ("Sell.lua", "Buy.lua", "Search.lua", "Shopping.lua", "EverlookDBAuctions.lua", "Options.lua"):
-        src = (ROOT / name).read_text(encoding="utf-8")
+        src = source_of(name)
         check("StaticPopup_Hide(" not in src.replace("pcall(StaticPopup_Hide", "StaticPopup_Hide(")
               and "StaticPopup_Show(" not in src, f"{name} touches Blizzard's popups")
 
@@ -1763,7 +1776,7 @@ def ux_flows():
 
     def fresh_lua():
         lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-        lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+        lua.execute(source_of("tests/mock.lua"))
         run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
         return lua, run
 
@@ -1771,7 +1784,7 @@ def ux_flows():
     lua, run = fresh_lua()
     lua.execute(CORE_SETUP)
     ns = lua.table()
-    run((ROOT / "EverlookDBAuctions.lua").read_text(encoding="utf-8"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
+    run(source_of("EverlookDBAuctions.lua"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
     text = ns.unfinishedText
     check("reload" in text(lua.table()), "no reason known: a reload cut it off")
     check("no answer" in text(lua.table(why="noanswer")) and "reload" not in text(lua.table(why="noanswer")),
@@ -1784,8 +1797,8 @@ def ux_flows():
     lua, run = fresh_lua()
     ns = lua.table()
     run(VENDOR_SETUP, "setup", ns)
-    run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
-    run((ROOT / "Shopping.lua").read_text(encoding="utf-8"), "Shopping.lua", "EverlookDBAuctions", ns)
+    run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
+    run(source_of("Shopping.lua"), "Shopping.lua", "EverlookDBAuctions", ns)
     lua.execute("AuctionHouseFrame = CreateFrame('Frame', 'AuctionHouseFrame')")
     fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
     db = ns.db()
@@ -1829,10 +1842,10 @@ def ux_flows():
         STANDARD_TEXT_FONT = "font"
     """)
     for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua"):
-        run((ROOT / lib).read_text(encoding="utf-8"), lib)
+        run(source_of(lib), lib)
     ns = lua.table()
     run(VENDOR_SETUP, "setup", ns)
-    run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
+    run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
     lua.execute("""
         local ns = ...
     """)
@@ -1845,7 +1858,7 @@ def ux_flows():
       end end""")(ns)
     ns.undercutShort = lua.eval("function() return '1s' end")
     ns.setUndercut = lua.eval("function() return true end")
-    run((ROOT / "Options.lua").read_text(encoding="utf-8"), "Options.lua", "EverlookDBAuctions", ns)
+    run(source_of("Options.lua"), "Options.lua", "EverlookDBAuctions", ns)
     fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
     fire("ADDON_LOADED", "EverlookDBAuctions")
     check(ns.optionsError is None, f"the settings window builds: {ns.optionsError}")
@@ -1979,12 +1992,12 @@ def tooltip_text():
 
     def load(locale):
         lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-        lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+        lua.execute(source_of("tests/mock.lua"))
         ns = lua.table()
         run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
         run(TEXT_SETUP, "setup", ns, locale)
         for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
-            run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+            run(source_of(name), name, "EverlookDBAuctions", ns)
         return lua, ns
 
     def check(cond, what):
@@ -2103,12 +2116,12 @@ def tooltip_reads_last():
     side of and/or it is written on: the first search over a whole scan reads no tooltip it doesn't need."""
     failures = []
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(TEXT_SETUP, "setup", ns, "enUS")
     for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     G = lua.globals()
     rows, head, _m, _v = ns.queryRun('has speed and name has rod')
     got = [rows[i].id for i in range(1, len(rows) + 1)] if rows is not None else head
@@ -2133,7 +2146,7 @@ def shared_tooltip():
             failures.append("shared tooltip: " + what)
 
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     lua.execute(CORE_SETUP)
     lua.execute("""
@@ -2154,9 +2167,9 @@ def shared_tooltip():
         EverlookAuctionsDB.tip = { vendor = true }
     """)
     for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookTooltip.lua"):
-        run((ROOT / lib).read_text(encoding="utf-8"), lib)
+        run(source_of(lib), lib)
     ns = lua.table()
-    run((ROOT / "EverlookDBAuctions.lua").read_text(encoding="utf-8"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
+    run(source_of("EverlookDBAuctions.lua"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
     ns.disenchantValue = lua.eval("function(id) if id == 2589 then return 12345, 600 end end")
     fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
     fire("ADDON_LOADED", "EverlookDBAuctions")
@@ -2199,13 +2212,13 @@ def reload_logged():
     """An update cut off by a reload or logout shows in /eah status's update log once, as the bar already says."""
     failures = []
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     lua.execute(CORE_SETUP)
     lua.execute("local h = EverlookAuctionsDB.houses['Test-Alliance']; h.tried = MOCK_TIME - 50; h.scanned = MOCK_TIME - 5000; "
                 "EverlookAuctionsDB.houses['Done-Horde'] = { items = {}, days = {}, tried = 10, scanned = 20 }")
     ns = lua.table()
-    run((ROOT / "EverlookDBAuctions.lua").read_text(encoding="utf-8"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
+    run(source_of("EverlookDBAuctions.lua"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
     fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
     fire("ADDON_LOADED", "EverlookDBAuctions")
     fire("ADDON_LOADED", "EverlookDBAuctions")
@@ -2252,13 +2265,13 @@ def scan_storage():
 
     def core(encoding):
         lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-        lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+        lua.execute(source_of("tests/mock.lua"))
         lua.execute(CORE_SETUP)
         if encoding:
             lua.execute(FAKE_ENCODING)
         run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
         ns = lua.table()
-        run((ROOT / "EverlookDBAuctions.lua").read_text(encoding="utf-8"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
+        run(source_of("EverlookDBAuctions.lua"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
         fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
         fire("ADDON_LOADED", "EverlookDBAuctions")
         return lua, ns
@@ -2436,13 +2449,13 @@ def scan_lua():
     """The core with a fake replicate list, timers that run when ADVANCE says and a stand-in skin; the auction house
     is open."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     lua.execute(CORE_SETUP)
     lua.execute(SCAN_SETUP)
     lua.execute("EverlookAuctionsDB.houses['Test-Alliance'].items[99] = { 5, 1, 1, 1 }")
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     ns = lua.table()
-    run((ROOT / "EverlookDBAuctions.lua").read_text(encoding="utf-8"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
+    run(source_of("EverlookDBAuctions.lua"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
     lua.eval("""function(ns)
       local mk = CreateFrame
       function CreateFrame(...) local f = mk(...); f.GetWidth = function() return 100 end; return f end
@@ -2569,12 +2582,12 @@ def item_cache():
             failures.append("item cache: " + what)
 
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(VENDOR_SETUP, "setup", ns)
     for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     db = ns.db()
     c = ns.itemInfo(3000)
     saved = db.itemInfo[3000]
@@ -2596,12 +2609,12 @@ def item_cache():
 def commodity_note():
     """Blizzard's commodity list: what a click there sets, and the line that says so."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     ns = lua.table()
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(VENDOR_SETUP, "setup", ns)
     for name in ["Skin.lua", "Vendor.lua", "CommodityNote.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     N = ns.commodityNote
     failures = []
 
@@ -2627,7 +2640,7 @@ def commodity_note():
 def purchases():
     """AH purchases: what is logged from the auction house's buy calls, the marks, and a recipe's cost per craft."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     lua.execute("""
       MOCK_TIME = 1000; function time() return MOCK_TIME end
       function date(fmt, t) return 'd' .. tostring(t) end
@@ -2649,9 +2662,9 @@ def purchases():
     ns.house = lua.eval("function() return 'Realm-Alliance' end")
     ns.itemFor = lua.eval("function(id) local p = MOCK_PRICES[id]; return p and { p, 1, 1, MOCK_TIME } end")
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
-    run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
+    run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
     for name in ["Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua", "PurchaseLog.lua", "Purchases.lua"]:
-        run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     P = ns.purchaseLog
     G = lua.globals()
     fire = lua.eval("function(e, a, b) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a, b) end end end")
@@ -2809,7 +2822,7 @@ def purchases():
 def cheer():
     """The sale celebration: the game's message, what it likely sold for, and one banner for sales close together."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute((ROOT / "tests/mock.lua").read_text(encoding="utf-8"))
+    lua.execute(source_of("tests/mock.lua"))
     lua.execute("""
       ERR_AUCTION_SOLD_S = 'A buyer has been found for your auction of %s.'
       GetTime = function() return 100 end
@@ -2822,7 +2835,7 @@ def cheer():
     ns.sellSettings = lua.eval("function() return MOCK_SELL end")
     ns.money = lua.eval("function(c) return tostring(c) .. 'c' end")
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
-    run((ROOT / "Celebrate.lua").read_text(encoding="utf-8"), "Celebrate.lua", "EverlookDBAuctions", ns)
+    run(source_of("Celebrate.lua"), "Celebrate.lua", "EverlookDBAuctions", ns)
     fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
     G = lua.globals()
     failures = []
@@ -2839,6 +2852,17 @@ def cheer():
           f"card: {f and f.line.text} / {f and f.money.text}")
     fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Copper Bar.")
     check(f.line.text == "2 auctions" and f.money.text == "", f"two sales, one unpriced: {f.line.text} / {f.money.text}")
+    # the auction house's own notification (Forever writes the chat line itself, without CHAT_MSG_SYSTEM), counted once
+    # even when the chat line comes too
+    f.shown = False
+    G.GetTime = lua.eval("function() return 200 end")
+    fire2 = lua.eval("function(e, a, b) for _, fr in ipairs(MOCK_FRAMES) do if fr.scripts.OnEvent then fr.scripts.OnEvent(fr, e, a, b) end end end")
+    fire2("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", 4, "Runed Copper Rod")
+    check(f.shown and f.line.text == "2x Runed Copper Rod", f"from the notification: {f.line.text}")
+    fire2("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Runed Copper Rod.")
+    check(f.line.text == "2x Runed Copper Rod", f"the same sale's chat line doesn't count again: {f.line.text}")
+    fire2("AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION", 2, "Runed Copper Rod")
+    check(f.line.text == "2x Runed Copper Rod", "another notification (won, outbid...) is no sale")
     f.shown = False
     G.MOCK_DB.cheer = False
     fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Copper Bar.")

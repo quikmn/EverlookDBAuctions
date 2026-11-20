@@ -1376,7 +1376,7 @@ local function makeFrame()
   f:SetFrameLevel(ah:GetFrameLevel() + 150)
   f:EnableMouse(true)
   local PLACE = UI.place(f, "sell")   -- Quick sell's colour: where you are
-  UI.panel(f, UI.tint(T.bg, PLACE, UI.WASH), PLACE)
+  UI.panel(f, T.bg, T.edge)
   UI.placeEdge(f, PLACE)
   f:Hide()
   S.frame = f

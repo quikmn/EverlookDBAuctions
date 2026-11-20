@@ -1,6 +1,8 @@
 -- EverlookDB look. One dark palette (the tokens in T) for everything the addon draws, a small kit of widgets built
 -- from it (panels, buttons, inputs, rows, scrolling lists, fonts), and a skin for Blizzard's auction house in the
--- same palette. The skin only changes the art: Blizzard's auction house keeps doing all the searching, buying and
+-- same palette. The palette and the rounded boxes are the shared EverlookUI look (the settings window, the AH log):
+-- the same slate shades, rounded corners (EverlookUI's U.Round and U.RoundOutline), and the softened gold on filled
+-- buttons. The skin only changes the art: Blizzard's auction house keeps doing all the searching, buying and
 -- posting underneath. /eah skin off turns the skin of Blizzard's frames off (after a /reload); the addon's own
 -- frames always use the palette.
 local _, ns = ...
@@ -9,29 +11,30 @@ local _, ns = ...
 -- Palette: every color the addon uses comes from here.
 
 local T = {
-  bg       = { 0.055, 0.063, 0.078, 0.98 },  -- #0e1014  window background
-  surface  = { 0.082, 0.094, 0.114, 1 },     -- #15181d  panels and sections
-  raised   = { 0.114, 0.129, 0.157, 1 },     -- #1d2128  buttons, header bands
-  raisedHi = { 0.153, 0.173, 0.208, 1 },     -- #272c35  hovered buttons
-  input    = { 0.039, 0.045, 0.055, 1 },     -- #0a0b0e  edit boxes, scroll tracks
-  edge     = { 0.176, 0.196, 0.235, 1 },     -- #2d323c  1 px borders
-  edgeHi   = { 0.290, 0.318, 0.376, 1 },     -- #4a5160  hovered borders
-  text     = { 0.902, 0.914, 0.933, 1 },     -- #e6e9ee  main text
-  dim      = { 0.604, 0.639, 0.698, 1 },     -- #9aa3b2  secondary text
-  mute     = { 0.471, 0.502, 0.557, 1 },     -- #78808e  labels, disabled (4.5:1 on the surface)
-  accent   = { 1, 0.82, 0, 1 },              -- #ffd100  EverlookDB gold: active tab, selection, main actions
+  bg       = { 0.063, 0.069, 0.082, 0.98 },  -- window background (EverlookUI bg)
+  surface  = { 0.090, 0.098, 0.118, 1 },     -- panels and sections (EverlookUI card)
+  raised   = { 0.133, 0.145, 0.173, 1 },     -- buttons, header bands (EverlookUI surface)
+  raisedHi = { 0.169, 0.182, 0.216, 1 },     -- hovered buttons (EverlookUI surfaceHi)
+  input    = { 0.047, 0.052, 0.063, 1 },     -- edit boxes, scroll tracks
+  edge     = { 0.192, 0.208, 0.247, 1 },     -- 1 px borders (EverlookUI border)
+  edgeHi   = { 0.290, 0.318, 0.376, 1 },     -- hovered borders
+  text     = { 0.910, 0.918, 0.937, 1 },     -- main text
+  dim      = { 0.66, 0.69, 0.75, 1 },        -- secondary text
+  mute     = { 0.553, 0.580, 0.639, 1 },     -- labels, disabled (EverlookUI muted)
+  accent   = { 1, 0.82, 0, 1 },              -- #ffd100  EverlookDB gold: lines, active text, selection
+  accentFill = { 0.740, 0.618, 0.052, 1 },   -- the gold on filled buttons: 30% toward the button grey (EverlookUI 8)
   accentBg = { 0.196, 0.161, 0.043, 1 },     -- #32290b  main action fill
-  accentHi = { 0.263, 0.216, 0.063, 1 },     -- #433710  main action hovered
+  accentHi = { 0.600, 0.500, 0.050, 1 },     -- main action pressed
   hover    = { 1, 1, 1, 0.045 },             -- row hover
   select   = { 1, 0.82, 0, 0.10 },           -- selected row
   stripe   = { 1, 1, 1, 0.018 },             -- every other row
   thumb    = { 0.239, 0.263, 0.310, 1 },     -- scroll thumb
-  good     = { 0.427, 0.792, 0.478, 1 },     -- #6dca7a
-  bad      = { 0.925, 0.373, 0.341, 1 },     -- #ec5f57
+  good     = { 0.384, 0.812, 0.533, 1 },     -- EverlookUI ok
+  bad      = { 0.937, 0.365, 0.365, 1 },     -- EverlookUI danger
   badBg    = { 0.212, 0.090, 0.086, 1 },     -- #361716  danger action hovered
   info     = { 0.478, 0.698, 1, 1 },         -- #7ab2ff
-  accentUp = { 1, 0.871, 0.251, 1 },         -- #ffde40  main action hovered
-  onAccent = { 0.090, 0.071, 0.012, 1 },     -- #171203  text on a gold fill
+  accentUp = { 0.870, 0.725, 0.040, 1 },     -- main action hovered: a step brighter than accentFill, not glaring
+  onAccent = { 0.05, 0.07, 0.1, 1 },         -- text on a gold fill (EverlookUI onAccent)
   sheen    = { 1, 1, 1, 0.05 },              -- the light top edge of raised things
   glow     = { 1, 0.82, 0, 0.22 },           -- soft ring around a focused box or an armed button
 }
@@ -128,9 +131,34 @@ local function onePixel(t, horizontal)
   elseif horizontal then t:SetHeight(1) else t:SetWidth(1) end
 end
 
--- A flat fill with a 1 px border, drawn behind the frame's content. l/t/r/b move the edges in or out.
+-- A fill with a 1 px border, drawn behind the frame's content. l/t/r/b move the edges in or out. With EverlookUI
+-- (always, in practice) both are rounded: radius f.edbRadius, or 4 (buttons, boxes) and 6 for panels (UI.panel).
+-- s.area is a plain texture over the same rectangle, for anchoring other things to it.
+local EUI = LibStub and LibStub("EverlookUI-1", true)
+local EU = EUI and EUI.Util
+local rounded = EU and EU.RoundOutline and true or false
+UI.ROUNDED = rounded
+UI.EUI = rounded and EUI or nil   -- the shared library, for the few rounded pieces drawn outside this file
+
 local function paint(f, fill, edge, l, t, r, b)
   local s = skins[f]
+  if not s and rounded then
+    s = {}
+    local radius = rawget(f, "edbRadius") or 4
+    s.fill = EU.Round(f, radius, "BACKGROUND", -8)
+    s.fill:SetPoint("TOPLEFT", l or 0, t or 0)
+    s.fill:SetPoint("BOTTOMRIGHT", r or 0, b or 0)
+    s.area = s.fill.box
+    s.edge = EU.RoundOutline(f, radius, "BORDER", -8)
+    s.edge:SetPoint("TOPLEFT", s.area, "TOPLEFT", 0, 0)
+    s.edge:SetPoint("BOTTOMRIGHT", s.area, "BOTTOMRIGHT", 0, 0)
+    skins[f] = s
+  end
+  if s and s.edge then
+    if fill then s.fill:SetVertexColor(fill[1], fill[2], fill[3], fill[4] or 1) end
+    if edge then s.edge:SetVertexColor(edge[1], edge[2], edge[3], edge[4] or 1) end
+    return s
+  end
   if not s then
     s = {}
     s.fill = f:CreateTexture(nil, "BACKGROUND", nil, -8)
@@ -149,6 +177,7 @@ local function paint(f, fill, edge, l, t, r, b)
     }
     skins[f] = s
   end
+  s.area = s.fill
   if fill then s.fill:SetColorTexture(unpack(fill)) end
   if edge then for _, tex in ipairs(s.edges) do tex:SetColorTexture(unpack(edge)) end end
   return s
@@ -156,13 +185,16 @@ end
 
 local function setEdge(f, edge)
   local s = skins[f]
-  if s then for _, tex in ipairs(s.edges) do tex:SetColorTexture(unpack(edge)) end end
+  if not s then return end
+  if s.edge then s.edge:SetVertexColor(edge[1], edge[2], edge[3], edge[4] or 1); return end
+  for _, tex in ipairs(s.edges) do tex:SetColorTexture(unpack(edge)) end
 end
 
 -- Raised things (buttons, header bands) are a touch lighter at the top, so they read as raised, not printed.
 local LIFT = 0.022
 local canGradient = CreateColor ~= nil
 local function shade(tex, c, lift)
+  if tex.parts then tex:SetVertexColor(c[1], c[2], c[3], c[4] or 1); return end   -- a rounded fill: flat
   if lift and canGradient and tex.SetGradient then
     tex:SetColorTexture(1, 1, 1, 1)
     local a = c[4] or 1
@@ -183,6 +215,7 @@ UI.paint, UI.setEdge, UI.setFill = paint, setEdge, setFill
 
 -- A section: surface fill and border (or the colors given).
 function UI.panel(f, fill, edge)
+  if rawget(f, "edbRadius") == nil then f.edbRadius = 6 end
   paint(f, fill or T.surface, edge or T.edge)
   return f
 end
@@ -192,22 +225,19 @@ end
 function UI.tint(base, c, a)
   return { base[1] + (c[1] - base[1]) * a, base[2] + (c[2] - base[2]) * a, base[3] + (c[3] - base[3]) * a, base[4] or 1 }
 end
-UI.WASH, UI.WASH_INNER, UI.WASH_EDGE = 0.10, 0.08, 0.45
+-- (no wash any more: panels keep the shared slate, and a place shows in its top line, tab, title and headings)
+UI.WASH, UI.WASH_INNER, UI.WASH_EDGE = 0, 0, 0
 
--- A place's frame: a 2 px border in its colour around the whole panel, so you see at a glance which part of the
--- addon you are in (the 1 px panel edge alone was too faint to read as a colour).
+-- A place's mark: a 2 px line in its colour along the panel's top, inside its rounded corners (the EverlookUI
+-- window's gold line, in the place's colour), so you see which part of the addon you are in without a coloured frame.
 function UI.placeEdge(f, c)
-  local W = 2
-  local function bar(p1, p2, horizontal)
-    local t = f:CreateTexture(nil, "OVERLAY", nil, 7)
-    t:SetColorTexture(unpack(c))
-    t:SetPoint(p1)
-    t:SetPoint(p2)
-    if horizontal then t:SetHeight(W) else t:SetWidth(W) end
-    return t
-  end
-  return { bar("TOPLEFT", "TOPRIGHT", true), bar("BOTTOMLEFT", "BOTTOMRIGHT", true),
-    bar("TOPLEFT", "BOTTOMLEFT", false), bar("TOPRIGHT", "BOTTOMRIGHT", false) }
+  local inset = rawget(f, "edbRadius") or 6
+  local t = f:CreateTexture(nil, "OVERLAY", nil, 7)
+  t:SetColorTexture(unpack(c))
+  t:SetPoint("TOPLEFT", inset, -1)
+  t:SetPoint("TOPRIGHT", -inset, -1)
+  t:SetHeight(2)
+  return { t }
 end
 
 -- A 1 px line in the border color.
@@ -327,8 +357,8 @@ local function buttonColors(b)
   end
   if not enabled then return b.edbRole == "primary" and T.raised or T.surface, T.edge, T.mute end
   if b.edbRole == "primary" then
-    local fill = down and T.accentHi or over and T.accentUp or T.accent
-    return fill, fill, down and T.accent or T.onAccent
+    local fill = down and T.accentHi or over and T.accentUp or T.accentFill
+    return fill, fill, T.onAccent
   elseif b.edbRole == "danger" then
     return down and T.input or (over or on) and T.badBg or T.raised, (over or on) and T.bad or T.edge, T.bad
   end
@@ -796,8 +826,15 @@ end
 function UI.headerBand(parent, h)
   local band = CreateFrame("Frame", nil, parent)
   band:SetHeight(h or 20)
-  local bg = band:CreateTexture(nil, "BACKGROUND")
-  bg:SetAllPoints()
+  local bg
+  if rounded then
+    -- rounded top corners, so a band at the top of a rounded panel follows its corners
+    bg = EU.Round(band, 5, "BACKGROUND", 0, { tl = true, tr = true })
+    bg:SetAllPoints(band)
+  else
+    bg = band:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+  end
   shade(bg, T.raised, LIFT)
   local line = UI.line(band, true)
   line:SetPoint("BOTTOMLEFT")
@@ -917,7 +954,7 @@ local function blizzButtonState(b)
   local on = b:IsEnabled()
   local over, down = s.over and on, s.down and on
   if s.main then
-    local fill = not on and T.raised or down and T.accentHi or over and T.accentUp or T.accent
+    local fill = not on and T.raised or down and T.accentHi or over and T.accentUp or T.accentFill
     setFill(b, fill)
     setEdge(b, on and fill or T.edge)
     local fs = b.GetFontString and b:GetFontString()
@@ -957,8 +994,8 @@ local function tabState(tab, selected)
   local s = paint(tab, selected and T.surface or T.bg, T.edge)
   if not s.bar then
     s.bar = tab:CreateTexture(nil, "BORDER", nil, -6)
-    s.bar:SetPoint("BOTTOMLEFT", s.fill, 1, 1)
-    s.bar:SetPoint("BOTTOMRIGHT", s.fill, -1, 1)
+    s.bar:SetPoint("BOTTOMLEFT", s.area, 6, 1)
+    s.bar:SetPoint("BOTTOMRIGHT", s.area, -6, 1)
     s.bar:SetHeight(2)
   end
   local place = rawget(tab, "edbPlace") and T.places[tab.edbPlace]
@@ -974,7 +1011,7 @@ local function tabState(tab, selected)
   local text = tab.Text or (tab.GetFontString and tab:GetFontString())
   if text and text.SetPoint then
     text:ClearAllPoints()
-    text:SetPoint("CENTER", s.fill, "CENTER", 0, 0)
+    text:SetPoint("CENTER", s.area, "CENTER", 0, 0)
   end
   tabs[tab] = selected and "on" or "off"
 end
@@ -1158,22 +1195,24 @@ local function style(f)
   elseif f:IsObjectType("Button") then
     if f.LeftActive or f.MiddleActive then styleTab(f) else styleButton(f) end
   elseif f == _G.AuctionHouseFrame then
+    f.edbRadius = 8
     paint(f, T.bg, T.edge)
-    shadow(f, 6)
-    -- the title bar: a raised band with a line under it
-    local band = f:CreateTexture(nil, "BACKGROUND", nil, -7)
-    band:SetPoint("TOPLEFT", 1, -1)
-    band:SetPoint("TOPRIGHT", -1, -1)
-    band:SetHeight(22)
-    band:SetColorTexture(unpack(T.raised))
+    if not rounded then shadow(f, 6) end   -- square corners only: a square shadow would stick out of rounded ones
+    -- the EverlookUI window's thin gold line along the top, and a quiet line under the title
+    local top = f:CreateTexture(nil, "ARTWORK", nil, 7)
+    top:SetPoint("TOPLEFT", 8, -1)
+    top:SetPoint("TOPRIGHT", -8, -1)
+    top:SetHeight(2)
+    top:SetColorTexture(unpack(T.accent))
     local line = f:CreateTexture(nil, "BORDER", nil, -6)
-    line:SetPoint("TOPLEFT", band, "BOTTOMLEFT")
-    line:SetPoint("TOPRIGHT", band, "BOTTOMRIGHT")
+    line:SetPoint("TOPLEFT", 1, -23)
+    line:SetPoint("TOPRIGHT", -1, -23)
     onePixel(line, true)
     line:SetColorTexture(unpack(T.edge))
   elseif f == (_G.AuctionHouseFrame and _G.AuctionHouseFrame.MoneyFrameBorder) and f.MoneyFrame then
     moneyBox(f)
   else
+    f.edbRadius = rawget(f, "edbRadius") or 6
     paint(f, T.surface, T.edge)
   end
 end

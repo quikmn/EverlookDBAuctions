@@ -371,21 +371,28 @@ local function makePanel(parent)
     grow(parent)
     -- a raised band across the window's bottom with a line on top in the price updates' colour; the money display
     -- sits on it, the bar's content to its right
-    local band = parent:CreateTexture(nil, "BACKGROUND", nil, -6)
+    local EUI = rawget(UI, "EUI")
+    local band
+    if EUI then
+      -- rounded bottom corners, inside the window's own
+      band = EUI.Util.Round(parent, 7, "BACKGROUND", -6, { bl = true, br = true })
+    else
+      band = parent:CreateTexture(nil, "BACKGROUND", nil, -6)
+    end
     band:SetPoint("BOTTOMLEFT", 1, 1)
     band:SetPoint("BOTTOMRIGHT", -1, 1)
     band:SetHeight(BAR_H + 2)
     UI.shade(band, T.raised, UI.LIFT)
     local line = UI.line(parent, true, T.places.prices, "BORDER")
-    line:SetPoint("BOTTOMLEFT", band, "TOPLEFT")
-    line:SetPoint("BOTTOMRIGHT", band, "TOPRIGHT")
+    line:SetPoint("BOTTOMLEFT", band.box or band, "TOPLEFT")
+    line:SetPoint("BOTTOMRIGHT", band.box or band, "TOPRIGHT")
     f:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 182, 2)
     f:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -6, 2)
   else
     -- the old auction house window: the bar hangs under it
     f:SetPoint("TOPLEFT", parent, "BOTTOMLEFT", 14, -4)
     f:SetPoint("TOPRIGHT", parent, "BOTTOMRIGHT", -40, -4)
-    UI.panel(f, T.bg, T.places.prices)
+    UI.panel(f, T.bg, T.edge)
   end
   UI.place(f, "prices")   -- the bar's own colour: price updates, not buying or posting
   f:SetFrameLevel(parent:GetFrameLevel() + 200)
@@ -405,11 +412,18 @@ local function makePanel(parent)
   local bar = CreateFrame("Frame", nil, f)
   bar:SetAllPoints(f.button)
   UI.panel(bar, T.input, T.edge)
-  bar.fill = bar:CreateTexture(nil, "ARTWORK")
+  bar.edbRadius = 4
+  local EUIb = rawget(UI, "EUI")
+  if EUIb then
+    bar.fill = EUIb.Util.Round(bar, 3, "ARTWORK")   -- rounded, inside the bar's rounded edge
+    bar.fill:SetVertexColor(unpack(T.places.prices))
+  else
+    bar.fill = bar:CreateTexture(nil, "ARTWORK")
+    bar.fill:SetColorTexture(unpack(T.places.prices))
+  end
   bar.fill:SetPoint("TOPLEFT", 1, -1)
   bar.fill:SetPoint("BOTTOMLEFT", 1, 1)
   bar.fill:SetWidth(1)
-  bar.fill:SetColorTexture(unpack(T.places.prices))
   bar.label = UI.text(bar, "small", "OVERLAY")
   bar.label:SetPoint("CENTER")
   bar.label:SetShadowOffset(0, 0)
