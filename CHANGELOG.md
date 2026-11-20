@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Prices window (/eah prices): a title bar on top to drag it anywhere, and it opens where you left it. Its bottom edge no longer gets cut off. The first time you open it, it starts with a search (the most listed items, rare and better, recipes, items below vendor price and the like, picked at random) so the list isn't empty.
+
 ## v0.14.1 (2026-11-20)
 - Tooltips: "More to vendor" or "More to auction" says where an item earns more, and by how much: the vendor's price against the last scan's lowest price after the auction house's 5% cut. Grey when that price is over a day old. Shift and Ctrl work on it like the other prices. A setting turns it off.
 

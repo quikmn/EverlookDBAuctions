@@ -1474,27 +1474,63 @@ local function away() return not (_G.AuctionHouseFrame and AuctionHouseFrame:IsS
 
 local function makeHost()
   if Q.host then return Q.host end
+  local EUI = LibStub and LibStub("EverlookUI-1", true)
   local h = UI.own(CreateFrame("Frame", "EverlookAuctionsPrices", UIParent))
-  h:SetSize(860, 470)
-  h:SetPoint("CENTER", 0, 40)
+  h:SetSize(860, 500)
+  local d = ns.db and ns.db()
+  local pos = d and d.pricesPos
+  if pos then h:SetPoint(pos[1], UIParent, pos[2], pos[3], pos[4]) else h:SetPoint("CENTER", 0, 40) end
   h:SetFrameStrata("HIGH")
   h:SetToplevel(true)
   h:SetClampedToScreen(true)
   h:EnableMouse(true)
   h:SetMovable(true)
+  -- the title bar on top (and any edge outside the list) moves the window; it stays where you leave it
   h:RegisterForDrag("LeftButton")
   h:SetScript("OnDragStart", h.StartMoving)
-  h:SetScript("OnDragStop", h.StopMovingOrSizing)
-  UI.panel(h, T.bg, T.edge)
+  h:SetScript("OnDragStop", function(self)
+    self:StopMovingOrSizing()
+    local p1, _, p2, x, y = self:GetPoint()
+    local db = ns.db and ns.db()
+    if db then db.pricesPos = { p1, p2, x, y } end
+  end)
+  local theme = EUI and EUI.MakeTheme and EUI.MakeTheme(T.accent)
+  if EUI and EUI.WindowChrome and theme then
+    h.eluiTheme = theme
+    EUI.WindowChrome(h, theme)
+    if EUI.CloseButton then EUI.CloseButton(h, theme) end
+  else
+    UI.panel(h, T.bg, T.edge)
+  end
+  h.icon = h:CreateTexture(nil, "ARTWORK")
+  h.icon:SetSize(16, 16)
+  h.icon:SetPoint("TOPLEFT", 18, -16)
+  if EUI and EUI.SetIcon and EUI.SetIcon(h.icon, "search") then h.icon:SetVertexColor(T.accent[1], T.accent[2], T.accent[3]) end
+  h.title = UI.text(h, "text")
+  h.title:SetPoint("LEFT", h.icon, "RIGHT", 8, 0)
+  h.title:SetText("Prices")
+  h.hint = UI.text(h, "dim")
+  h.hint:SetPoint("LEFT", h.title, "RIGHT", 10, 0)
+  h.hint:SetText("drag this bar to move the window")
   h.area = CreateFrame("Frame", nil, h)
-  h.area:SetPoint("TOPLEFT", 6, -6)
-  h.area:SetPoint("BOTTOMRIGHT", -6, 6)
+  h.area:SetPoint("TOPLEFT", 10, -42)
+  h.area:SetPoint("BOTTOMRIGHT", -10, 12)
   h:SetScript("OnHide", function() if Q.frame and Q.away then Q.frame:Hide() end end)
   tinsert(UISpecialFrames, "EverlookAuctionsPrices")
   h:Hide()
   Q.host = h
   return h
 end
+
+-- Away from the auction house with nothing searched yet: start with one of these, so the list isn't empty.
+local STARTERS = {
+  "auctions ge 10 sort by auctions desc top 100",
+  "quality ge rare sort by price desc top 100",
+  "source is crafted sort by auctions desc top 100",
+  "price lt vendor sort by profit desc top 100",
+  "type has recipe sort by price top 100",
+}
+ns.priceStarters = STARTERS   -- for the offline tests
 
 -- as many rows as the place it sits in has room for
 local function fitRows(f)
@@ -1976,7 +2012,13 @@ function ns.openSearch()
     placeIn(h.area)
     f:Show()
     render()
-    f.box:SetFocus()
+    if #Q.results == 0 and not (f.box:GetText() or ""):match("%S") then
+      local q = STARTERS[math.random(#STARTERS)]
+      f.box:SetText(q)
+      ns.query(q)
+    else
+      f.box:SetFocus()
+    end
     return
   end
   local f = makeResults()

@@ -381,6 +381,10 @@ def below_vendor():
     check(P("belowvendor and profit ge 1s | sort by stackprofit desc").vendor is True, "with profit and a sort")
     check(P("slot is trinket and price lt 5g").vendor is None, "a normal search is not a vendor search")
     check(P("name has belowvendor")[1].e.col == "name", "as a value it stays a name search")
+    starters = ns.priceStarters
+    for i in range(1, len(starters) + 1):
+        okp, err = lua.eval("function(P, q) return pcall(P, q) end")(P, starters[i])
+        check(okp is True, f"the Prices window's starting search parses: {starters[i]} ({err})")
 
     def names(text):
         rows, head, _missing, vendor = ns.queryRun(text)
