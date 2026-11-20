@@ -892,7 +892,7 @@ local function sourceText(bits)
 end
 
 local function dataset()
-  local db, house = ns.db(), ns.house()
+  local db, house = ns.db(), ns.house() or (ns.houseOrFaction and ns.houseOrFaction())
   if not db or not house then return nil end
   local side, realm = house:match("%-(%a+)$"), GetRealmName()
   local scanned
@@ -964,7 +964,10 @@ local function run(text)
   end
   local rows, scanned, missing = dataset()
   Q.tipsPending = 0
-  if not rows then return nil, "No full scan of this auction house yet: open it and let the scan finish first." end
+  if not rows then
+    return nil, Q.away and "No full scan of your faction's auction house yet: visit it once and let the scan finish."
+      or "No full scan of this auction house yet: open it and let the scan finish first."
+  end
   -- a below-vendor search: each item's auctions under vendor price from the scan, those making at least 10s (any
   -- amount when the search says how much profit it wants); biggest total first unless it orders itself
   local deals = steps.vendor and scanned.deals ~= nil
@@ -1042,6 +1045,7 @@ local function lowestCell(r)
   local m = missOf(r)
   if m then return C_MUTE .. (m.why == "noanswer" and "no answer yet|r" or "couldn't tell|r") end
   if Q.vendor and Q.deals then return C_MUTE .. "click to check|r" end   -- below vendor isn't checked row by row
+  if Q.away then return C_MUTE .. "-|r" end   -- live prices only at the auction house
   return C_MUTE .. "checking...|r"
 end
 -- Last scan: the cheapest at the last full scan, always grey because it can be out of date
@@ -1455,6 +1459,7 @@ local function makeRow(f, k)
   b:SetScript("OnLeave", function() GameTooltip:Hide() end)
   b:SetScript("OnClick", function(self)
     if not self.row or self.row.header then return end
+    if Q.away then return end   -- buying needs the auction house; the tooltip has the prices
     if ns.openBuy and ns.openBuy(self.row) then return end
     -- Blizzard's own search for the name shows its live auctions; buy from there as usual
     local c = itemInfo(self.row.id)
@@ -1463,10 +1468,59 @@ local function makeRow(f, k)
   return b
 end
 
+-- Advanced search sits over the auction list while the auction house is open, and in a window of its own anywhere
+-- else (/eah prices): the same search over the last saved scan; buying and live prices need the auction house.
+local function away() return not (_G.AuctionHouseFrame and AuctionHouseFrame:IsShown()) end
+
+local function makeHost()
+  if Q.host then return Q.host end
+  local h = UI.own(CreateFrame("Frame", "EverlookAuctionsPrices", UIParent))
+  h:SetSize(860, 470)
+  h:SetPoint("CENTER", 0, 40)
+  h:SetFrameStrata("HIGH")
+  h:SetToplevel(true)
+  h:SetClampedToScreen(true)
+  h:EnableMouse(true)
+  h:SetMovable(true)
+  h:RegisterForDrag("LeftButton")
+  h:SetScript("OnDragStart", h.StartMoving)
+  h:SetScript("OnDragStop", h.StopMovingOrSizing)
+  UI.panel(h, T.bg, T.edge)
+  h.area = CreateFrame("Frame", nil, h)
+  h.area:SetPoint("TOPLEFT", 6, -6)
+  h.area:SetPoint("BOTTOMRIGHT", -6, 6)
+  h:SetScript("OnHide", function() if Q.frame and Q.away then Q.frame:Hide() end end)
+  tinsert(UISpecialFrames, "EverlookAuctionsPrices")
+  h:Hide()
+  Q.host = h
+  return h
+end
+
+-- as many rows as the place it sits in has room for
+local function fitRows(f)
+  if not Q.allRows then return end
+  local n = rowsFit(f)
+  for k = #Q.allRows + 1, n do Q.allRows[k] = Q.makeRow(f, k) end
+  Q.rows = {}
+  for k, b in ipairs(Q.allRows) do
+    if k <= n then Q.rows[k] = b else b:Hide() end
+  end
+end
+
+local function placeIn(area)
+  local f = Q.frame
+  f:SetParent(area)
+  f:ClearAllPoints()
+  f:SetAllPoints(area)
+  f:SetFrameLevel(area:GetFrameLevel() + 200)
+  fitRows(f)
+end
+
 local function makeResults()
   local ah = _G.AuctionHouseFrame
   local area = ah and ah.BrowseResultsFrame
-  if Q.frame or not area then return Q.frame end
+  if Q.frame then return Q.frame end
+  if not area then area = makeHost().area end
   local f = UI.own(CreateFrame("Frame", "EverlookAuctionsQueryResults", area))
   f:SetAllPoints(area)
   f:SetFrameLevel(area:GetFrameLevel() + 200)
@@ -1474,8 +1528,8 @@ local function makeResults()
   UI.panel(f, T.bg, T.edge)   -- the blue edge: you are in Advanced search
   UI.placeEdge(f, PLACE)
   f:EnableMouse(true)
-  f:SetScript("OnShow", function() blizzardList(false); blizzardSearch(false); modeButton() end)
-  f:SetScript("OnHide", function() blizzardList(true); blizzardSearch(true); modeButton() end)
+  f:SetScript("OnShow", function() if not Q.away then blizzardList(false); blizzardSearch(false) end; modeButton() end)
+  f:SetScript("OnHide", function() blizzardList(true); blizzardSearch(true); modeButton(); if Q.away and Q.host then Q.host:Hide() end end)
   f:Hide()   -- frames start shown; hiding first makes the first Show run OnShow too
 
   -- where you are: "Advanced search", and "Advanced search > item" while buying (Buy.lua sets it)
@@ -1579,8 +1633,9 @@ local function makeResults()
   for _, col in ipairs(VCOLS) do makeHeader(f, col[1], col[2], col[3], col[4], "vendor") end
   for _, h in ipairs(Q.headers) do h:SetFrameLevel(band:GetFrameLevel() + 1) end
 
-  Q.rows = {}
-  for k = 1, rowsFit(f) do Q.rows[k] = makeRow(f, k) end
+  Q.rows, Q.allRows = {}, {}
+  Q.makeRow = makeRow
+  for k = 1, rowsFit(f) do Q.rows[k] = makeRow(f, k); Q.allRows[k] = Q.rows[k] end
 
   f.more = UI.text(f, "mute")
   f.more:SetPoint("BOTTOMRIGHT", -12, 8)
@@ -1691,7 +1746,7 @@ local function liveHead()
     end
   end
   local tail
-  if total == 0 then tail = ""
+  if total == 0 or Q.away then tail = ""
   elseif done >= total and missed > 0 then
     tail = ("  " .. C_MUTE .. "live prices checked, %d without an answer (asked again in a minute)|r"):format(missed)
   elseif done >= total then tail = "  " .. C_GOOD .. "live prices checked|r"
@@ -1719,6 +1774,7 @@ end
 
 function liveStep()
   if ns.buyOpen then return end   -- the buy panel goes first
+  if Q.away or away() then return end   -- live prices only at the auction house
   if Q.vendor and Q.deals then return end   -- below vendor: scan prices; the row you open is checked live
   if live.busy or not Q.frame or not Q.frame:IsVisible() or not ns.ahq then return end
   local t0 = time()
@@ -1892,6 +1948,13 @@ end
 
 local function hook()
   local ah = _G.AuctionHouseFrame
+  Q.hookAH()
+  return f
+end
+
+-- Blizzard's searches hide our results (installed once the auction house exists)
+function Q.hookAH()
+  local ah = _G.AuctionHouseFrame
   if Q.hooked or not ah or not ah.SendBrowseQuery then return end
   Q.hooked = true
   -- a normal Blizzard search, a category click or another tab hides the results (Advanced search brings them back)
@@ -1902,9 +1965,28 @@ end
 -- Opens Advanced search over the auction list (switching to the Buy tab first), with the last results.
 function ns.openSearch()
   local ah = _G.AuctionHouseFrame
-  if not ah then return end
+  if away() then
+    -- away from the auction house: the window of its own
+    local f = makeResults()
+    if not f then return end
+    Q.away = true
+    f.crumb:SetText(C_PLACE .. "Prices from the last scan|r" .. C_MUTE .. "   live prices and buying at the auction house|r")
+    local h = makeHost()
+    h:Show()
+    placeIn(h.area)
+    f:Show()
+    render()
+    f.box:SetFocus()
+    return
+  end
   local f = makeResults()
   if not f then return end
+  if Q.away then
+    Q.away = nil
+    if Q.host then Q.host:Hide() end
+    placeIn(ah.BrowseResultsFrame)
+    f.crumb:SetText(C_PLACE .. "Advanced search|r")
+  end
   -- the addon's own tabs cover the auction list; close them
   if ns.closeSelling then ns.closeSelling() end
   if ns.closeOthers then ns.closeOthers() end
@@ -1955,7 +2037,9 @@ ev:SetScript("OnEvent", function(_, e, arg)
     live.busy = nil
     return
   end
+  if e == "AUCTION_HOUSE_SHOW" and Q.away and Q.host then Q.host:Hide() end
   C_Timer.After(0.2, function()
+    if Q.hookAH then Q.hookAH() end
     hook()
     makeButton()
     warm()

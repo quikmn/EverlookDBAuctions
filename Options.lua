@@ -183,6 +183,9 @@ local function build()
   app:Command("bought", "bought", "your auction house purchases, and a recipe's cost from what you paid (works anywhere)", function()
     if ns.purchases then ns.purchases.toggle() end
   end, { "purchases", "buys", "log" })
+  app:Command("prices", "prices", "search everything in the last price update, anywhere (the same search as Advanced search)", function()
+    if ns.openSearch then ns.openSearch() end
+  end, { "price", "lookup", "search", "find", "db" })
   app:Command("loot", "loot", "everything you looted, with when and where (works anywhere; also on Everlook Bar)", function()
     if ns.purchases then ns.purchases.toggle("looted") end
   end, { "looted", "loots", "drops" })

@@ -1544,6 +1544,8 @@ local function keyFor(side)
   if side then return (GetRealmName() or "?") .. "-" .. side end
   return house or factionKey()
 end
+-- the open auction house, else your faction's (what tooltips use), for searches away from the auction house
+ns.houseOrFaction = function() return keyFor() end
 
 -- The newest full scan's row for "id:suffix": { low, p10, med, qty, n, at } (at is server time), or nil.
 function ns.scanRowFor(key, side)
