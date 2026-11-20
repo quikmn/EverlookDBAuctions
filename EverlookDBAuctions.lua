@@ -1240,6 +1240,29 @@ local function vendorLine(t, id, tt)
   end
 end
 
+-- "More to vendor" or "More to auction": which pays more for this item, the vendor or the auction house after its 5%
+-- cut (the deposit is left out: it comes back when the item sells). Only when both prices are known; an old auction
+-- price makes the line grey.
+local AH_CUT = 0.05
+function ns.sellVerdict(id)
+  local it = ns.itemFor(id)
+  local ah = it and it[1]
+  local info = { pcall(C_Item.GetItemInfo, id) }
+  local sell = ok(info[1] and info[12])
+  if not ah or ah <= 0 or not sell or sell <= 0 then return nil end
+  local net = math.floor(ah * (1 - AH_CUT))
+  return net > sell and "auction" or "vendor", math.abs(net - sell), time() - (it[4] or 0) >= STALE
+end
+
+local function verdictLine(t, id, tt)
+  if not db or not tipOn("verdict") then return end
+  local which, diff, stale = ns.sellVerdict(id)
+  if not which then return end
+  local stack = tipMultiplier(id, tt)
+  t:Line(which == "auction" and "More to auction" or "More to vendor", diff > 0 and ("+" .. Tip.Money(diff * stack)) or "the same",
+    { note = which == "auction" and "after the 5% cut" or nil, stale = stale })
+end
+
 -- Whether 30-day lows and medians need Shift held (db.tip.detail = "shift"; shown always by default). The setting is
 -- shared by every EverlookDB addon's detail lines on the tooltip.
 function ns.tipDetail(mode)
@@ -1263,6 +1286,8 @@ local function hookTooltips()
     add = function(t, ctx) if ctx.id then craftLine(t, ctx.id) end end })
   Tip:Register({ id = "EverlookDBAuctions.vendor", kind = "item", order = Tip.ORDER.vendor,
     add = function(t, ctx) if ctx.id then vendorLine(t, ctx.id, ctx.tooltip) end end })
+  Tip:Register({ id = "EverlookDBAuctions.verdict", kind = "item", order = Tip.ORDER.vendor + 1,
+    add = function(t, ctx) if ctx.id then verdictLine(t, ctx.id, ctx.tooltip) end end })
 end
 ns.tooltipLines = { auction = auctionLines, disenchant = disenchantLine, vendor = vendorLine, craft = craftLine }
 

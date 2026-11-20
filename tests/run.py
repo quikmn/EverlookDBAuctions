@@ -2193,7 +2193,8 @@ def shared_tooltip():
             "Auction house  3,365 listed · 76 min ago = 95c",
             "    30-day low / median = 93c / 95c",
             "Disenchant  estimate · prices 10 min ago = 1g 23s",
-            "Vendor = 13c"]
+            "Vendor = 13c",
+            "More to auction  after the 5% cut = +77c"]
     check(got == want, f"lines and order: {got}")
     G.SHIFT = True
     lines = show(2589)
@@ -2209,7 +2210,7 @@ def shared_tooltip():
     lua.execute("IsControlKeyDown = nil")
     ns.tipDetail("shift")
     lines = show(2589)
-    check(len(lines) == 4 and "30-day" not in "".join(lines[i] for i in range(1, len(lines) + 1)),
+    check(len(lines) == 5 and "30-day" not in "".join(lines[i] for i in range(1, len(lines) + 1)),
           "details hidden without Shift when set so")
     check(G.EverlookAuctionsDB.tip.detail == "shift", "the detail setting is saved")
     ns.tipDetail("always")
