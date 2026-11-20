@@ -219,8 +219,133 @@ L.itemFrom = itemFrom
 local ev = CreateFrame("Frame")
 pcall(ev.RegisterEvent, ev, "CHAT_MSG_LOOT")
 pcall(ev.RegisterEvent, ev, "CHAT_MSG_MONEY")
+---------------------------------------------------------------------------------------------------------------------
+-- Where loot came from. When the loot window opens, each slot says which corpse, node or container it is from (a
+-- GUID); the name comes from the mob you killed (the combat log), your target or mouseover, the node you gathered
+-- (the spell's target name), or the container you opened from your bags. The loot lines in chat come after that, so
+-- each item (and the money) is matched to its source by item id. Unknown stays unknown: no guessing.
+
+local names = {}       -- [guid] = name, for mobs that died near you (kept small)
+local nameCount = 0
+local sent             -- the last gathering/opening spell: { target = name, spell = name, t }
+local opened           -- the last item you opened from your bags: { name, t }
+local fromItem = {}    -- [itemID] = { from, how, npc, t } while the loot window is up and just after
+local fromMoney        -- { from, how, npc, t }
+
+local function remember(guid, name)
+  guid, name = okv(guid), okv(name)
+  if type(guid) ~= "string" or type(name) ~= "string" or name == "" then return end
+  if not names[guid] then
+    nameCount = nameCount + 1
+    if nameCount > 300 then names, nameCount = {}, 1 end
+  end
+  names[guid] = name
+end
+
+local function unitName(guid)
+  for _, u in ipairs({ "target", "mouseover", "focus", "softinteract", "softenemy" }) do
+    local okG, g = pcall(UnitGUID, u)
+    if okG and okv(g) == guid then
+      local okN, n = pcall(UnitName, u)
+      if okN and okv(n) then return n end
+    end
+  end
+  for i = 1, 40 do
+    local u = "nameplate" .. i
+    local okG, g = pcall(UnitGUID, u)
+    if okG and okv(g) == guid then
+      local okN, n = pcall(UnitName, u)
+      if okN and okv(n) then return n end
+    end
+  end
+end
+
+-- A loot slot's source: who or what, how (Mining, Fishing, ...) and the creature id when it is a mob.
+local function sourceOf(slot)
+  local okS, guid = pcall(GetLootSourceInfo, slot)
+  guid = okS and okv(guid) or nil
+  local now = GetTime()
+  local recentSent = sent and now - sent.t < 15 and sent or nil
+  if IsFishingLoot and select(2, pcall(IsFishingLoot)) == true then return "Fishing", "Fishing" end
+  if type(guid) ~= "string" then return nil end
+  local kind, npc = guid:match("^(%a+)%-"), nil
+  if kind == "Creature" or kind == "Vehicle" then
+    npc = tonumber(guid:match("^%a+%-%d+%-%d+%-%d+%-%d+%-(%d+)"))
+    local name = names[guid] or unitName(guid)
+    -- skinning, mining or herbing a corpse: the spell says how
+    local how = recentSent and recentSent.target == name and recentSent.spell or nil
+    return name, how, npc
+  elseif kind == "GameObject" then
+    if recentSent and recentSent.target and recentSent.target ~= "" then return recentSent.target, recentSent.spell end
+    return nil, recentSent and recentSent.spell or nil
+  elseif kind == "Item" then
+    if opened and now - opened.t < 15 then return opened.name, "Opened" end
+  end
+end
+
+local function readLootWindow()
+  local now = GetTime()
+  fromItem, fromMoney = {}, nil
+  local okN, n = pcall(GetNumLootItems)
+  for slot = 1, (okN and n or 0) do
+    local from, how, npc = sourceOf(slot)
+    if from or how then
+      local src = { from = from, how = how, npc = npc, t = now }
+      local okT, kind = pcall(GetLootSlotType, slot)
+      local MONEY = (Enum and Enum.LootSlotType and Enum.LootSlotType.Money) or LOOT_SLOT_MONEY or 2
+      if okT and kind == MONEY then
+        fromMoney = fromMoney or src
+      else
+        local okL, link = pcall(GetLootSlotLink, slot)
+        local id = okL and type(okv(link)) == "string" and tonumber(link:match("|Hitem:(%d+)"))
+        if id and not fromItem[id] then fromItem[id] = src end
+      end
+    end
+  end
+end
+
+-- the source of this loot, while the loot window's answer is fresh
+local function sourceFor(e)
+  local now = GetTime()
+  local src = e.copper and fromMoney or (e.id and fromItem[e.id])
+  if src and now - src.t < 60 then return src end
+end
+L.sourceFor = sourceFor
+
+local src = CreateFrame("Frame")
+for _, e in ipairs({ "LOOT_READY", "LOOT_OPENED", "COMBAT_LOG_EVENT_UNFILTERED", "UNIT_SPELLCAST_SENT" }) do
+  pcall(src.RegisterEvent, src, e)
+end
+src:SetScript("OnEvent", function(_, event, ...)
+  if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+    if not CombatLogGetCurrentEventInfo then return end
+    local ok, _, sub, _, _, _, _, _, guid, name = pcall(CombatLogGetCurrentEventInfo)
+    sub = ok and okv(sub)
+    if sub == "UNIT_DIED" or sub == "PARTY_KILL" then remember(guid, name) end
+  elseif event == "UNIT_SPELLCAST_SENT" then
+    local unit, target, _, spellID = ...
+    if okv(unit) ~= "player" then return end
+    local okS, info = pcall(C_Spell.GetSpellInfo, okv(spellID))
+    sent = { target = okv(target), spell = okS and info and okv(info.name) or nil, t = GetTime() }
+  elseif event == "LOOT_READY" or event == "LOOT_OPENED" then
+    readLootWindow()
+  end
+end)
+
+-- opening a container from your bags (a clam, a lockbox, a satchel)
+if C_Container and C_Container.UseContainerItem then
+  hooksecurefunc(C_Container, "UseContainerItem", function(bag, slot)
+    local ok, info = pcall(C_Container.GetContainerItemInfo, bag, slot)
+    local name = ok and info and okv(info.hyperlink)
+    name = type(name) == "string" and name:match("%[(.-)%]") or nil
+    if name then opened = { name = name, t = GetTime() } end
+  end)
+end
+
 local function log(e, link)
   if not (ns.purchases and ns.purchases.noteLoot) then return end
+  local s = sourceFor(e)
+  if s then e.from, e.how, e.npc = s.from, s.how, s.npc end
   -- a failure here shows as a Lua error (the card still shows), never silently
   local ok, err = pcall(ns.purchases.noteLoot, e, link)
   if not ok and geterrorhandler then geterrorhandler()(err) end

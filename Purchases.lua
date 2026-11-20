@@ -289,7 +289,7 @@ function B.noteLoot(e, link)
   local d = db()
   if d and d.logLoot == false then return end
   local zone = GetRealZoneText and okv(GetRealZoneText()) or nil
-  local r = { t = time(), zone = zone, loot = true }
+  local r = { t = time(), zone = zone, loot = true, from = e.from, how = e.how, npc = e.npc }
   if e.copper then
     r.copper = e.copper
   else
@@ -496,6 +496,9 @@ local function rowTooltip(self)
     elseif e.id then pcall(GameTooltip.SetItemByID, GameTooltip, e.id) end
     GameTooltip:AddLine(" ")
     GameTooltip:AddLine(("Looted %s%s"):format(date("%d %b %Y %H:%M", e.t), e.zone and (" in " .. e.zone) or ""), 1, 0.82, 0)
+    if e.from or e.how then
+      GameTooltip:AddLine("From: " .. (e.from or "?") .. (e.how and e.how ~= e.from and (" (" .. e.how .. ")") or ""), 1, 1, 1)
+    end
     GameTooltip:Show()
     return
   end
@@ -907,7 +910,8 @@ local function renderList(f)
   local looted = B.mode == "looted"
   local side = income or sale or looted   -- the layout with the third money column, no marks
   local all = income and incomeList() or (sale and (B.forSale().list or {})) or (looted and B.looted()) or list()
-  local shown = P.view(all, B.filter, B.markedOnly and not side, entryName)
+  local shown = P.view(all, B.filter, B.markedOnly and not side,
+    looted and function(e) return entryName(e) .. " " .. (e.from or "") .. " " .. (e.how or "") .. " " .. (e.zone or "") end or entryName)
   if sale then
     -- what runs out first, first
     table.sort(shown, function(x, y) return (x.ends or math.huge) < (y.ends or math.huge) end)
@@ -943,7 +947,8 @@ local function renderList(f)
       row.qty:SetText(e.q and ns.num(e.q) or "")
       if looted then
         -- where it dropped, then what it is worth today (the last scan, else a vendor)
-        quiet(row.craft, e.zone or "")
+        -- where it came from (a mob, a node, a container); the zone when that isn't known
+        if e.from or e.how then row.craft:SetText(e.from or e.how); row.craft:SetTextColor(rgba(T.text)) else quiet(row.craft, e.zone or "") end
         if e.copper then
           quiet(row.each, ""); setMoney(row.total, e.copper, T.accent)
         else
@@ -1193,7 +1198,7 @@ function B.render()
     b.label:SetTextColor(rgba(on and T.accent or T.muted))
   end
   local fs = B.forSale()
-  f.sub:SetText(looted and "Everything you picked up on this character, newest first, with what it is worth today."
+  f.sub:SetText(looted and "Everything you picked up on this character, newest first: where it came from, and what it is worth today."
     or income and "Gold you took from the mail. Hover a sale for its margin over crafting it again."
     or sale and (fs.at and ("Your auctions as the auction house showed them on %s. Sales since then move to Income."):format(date("%d %b %H:%M", fs.at))
       or "Your auctions, read on every visit to the auction house.")
@@ -1204,7 +1209,7 @@ function B.render()
   f.qtyHead:SetPoint("RIGHT", -(TOTAL_W + CRAFT_W + EACH_W + 24) + shift, 0)
   for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not side) end
   f.headWhen:SetText(sale and "TIME LEFT" or "WHEN")
-  f.craftHead:SetText(looted and "WHERE" or "CRAFT NOW, EACH")
+  f.craftHead:SetText(looted and "FROM" or "CRAFT NOW, EACH")
   renderList(f)
   local listH = f.list:GetHeight() or 0
   if side then

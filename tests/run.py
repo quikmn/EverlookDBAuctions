@@ -2833,10 +2833,28 @@ def purchases():
         check(lk == link and n == 3, f"loot line parsed: {lk} {n}")
         check(LC.parseMoney("You loot 1 Gold, 5 Silver, 3 Copper") == 10503, "money parsed")
         lua.execute("GetRealZoneText = function() return 'Tanaris' end")
-        B.noteLoot(LC.itemFrom(link, 3), link)
+        e1 = LC.itemFrom(link, 3); e1["from"] = "Sandfury Shadowcaster"; e1.npc = 5648
+        B.noteLoot(e1, link)
         B.noteLoot(lua.eval("{ copper = 250 }"))
         lt = G.EverlookAuctionsCharDB.looted
         check(lt[1].zone == "Tanaris", "the zone is logged")
+        check(lt[1]["from"] == "Sandfury Shadowcaster" and lt[1].npc == 5648, "where it came from is logged")
+        # a loot window: slot 1 money and slot 2 an item, both from a mob that died (combat log)
+        lua.execute("""
+          GetTime = function() return 100 end
+          local guid = 'Creature-0-1-2-3-5648-0000ABCD'
+          CombatLogGetCurrentEventInfo = function() return 0, 'UNIT_DIED', false, nil, nil, 0, 0, guid, 'Sandfury Shadowcaster' end
+          GetNumLootItems = function() return 2 end
+          GetLootSourceInfo = function() return guid, 1 end
+          GetLootSlotType = function(s) return s == 1 and 2 or 1 end
+          GetLootSlotLink = function(s) return s == 2 and '|cff1eff00|Hitem:7909::|h[Aquamarine]|h|r' or nil end
+        """)
+        fire("COMBAT_LOG_EVENT_UNFILTERED")
+        fire("LOOT_OPENED")
+        s1 = LC.sourceFor(lua.eval("{ id = 7909 }"))
+        s2 = LC.sourceFor(lua.eval("{ copper = 55 }"))
+        check(s1 is not None and s1["from"] == "Sandfury Shadowcaster" and s1.npc == 5648, "the item is matched to the mob")
+        check(s2 is not None and s2["from"] == "Sandfury Shadowcaster", "the money is matched to the mob")
         check(len(lt) == 2 and lt[1].q == 3 and lt[1].name == "Aquamarine" and lt[2].copper == 250, "two loots logged")
         B.mode = "looted"
         B.render()
