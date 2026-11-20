@@ -6,6 +6,10 @@
 - New: shift-click a recipe in the profession window, or an item you can craft, while AH log is open: it shows that recipe's cost per craft.
 - New tooltip line (Tooltips page, on by default): Craft cost, what crafting one costs at the latest AH prices, for items you can craft.
 - New: Hurray! When one of your auctions sells, a card with fireworks at the top of the screen shows the item's icon, what sold and roughly for how much (the price you last posted it at with Quick sell). Turn it off on the General page or with `/eah cheer off`.
+- AH log has the EverlookDB look of the settings window: rounded slate window and cards, line icons, Bought and Income tabs, a search box, and a gear that opens its settings.
+- New settings page, AH log: window opacity (30-100%, solid by default), how many rows the list shows, switches for logging purchases and income, the sale celebration, and buttons to open the log.
+- Switches, buttons and sliders use a softer gold, and a switch's knob is dark when it's on, so it stands out on the gold.
+- The sale card has the same rounded window look.
 - Quick sell: a search that finds nothing says why when the item is in your bags: hidden (Hidden tab), soulbound, or refused by the auction house.
 
 ## v0.12.3 (2026-11-19)

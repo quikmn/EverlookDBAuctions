@@ -47,21 +47,27 @@ local CARD_W, CARD_H, ICON = 340, 76, 48
 local function makeFrame()
   if C.frame then return C.frame end
   -- the card: dark slate, a gold line along the top, the item's icon, then Hurray!, what sold and the money
-  local f = CreateFrame("Frame", "EverlookAuctionsCheer", UIParent, "BackdropTemplate")
+  local EUI = LibStub and LibStub("EverlookUI-1", true)
+  local f = CreateFrame("Frame", "EverlookAuctionsCheer", UIParent, (not EUI) and "BackdropTemplate" or nil)
   f:SetSize(CARD_W, CARD_H)
   f:SetPoint("TOP", 0, -90)
   f:SetFrameStrata("FULLSCREEN_DIALOG")
   f:EnableMouse(false)
-  if f.SetBackdrop then
+  if EUI then
+    -- the EverlookDB window look: a rounded slate card with a gold line along the top
+    local T = EUI.MakeTheme(ns.T and ns.T.accent or { 1, 0.82, 0 })
+    f.eluiTheme = T
+    EUI.WindowChrome(f, T)
+  elseif f.SetBackdrop then
     f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
-    f:SetBackdropColor(0.07, 0.09, 0.12, 0.94)
+    f:SetBackdropColor(0.07, 0.09, 0.12, 0.96)
     f:SetBackdropBorderColor(0.22, 0.26, 0.32, 1)
+    f.accent = f:CreateTexture(nil, "ARTWORK")
+    f.accent:SetPoint("TOPLEFT", 1, -1)
+    f.accent:SetPoint("TOPRIGHT", -1, -1)
+    f.accent:SetHeight(2)
+    f.accent:SetColorTexture(1, 0.82, 0, 1)
   end
-  f.accent = f:CreateTexture(nil, "ARTWORK")
-  f.accent:SetPoint("TOPLEFT", 1, -1)
-  f.accent:SetPoint("TOPRIGHT", -1, -1)
-  f.accent:SetHeight(2)
-  f.accent:SetColorTexture(1, 0.82, 0, 1)
   f.icon = f:CreateTexture(nil, "ARTWORK")
   f.icon:SetSize(ICON, ICON)
   f.icon:SetPoint("LEFT", 14, -1)
@@ -69,7 +75,7 @@ local function makeFrame()
   f.iconBorder = f:CreateTexture(nil, "BACKGROUND", nil, 1)
   f.iconBorder:SetPoint("TOPLEFT", f.icon, -1, 1)
   f.iconBorder:SetPoint("BOTTOMRIGHT", f.icon, 1, -1)
-  f.iconBorder:SetColorTexture(1, 0.82, 0, 0.8)
+  f.iconBorder:SetColorTexture(0.75, 0.62, 0.15, 0.9)
   f.big = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
   f.big:SetPoint("TOPLEFT", f.icon, "TOPRIGHT", 12, 1)
   f.big:SetText("Hurray! Sold")

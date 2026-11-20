@@ -16,16 +16,11 @@ local P = ns.purchaseLog
 local UI = ns.UI
 local B = {}
 
-local W, PAD, ROW, ROWS = 600, 12, 18, 12
-local DATE_W, QTY_W, EACH_W, TOTAL_W, CRAFT_W = 84, 40, 100, 100, 100
+local W, PAD, ROW = 640, 14, 22
+local DATE_W, QTY_W, EACH_W, TOTAL_W, CRAFT_W = 96, 40, 104, 104, 108
 local REC_ROWS = 8
 local STALE = 24 * 3600
 
-local QUIET = { 0.55, 0.55, 0.55 }
-local WHITE = { 1, 1, 1 }
-local GOOD = { 0.25, 1, 0.25 }
-local BAD = { 1, 0.35, 0.35 }
-local GOLD = { 1, 0.82, 0 }
 
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
@@ -131,7 +126,7 @@ end
 
 local function write(e)
   local d = db()
-  if not d then return end
+  if not d or d.logBuys == false then return end
   e.t, e.h = time(), houseKey()
   if P.add(list(), e) and B.frame and B.frame:IsShown() then B.render() end
 end
@@ -214,6 +209,8 @@ local function takeMail(i)
   local okH, _, _, sender, subject, cash, _, daysLeft = pcall(GetInboxHeaderInfo, i)
   cash = okH and ok(cash)
   if type(cash) ~= "number" or cash <= 0 then return end
+  local d = db()
+  if not d or d.logIncome == false then return end
   local sig = tostring(subject) .. "|" .. cash .. "|" .. tostring(daysLeft)
   local now = GetTime and GetTime() or time()
   if recentMail[sig] and now - recentMail[sig] < 10 then return end
@@ -316,43 +313,66 @@ rev:SetScript("OnEvent", function()
 end)
 
 ---------------------------------------------------------------------------------------------------------------------
--- The window
+-- The window, on the shared EverlookUI look (the same as the settings window): a rounded slate window with a gold
+-- line along the top, the list and the recipe in rounded cards, the softened gold for filled buttons. Its opacity and
+-- how many rows it shows are settings (Options, AH log page).
 
-local function text(parent, font, justify)
-  local fs = parent:CreateFontString(nil, "OVERLAY")
-  if _G[font] then fs:SetFontObject(font) else fs:SetFontObject(GameFontHighlightSmall) end
+local EUI = LibStub and LibStub("EverlookUI-1", true)
+local U = EUI and EUI.Util
+local T   -- the theme, made with the window (EverlookDB gold as the accent)
+
+local function rgba(c) return c[1], c[2], c[3], c[4] or 1 end
+local function setting(key, default)
+  local d = db()
+  local v = d and d[key]
+  if v == nil then return default end
+  return v
+end
+local function rows() return math.max(6, math.min(30, math.floor(tonumber(setting("logRows", 12)) or 12))) end
+local function alpha() return math.max(0.3, math.min(1, tonumber(setting("logAlpha", 0.97)) or 0.97)) end
+
+local function text(parent, size, color, justify)
+  local fs = EUI.Text(parent, size or T.font, color or T.text)
   fs:SetJustifyH(justify or "LEFT")
   fs:SetWordWrap(false)
   return fs
 end
-local function divider(parent)
-  local t = parent:CreateTexture(nil, "ARTWORK")
-  t:SetHeight(1)
-  t:SetColorTexture(1, 1, 1, 0.12)
-  return t
-end
 local function setMoney(fs, copper, color)
   fs:SetText((copper < 0 and "-" or "") .. money(math.abs(copper)))
-  fs:SetTextColor(unpack(color or WHITE))
+  fs:SetTextColor(rgba(color or T.text))
 end
 local function quiet(fs, msg)
   fs:SetText(msg)
-  fs:SetTextColor(unpack(QUIET))
+  fs:SetTextColor(rgba(T.muted))
 end
 local function tipFor(owner, title, line)
-  owner:SetScript("OnEnter", function(self)
+  owner:HookScript("OnEnter", function(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:SetText(title, 1, 1, 1)
     GameTooltip:AddLine(line, nil, nil, nil, true)
     GameTooltip:Show()
   end)
-  owner:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  owner:HookScript("OnLeave", function() GameTooltip:Hide() end)
 end
-local function button(parent, label, width, onClick)
-  local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-  b:SetSize(width, 22)
-  b:SetText(label)
-  b:SetScript("OnClick", onClick)
+
+-- A rounded card; its fill follows the window's opacity.
+local function card(parent)
+  local c = CreateFrame("Frame", nil, parent)
+  c.fill, c.edge = U.RoundBox(c, T.radius, T.card, T.divider)
+  return c
+end
+
+-- A small on/off chip (Marked only): accent-tinted when on.
+local function chip(parent, label, onClick)
+  local b = EUI.Button(parent, label, onClick, 110)
+  b:SetHeight(24)
+  function b:SetOn(on)
+    self.on = on and true or false
+    self.bg:SetVertexColor(rgba(on and T.accentDim or T.surface))
+    self.border:SetColor(rgba(on and (T.accentFill or T.accent) or T.border))
+    self.label:SetTextColor(rgba(on and T.accent or T.text))
+  end
+  b:HookScript("OnLeave", function(self) self:SetOn(self.on) end)
   return b
 end
 
@@ -366,50 +386,93 @@ local function toggleMark(e)
   B.render()
 end
 
-local function makeRow(f)
-  local row = CreateFrame("Button", nil, f)
+local function paintRow(row)
+  local e = row.entry
+  if row.hover then
+    row.bg:SetVertexColor(rgba(T.surfaceHi)); row.bg:Show()
+  elseif e and e.m and B.mode ~= "income" then
+    row.bg:SetVertexColor(rgba(T.accentDim)); row.bg:Show()
+  else
+    row.bg:Hide()
+  end
+end
+
+local function rowTooltip(self)
+  local e = self.entry
+  if not e then return end
+  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  if B.mode == "income" then
+    local id = saleID(e)
+    if id then pcall(GameTooltip.SetItemByID, GameTooltip, id) else GameTooltip:SetText(entryName(e), 1, 0.82, 0) end
+    GameTooltip:AddLine(" ")
+    if e.kind == "sale" then
+      local each = math.floor(e.c / e.q + 0.5)
+      GameTooltip:AddLine(("Sold %d; money taken %s: %s (%s each)"):format(e.q, date("%d %b %Y %H:%M", e.t), money(e.c), money(each)), 1, 0.82, 0)
+      if e.gross and e.gross > e.c then
+        GameTooltip:AddLine(("The buyer paid %s; the auction house kept %s."):format(money(e.gross), money(e.gross - e.c)), 0.6, 0.6, 0.6)
+      end
+      local cost, missing = craftNow(id)
+      if cost then
+        local m = each - cost
+        GameTooltip:AddLine(("Crafting one again costs about %s at today's lowest AH prices: %s %s each."):format(money(cost),
+          m >= 0 and "you made" or "you lost", money(math.abs(m))), m >= 0 and 0.38 or 0.94, m >= 0 and 0.81 or 0.37, m >= 0 and 0.53 or 0.37, true)
+      elseif missing then
+        GameTooltip:AddLine("You can craft this, but a material has no AH price yet.", 0.6, 0.6, 0.6, true)
+      end
+    else
+      GameTooltip:AddLine(("Taken from the mail %s: %s"):format(date("%d %b %Y %H:%M", e.t), money(e.c)), 1, 0.82, 0)
+    end
+    GameTooltip:Show()
+    return
+  end
+  if e.link then pcall(GameTooltip.SetHyperlink, GameTooltip, e.link) else pcall(GameTooltip.SetItemByID, GameTooltip, e.id) end
+  GameTooltip:AddLine(" ")
+  GameTooltip:AddLine(("Bought %s: %d for %s"):format(date("%d %b %Y %H:%M", e.t), e.q, money(e.c)), 1, 0.82, 0)
+  GameTooltip:AddLine(e.m and "Marked. Click to unmark." or "Click to mark it for the recipe below.", 0.6, 0.6, 0.6)
+  GameTooltip:Show()
+end
+
+local function makeRow(parent)
+  local row = CreateFrame("Button", nil, parent)
   row:SetHeight(ROW)
   row:RegisterForClicks("LeftButtonUp")
-  row.bg = row:CreateTexture(nil, "BACKGROUND")
-  row.bg:SetPoint("TOPLEFT", -4, 0)
-  row.bg:SetPoint("BOTTOMRIGHT", 4, 0)
-  row.bg:SetColorTexture(1, 0.82, 0, 0.16)
+  row.bg = U.Round(row, 4, "BACKGROUND")
+  row.bg:SetPoint("TOPLEFT", -6, 1)
+  row.bg:SetPoint("BOTTOMRIGHT", 6, -1)
+  row.bg:Hide()
   row.check = row:CreateTexture(nil, "ARTWORK")
-  row.check:SetSize(14, 14)
-  row.check:SetPoint("LEFT", -2, 0)
-  row.check:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
-  row.date = text(row, "GameFontDisableSmall")
-  row.date:SetPoint("LEFT", 14, 0)
-  row.date:SetWidth(DATE_W - 14)
-  row.total = text(row, "GameFontHighlightSmall", "RIGHT")
+  row.check:SetSize(10, 10)
+  row.check:SetPoint("LEFT", 0, 0)
+  if not EUI.SetIcon(row.check, "check") then row.check:SetTexture("Interface\\Buttons\\UI-CheckBox-Check") end
+  row.check:SetVertexColor(rgba(T.accent))
+  row.date = text(row, T.font - 1, T.muted)
+  row.date:SetPoint("LEFT", 16, 0)
+  row.date:SetWidth(DATE_W - 16)
+  row.total = text(row, T.font, T.text, "RIGHT")
   row.total:SetPoint("RIGHT", 0, 0)
   row.total:SetWidth(TOTAL_W)
-  row.craft = text(row, "GameFontHighlightSmall", "RIGHT")
-  row.craft:SetPoint("RIGHT", row.total, "LEFT", -6, 0)
+  row.craft = text(row, T.font, T.text, "RIGHT")
+  row.craft:SetPoint("RIGHT", row.total, "LEFT", -8, 0)
   row.craft:SetWidth(CRAFT_W)
-  row.each = text(row, "GameFontHighlightSmall", "RIGHT")
-  row.each:SetPoint("RIGHT", row.craft, "LEFT", -6, 0)
+  row.each = text(row, T.font, T.text, "RIGHT")
+  row.each:SetPoint("RIGHT", row.craft, "LEFT", -8, 0)
   row.each:SetWidth(EACH_W)
-  row.qty = text(row, "GameFontHighlightSmall", "RIGHT")
-  row.qty:SetPoint("RIGHT", row.each, "LEFT", -6, 0)
+  row.qty = text(row, T.font, T.text, "RIGHT")
+  row.qty:SetPoint("RIGHT", row.each, "LEFT", -8, 0)
   row.qty:SetWidth(QTY_W)
   row.icon = row:CreateTexture(nil, "ARTWORK")
-  row.icon:SetSize(14, 14)
+  row.icon:SetSize(16, 16)
   row.icon:SetPoint("LEFT", DATE_W, 0)
   row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-  row.name = text(row, "GameFontHighlightSmall")
-  row.name:SetPoint("LEFT", row.icon, "RIGHT", 5, 0)
-  row.name:SetPoint("RIGHT", row.qty, "LEFT", -6, 0)
-  local hl = row:CreateTexture(nil, "HIGHLIGHT")
-  hl:SetPoint("TOPLEFT", -4, 0)
-  hl:SetPoint("BOTTOMRIGHT", 4, 0)
-  hl:SetColorTexture(1, 1, 1, 0.06)
+  row.name = text(row, T.font)
+  row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
+  row.name:SetPoint("RIGHT", row.qty, "LEFT", -8, 0)
   row:SetScript("OnClick", function(self)
     local e = self.entry
     if not e then return end
     if IsShiftKeyDown() and chatOpen() then
       local link = e.link
-      if not link then
+      if not link and e.id then
         local okInfo, _, l = pcall(C_Item.GetItemInfo, e.id)
         link = okInfo and l or nil
       end
@@ -418,61 +481,28 @@ local function makeRow(f)
     end
     if B.mode ~= "income" then toggleMark(e) end
   end)
-  row:SetScript("OnEnter", function(self)
-    local e = self.entry
-    if not e then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    if B.mode == "income" then
-      local id = saleID(e)
-      if id then pcall(GameTooltip.SetItemByID, GameTooltip, id) else GameTooltip:SetText(entryName(e), 1, 0.82, 0) end
-      GameTooltip:AddLine(" ")
-      if e.kind == "sale" then
-        local each = math.floor(e.c / e.q + 0.5)
-        GameTooltip:AddLine(("Sold %d; money taken %s: %s (%s each)"):format(e.q, date("%d %b %Y %H:%M", e.t), money(e.c), money(each)), 1, 0.82, 0)
-        if e.gross and e.gross > e.c then
-          GameTooltip:AddLine(("The buyer paid %s; the auction house kept %s."):format(money(e.gross), money(e.gross - e.c)), 0.6, 0.6, 0.6)
-        end
-        local cost, missing = craftNow(id)
-        if cost then
-          local m = each - cost
-          GameTooltip:AddLine(("Crafting one again costs about %s at today's lowest AH prices: %s %s each."):format(money(cost),
-            m >= 0 and "you made" or "you lost", money(math.abs(m))), m >= 0 and 0.25 or 1, m >= 0 and 1 or 0.35, m >= 0 and 0.25 or 0.35, true)
-        elseif missing then
-          GameTooltip:AddLine("You can craft this, but a material has no AH price yet.", 0.6, 0.6, 0.6, true)
-        end
-      else
-        GameTooltip:AddLine(("Taken from the mail %s: %s"):format(date("%d %b %Y %H:%M", e.t), money(e.c)), 1, 0.82, 0)
-      end
-      GameTooltip:Show()
-      return
-    end
-    if e.link then pcall(GameTooltip.SetHyperlink, GameTooltip, e.link) else pcall(GameTooltip.SetItemByID, GameTooltip, e.id) end
-    GameTooltip:AddLine(" ")
-    GameTooltip:AddLine(("Bought %s: %d for %s"):format(date("%d %b %Y %H:%M", e.t), e.q, money(e.c)), 1, 0.82, 0)
-    GameTooltip:AddLine(e.m and "Marked. Click to unmark." or "Click to mark it for the recipe below.", 0.6, 0.6, 0.6)
-    GameTooltip:Show()
-  end)
-  row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+  row:SetScript("OnEnter", function(self) self.hover = true; paintRow(self); rowTooltip(self) end)
+  row:SetScript("OnLeave", function(self) self.hover = nil; paintRow(self); GameTooltip:Hide() end)
   return row
 end
 
-local function makeMatRow(f)
-  local row = CreateFrame("Frame", nil, f)
+local function makeMatRow(parent)
+  local row = CreateFrame("Frame", nil, parent)
   row:SetHeight(ROW)
   row:EnableMouse(true)
   row.icon = row:CreateTexture(nil, "ARTWORK")
-  row.icon:SetSize(14, 14)
+  row.icon:SetSize(16, 16)
   row.icon:SetPoint("LEFT", 0, 0)
   row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-  row.cost = text(row, "GameFontHighlightSmall", "RIGHT")
+  row.cost = text(row, T.font, T.text, "RIGHT")
   row.cost:SetPoint("RIGHT", 0, 0)
   row.cost:SetWidth(TOTAL_W)
-  row.src = text(row, "GameFontDisableSmall", "RIGHT")
-  row.src:SetPoint("RIGHT", row.cost, "LEFT", -6, 0)
-  row.src:SetWidth(200)
-  row.name = text(row, "GameFontHighlightSmall")
-  row.name:SetPoint("LEFT", row.icon, "RIGHT", 5, 0)
-  row.name:SetPoint("RIGHT", row.src, "LEFT", -6, 0)
+  row.src = text(row, T.font - 1, T.muted, "RIGHT")
+  row.src:SetPoint("RIGHT", row.cost, "LEFT", -8, 0)
+  row.src:SetWidth(220)
+  row.name = text(row, T.font)
+  row.name:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
+  row.name:SetPoint("RIGHT", row.src, "LEFT", -8, 0)
   row:SetScript("OnEnter", function(self)
     if not self.id then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -483,12 +513,12 @@ local function makeMatRow(f)
   return row
 end
 
-local function makeLine(f)
-  local line = CreateFrame("Frame", nil, f)
+local function makeLine(parent)
+  local line = CreateFrame("Frame", nil, parent)
   line:SetHeight(ROW)
-  line.label = text(line, "GameFontNormalSmall")
+  line.label = text(line, T.font, T.muted)
   line.label:SetPoint("LEFT", 0, 0)
-  line.value = text(line, "GameFontHighlightSmall", "RIGHT")
+  line.value = text(line, T.font, T.text, "RIGHT")
   line.value:SetPoint("RIGHT", 0, 0)
   line.label:SetPoint("RIGHT", line.value, "LEFT", -8, 0)
   return line
@@ -499,9 +529,11 @@ local function openPicker(anchor)
   local f = B.frame
   local m = B.picker
   if not m then
-    m = CreateFrame("Frame", nil, f, "TooltipBackdropTemplate")
+    m = CreateFrame("Frame", nil, f)
     m:SetFrameLevel(f:GetFrameLevel() + 30)
     m:EnableMouse(true)
+    m.fill, m.edge = U.RoundBox(m, 6, T.bg, T.border)
+    m.fill:SetVertexColor(T.bg[1], T.bg[2], T.bg[3], 1)
     m.items = {}
     B.picker = m
   end
@@ -512,22 +544,27 @@ local function openPicker(anchor)
     if r then
       if not b then
         b = CreateFrame("Button", nil, m)
-        b:SetHeight(18)
-        b.label = text(b, "GameFontHighlightSmall")
-        b.label:SetPoint("LEFT", 4, 0)
-        b.label:SetPoint("RIGHT", -4, 0)
-        local hl = b:CreateTexture(nil, "HIGHLIGHT")
-        hl:SetAllPoints()
-        hl:SetColorTexture(1, 1, 1, 0.08)
+        b:SetHeight(22)
+        b.hl = U.Round(b, 4, "BACKGROUND")
+        b.hl:SetAllPoints(b)
+        b.hl:SetVertexColor(rgba(T.surfaceHi))
+        b.hl:Hide()
+        b.label = text(b, T.font)
+        b.label:SetPoint("LEFT", 8, 0)
+        b.label:SetPoint("RIGHT", -8, 0)
+        b:SetScript("OnEnter", function(self) self.hl:Show() end)
+        b:SetScript("OnLeave", function(self) self.hl:Hide() end)
         m.items[i] = b
       end
       b:ClearAllPoints()
-      b:SetPoint("TOPLEFT", 8, -8 - (i - 1) * 18)
-      b:SetPoint("RIGHT", -8, 0)
+      b:SetPoint("TOPLEFT", 6, -6 - (i - 1) * 22)
+      b:SetPoint("RIGHT", -6, 0)
       b.label:SetText(r.name or ("recipe " .. r.id))
+      local d = db()
+      b.label:SetTextColor(rgba((d and d.boughtRecipe == r.id) and T.accent or T.text))
       b:SetScript("OnClick", function()
-        local d = db()
-        if d then d.boughtRecipe = r.id end
+        local dd = db()
+        if dd then dd.boughtRecipe = r.id end
         m:Hide()
         B.render()
       end)
@@ -536,15 +573,27 @@ local function openPicker(anchor)
       b:Hide()
     end
   end
-  m:SetSize(260, 16 + math.max(1, #rs) * 18)
+  m:SetSize(300, 12 + math.max(1, #rs) * 22)
   m:ClearAllPoints()
-  m:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2)
+  m:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -4)
   m:Show()
+end
+
+local function addRows(f, n)
+  for i = #f.rows + 1, n do
+    local row = makeRow(f.list)
+    row:SetPoint("TOPLEFT", PAD, -(32 + (i - 1) * ROW))
+    row:SetPoint("RIGHT", -PAD, 0)
+    f.rows[i] = row
+  end
 end
 
 local function makeFrame()
   if B.frame then return B.frame end
-  local f = CreateFrame("Frame", "EverlookAuctionsPurchases", UIParent, "TooltipBackdropTemplate")
+  if not EUI then return nil end
+  T = EUI.MakeTheme(ns.T and ns.T.accent or { 1, 0.82, 0 })
+  local f = CreateFrame("Frame", "EverlookAuctionsPurchases", UIParent)
+  f.eluiTheme = T
   UI.own(f)
   f:SetWidth(W)
   f:SetFrameStrata("HIGH")
@@ -567,138 +616,150 @@ local function makeFrame()
     B.offset = math.max(0, (B.offset or 0) - delta * 3)
     B.render()
   end)
-  tinsert(UISpecialFrames, "EverlookAuctionsPurchases")   -- Escape closes it
+  EUI.WindowChrome(f, T)
+  EUI.CloseButton(f, T)
 
-  f.title = text(f, "GameFontNormal")
-  f.title:SetPoint("TOPLEFT", PAD, -PAD)
+  -- header: icon, title, the two views, the settings
+  f.icon = f:CreateTexture(nil, "ARTWORK")
+  f.icon:SetSize(18, 18)
+  f.icon:SetPoint("TOPLEFT", 20, -20)
+  if EUI.SetIcon(f.icon, "coins") then f.icon:SetVertexColor(rgba(T.accent)) end
+  f.title = text(f, T.fontHuge, T.text)
+  f.title:SetPoint("LEFT", f.icon, "RIGHT", 8, 0)
   f.title:SetText("AH log")
-  -- two views: what you bought, and the money you took from the mail
   f.tabs = {}
-  local prev = f.title
+  local prev
   for _, t in ipairs({ { "bought", "Bought" }, { "income", "Income" } }) do
     local b = CreateFrame("Button", nil, f)
-    b:SetSize(64, 18)
-    b:SetPoint("LEFT", prev, "RIGHT", prev == f.title and 14 or 4, 0)
-    b.label = text(b, "GameFontHighlightSmall", "CENTER")
-    b.label:SetAllPoints()
+    b:SetSize(84, 26)
+    if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0) else b:SetPoint("LEFT", f.title, "RIGHT", 18, 0) end
+    b.bg = U.Round(b, 4, "BACKGROUND")
+    b.bg:SetAllPoints(b)
+    b.label = text(b, T.font, T.text, "CENTER")
+    b.label:SetPoint("CENTER")
     b.label:SetText(t[2])
-    b.line = b:CreateTexture(nil, "ARTWORK")
-    b.line:SetHeight(2)
-    b.line:SetPoint("BOTTOMLEFT")
-    b.line:SetPoint("BOTTOMRIGHT")
-    b.line:SetColorTexture(1, 0.82, 0, 1)
-    local hl = b:CreateTexture(nil, "HIGHLIGHT")
-    hl:SetAllPoints()
-    hl:SetColorTexture(1, 1, 1, 0.06)
+    b.bar = U.Solid(b, "ARTWORK", rgba(T.accent))
+    b.bar:SetHeight(2)
+    b.bar:SetPoint("BOTTOMLEFT", 10, 0)
+    b.bar:SetPoint("BOTTOMRIGHT", -10, 0)
     b.mode = t[1]
     b:SetScript("OnClick", function()
       B.mode, B.offset = t[1], 0
+      if B.picker then B.picker:Hide() end
       B.render()
     end)
+    b:SetScript("OnEnter", function(self) if not self.active then self.bg:SetVertexColor(rgba(T.surface)); self.bg:Show() end end)
+    b:SetScript("OnLeave", function(self) if not self.active then self.bg:Hide() end end)
     f.tabs[#f.tabs + 1] = b
     prev = b
   end
-  f.sub = text(f, "GameFontDisableSmall")
-  f.sub:SetPoint("LEFT", prev, "RIGHT", 12, 0)
-  f.sub:SetText("click the ones you used to mark them")
-  local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
-  close:SetSize(24, 24)
-  close:SetPoint("TOPRIGHT", -2, -2)
-  close:SetScript("OnClick", function() f:Hide() end)
+  f.gear = CreateFrame("Button", nil, f)
+  f.gear:SetSize(24, 24)
+  f.gear:SetPoint("TOPRIGHT", -38, -10)
+  f.gear.icon = f.gear:CreateTexture(nil, "ARTWORK")
+  f.gear.icon:SetSize(13, 13)
+  f.gear.icon:SetPoint("CENTER")
+  EUI.SetIcon(f.gear.icon, "gear")
+  f.gear.icon:SetVertexColor(rgba(T.muted))
+  f.gear:SetScript("OnClick", function() if ns.app then ns.app:Open("ahlog") end end)
+  f.gear:SetScript("OnEnter", function(self)
+    self.icon:SetVertexColor(rgba(T.text))
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    GameTooltip:SetText("AH log settings", 1, 1, 1)
+    GameTooltip:AddLine("Opacity, rows shown, what is logged.", nil, nil, nil, true)
+    GameTooltip:Show()
+  end)
+  f.gear:SetScript("OnLeave", function(self) self.icon:SetVertexColor(rgba(T.muted)); GameTooltip:Hide() end)
+  f.sub = text(f, T.font - 1, T.muted)
+  f.sub:SetPoint("TOPLEFT", 20, -48)
+  f.sub:SetPoint("RIGHT", -20, 0)
 
-  -- search, marked only, clear marks
-  f.search = CreateFrame("EditBox", nil, f, "SearchBoxTemplate")
-  f.search:SetSize(170, 20)
-  f.search:SetPoint("TOPLEFT", PAD + 6, -PAD - 22)
-  f.search:SetAutoFocus(false)
+  -- toolbar: search, marked only, clear marks
+  f.search = EUI.EditBox(f, 220, 26)
+  f.search:SetPoint("TOPLEFT", 20, -68)
+  f.search.hint = text(f.search, T.font, T.muted)
+  f.search.hint:SetPoint("LEFT", 8, 0)
+  f.search.hint:SetText("Search items")
   f.search:HookScript("OnTextChanged", function(self)
-    B.filter = self:GetText() or ""
+    local t = self:GetText() or ""
+    self.hint:SetShown(t == "")
+    B.filter = t
     B.offset = 0
     B.render()
   end)
-  f.marked = CreateFrame("CheckButton", nil, f, "UICheckButtonTemplate")
-  f.marked:SetSize(22, 22)
-  f.marked:SetPoint("LEFT", f.search, "RIGHT", 10, 0)
-  f.marked:SetScript("OnClick", function(self)
-    B.markedOnly = self:GetChecked() and true or false
+  f.marked = chip(f, "Marked only", function(self)
+    B.markedOnly = not B.markedOnly
+    self:SetOn(B.markedOnly)
     B.offset = 0
     B.render()
   end)
-  local ml = text(f, "GameFontHighlightSmall")
-  f.markedLabel = ml
-  ml:SetPoint("LEFT", f.marked, "RIGHT", 2, 0)
-  ml:SetText("Marked only")
-  f.clear = button(f, "Clear marks", 100, function()
+  f.marked:SetPoint("LEFT", f.search, "RIGHT", 8, 0)
+  f.marked:SetOn(false)
+  f.clear = EUI.Button(f, "Clear marks", function()
     for _, e in ipairs(list()) do e.m = nil end
     B.render()
-  end)
-  f.clear:SetPoint("TOPRIGHT", -PAD, -PAD - 21)
+  end, 110)
+  f.clear:SetHeight(24)
+  f.clear:SetPoint("TOPRIGHT", -20, -69)
 
-  -- column heads
-  local y = -PAD - 50
-  local head = CreateFrame("Frame", nil, f)
-  head:SetHeight(14)
-  head:SetPoint("TOPLEFT", PAD, y)
+  -- the list card: column heads, rows, then the sum and where you are
+  f.list = card(f)
+  f.list:SetPoint("TOPLEFT", 16, -104)
+  f.list:SetPoint("RIGHT", -16, 0)
+  local head = CreateFrame("Frame", nil, f.list)
+  head:SetHeight(16)
+  head:SetPoint("TOPLEFT", PAD, -10)
   head:SetPoint("RIGHT", -PAD, 0)
   local function col(label, right, width, justify)
-    local h = text(head, "GameFontDisableSmall", justify or "RIGHT")
+    local h = text(head, T.fontSmall, T.muted, justify or "RIGHT")
     h:SetText(label)
     h:SetPoint("RIGHT", right, 0)
     h:SetWidth(width)
+    return h
   end
-  col("Total", 0, TOTAL_W)
-  f.craftHead = text(head, "GameFontDisableSmall", "RIGHT")
-  f.craftHead:SetText("Craft now, each")
-  f.craftHead:SetPoint("RIGHT", -(TOTAL_W + 6), 0)
-  f.craftHead:SetWidth(CRAFT_W)
-  col("Each", -(TOTAL_W + CRAFT_W + 12), EACH_W)
-  col("Qty", -(TOTAL_W + CRAFT_W + EACH_W + 18), QTY_W)
-  local hd = text(head, "GameFontDisableSmall")
-  hd:SetPoint("LEFT", 14, 0)
-  hd:SetText("When")
-  local hi = text(head, "GameFontDisableSmall")
+  col("TOTAL", 0, TOTAL_W)
+  f.craftHead = col("CRAFT NOW, EACH", -(TOTAL_W + 8), CRAFT_W)
+  col("EACH", -(TOTAL_W + CRAFT_W + 16), EACH_W)
+  col("QTY", -(TOTAL_W + CRAFT_W + EACH_W + 24), QTY_W)
+  local hd = text(head, T.fontSmall, T.muted)
+  hd:SetPoint("LEFT", 16, 0)
+  hd:SetText("WHEN")
+  local hi = text(head, T.fontSmall, T.muted)
   hi:SetPoint("LEFT", DATE_W, 0)
-  hi:SetText("Item")
-  y = y - 16
-
+  hi:SetText("ITEM")
   f.rows = {}
-  for i = 1, ROWS do
-    local row = makeRow(f)
-    row:SetPoint("TOPLEFT", PAD, y - (i - 1) * ROW)
-    row:SetPoint("RIGHT", -PAD, 0)
-    f.rows[i] = row
-  end
-  f.empty = text(f, "GameFontDisableSmall")
+  f.empty = text(f.list, T.font, T.muted)
   f.empty:SetWordWrap(true)
-  f.empty:SetPoint("TOPLEFT", PAD, y - 4)
+  f.empty:SetPoint("TOPLEFT", PAD, -34)
   f.empty:SetPoint("RIGHT", -PAD, 0)
-  y = y - ROWS * ROW - 4
-  f.pos = text(f, "GameFontDisableSmall", "RIGHT")
-  f.pos:SetPoint("TOPRIGHT", -PAD, y)
-  f.sum = text(f, "GameFontHighlightSmall")
-  f.sum:SetPoint("TOPLEFT", PAD, y)
-  y = y - 20
+  f.foot = U.Solid(f.list, "ARTWORK", rgba(T.divider))
+  f.foot:SetHeight(1)
+  f.sum = text(f.list, T.font, T.text)
+  f.pos = text(f.list, T.font - 1, T.muted, "RIGHT")
 
-  f.mid = divider(f)
-  f.mid:SetPoint("TOPLEFT", PAD, y)
-  f.mid:SetPoint("TOPRIGHT", -PAD, y)
-  y = y - 8
-
-  -- the recipe
-  local rl = text(f, "GameFontNormal")
-  f.recipeLabel = rl
-  rl:SetPoint("TOPLEFT", PAD, y - 3)
-  rl:SetText("Recipe")
-  f.pick = button(f, "Pick a recipe", 300, function(self) openPicker(self) end)
-  f.pick:SetPoint("TOPLEFT", PAD + 60, y)
+  -- the recipe card
+  f.recipe = card(f)
+  f.recipe:SetPoint("RIGHT", -16, 0)
+  f.recipeLabel = text(f.recipe, T.fontTitle, T.gold)
+  f.recipeLabel:SetPoint("TOPLEFT", PAD, -14)
+  f.recipeLabel:SetText("Recipe")
+  f.pick = EUI.Button(f.recipe, "Pick a recipe", function(self) openPicker(self) end, 320)
+  f.pick:SetPoint("TOPLEFT", PAD + 70, -9)
+  f.pick.chev = f.pick:CreateTexture(nil, "ARTWORK")
+  f.pick.chev:SetSize(10, 10)
+  f.pick.chev:SetPoint("RIGHT", -10, 0)
+  if EUI.SetIcon(f.pick.chev, "chevron") then f.pick.chev:SetVertexColor(rgba(T.muted)) end
   tipFor(f.pick, "Recipe", "The recipes you picked in a profession window. Or shift-click a recipe, or an item you can craft, while this window is open.")
-  f.recipeTop = y - 28
   f.mats, f.lines = {}, {}
-  for i = 1, REC_ROWS do f.mats[i] = makeMatRow(f) end
-  for i = 1, 4 do f.lines[i] = makeLine(f) end
-  f.note = text(f, "GameFontDisableSmall")
+  for i = 1, REC_ROWS do f.mats[i] = makeMatRow(f.recipe) end
+  for i = 1, 4 do f.lines[i] = makeLine(f.recipe) end
+  f.note = text(f.recipe, T.font - 1, T.muted)
   f.note:SetWordWrap(true)
-  f.note:SetWidth(W - PAD * 2)
+  f.note:SetWidth(W - 32 - PAD * 2)
+
+  f:SetScript("OnShow", function() end)
+  EUI.CloseOnEscape(f)
+  f:HookScript("OnHide", function() if B.picker then B.picker:Hide() end end)
 
   local d = db()
   local pos = d and d.boughtPos
@@ -708,19 +769,30 @@ local function makeFrame()
   return f
 end
 
+-- the window's opacity (a setting): the window and its cards
+local function paintAlpha(f)
+  local a = alpha()
+  f.bgFill:SetVertexColor(T.bg[1], T.bg[2], T.bg[3], a)
+  f.bgEdge:SetVertexColor(T.border[1], T.border[2], T.border[3], math.min(1, a + 0.1))
+  for _, c in ipairs({ f.list, f.recipe }) do
+    c.fill:SetVertexColor(T.card[1], T.card[2], T.card[3], a)
+    c.edge:SetVertexColor(T.divider[1], T.divider[2], T.divider[3], a)
+  end
+end
+
 local function renderList(f)
   local income = B.mode == "income"
   local all = income and incomeList() or list()
   local shown = P.view(all, B.filter, B.markedOnly and not income, entryName)
-  local maxOff = math.max(0, #shown - ROWS)
+  local n = rows()
+  addRows(f, n)
+  local maxOff = math.max(0, #shown - n)
   B.offset = math.min(B.offset or 0, maxOff)
-  for i = 1, ROWS do
-    local row = f.rows[i]
-    local e = shown[i + B.offset]
+  for i, row in ipairs(f.rows) do
+    local e = i <= n and shown[i + B.offset] or nil
     row.entry = e
     if e then
       row.check:SetShown(not income and e.m == true)
-      row.bg:SetShown(not income and e.m == true)
       row.date:SetText(date("%d %b %H:%M", e.t))
       local id = income and saleID(e) or e.id
       row.icon:SetTexture(id and try(C_Item.GetItemIconByID, id) or (e.kind and e.kind ~= "sale" and 133784) or 134400)
@@ -728,10 +800,11 @@ local function renderList(f)
       row.name:SetTextColor(qualityColor(id))
       -- a sold item you can craft: what one costs to make again today, green when you sold above it
       local cost = income and e.kind == "sale" and craftNow(id)
-      if cost then setMoney(row.craft, cost, math.floor(e.c / e.q + 0.5) >= cost and GOOD or BAD) else row.craft:SetText("") end
+      if cost then setMoney(row.craft, cost, math.floor(e.c / e.q + 0.5) >= cost and T.ok or T.danger) else row.craft:SetText("") end
       row.qty:SetText(ns.num(e.q))
       setMoney(row.each, math.floor(e.c / e.q + 0.5))
       setMoney(row.total, e.c)
+      paintRow(row)
       row:Show()
     else
       row:Hide()
@@ -742,12 +815,22 @@ local function renderList(f)
     f.empty:SetText("No money from the mail yet. From now on, gold you take from the mail shows up here: every auction you sold (item, how many, what you got after the cut) and any other gold. A sold item you can craft shows what one costs to craft again at today's prices (open your profession window once so the addon knows your recipes).")
   elseif #all == 0 then
     f.empty:SetText("Nothing bought yet. Every buyout from now on shows up here: from our Buy panel, Blizzard's auction house or another addon. Bids aren't logged.")
-  elseif B.markedOnly then
-    f.empty:SetText("Nothing marked" .. ((B.filter or "") ~= "" and " matches." or ". Untick Marked only and click the purchases you crafted with."))
+  elseif B.markedOnly and not income then
+    f.empty:SetText("Nothing marked" .. ((B.filter or "") ~= "" and " matches." or ". Turn off Marked only and click the purchases you crafted with."))
   else
     f.empty:SetText("Nothing matches.")
   end
-  f.pos:SetText(#shown > ROWS and ("%d-%d of %d · scroll for more"):format(B.offset + 1, math.min(#shown, B.offset + ROWS), #shown)
+  -- the card's foot, under the last row slot
+  local bottom = 32 + n * ROW + 8
+  f.foot:ClearAllPoints()
+  f.foot:SetPoint("TOPLEFT", PAD, -bottom)
+  f.foot:SetPoint("TOPRIGHT", -PAD, -bottom)
+  f.sum:ClearAllPoints()
+  f.sum:SetPoint("TOPLEFT", PAD, -(bottom + 10))
+  f.pos:ClearAllPoints()
+  f.pos:SetPoint("TOPRIGHT", -PAD, -(bottom + 10))
+  f.list:SetHeight(bottom + 32)
+  f.pos:SetText(#shown > n and ("%d-%d of %d, scroll for more"):format(B.offset + 1, math.min(#shown, B.offset + n), #shown)
     or (#shown > 0 and ("%d %s"):format(#shown, income and "entries" or "purchases") or ""))
   if income then
     local since = time() - 7 * 86400
@@ -755,26 +838,26 @@ local function renderList(f)
     local net = earned - spent
     f.sum:SetText(("Last 7 days: earned %s, spent %s, net %s%s"):format(money(earned), money(spent),
       net < 0 and "-" or "", money(math.abs(net))))
-    f.sum:SetTextColor(unpack(net >= 0 and GOOD or BAD))
+    f.sum:SetTextColor(rgba(net >= 0 and T.ok or T.danger))
     return
   end
-  local n, q, c = P.markedTotal(all)
-  if n > 0 then
-    f.sum:SetText(("Marked: %d %s, %s items, %s"):format(n, n == 1 and "purchase" or "purchases", ns.num(q), money(c)))
-    f.sum:SetTextColor(unpack(GOLD))
+  local nm, q, c = P.markedTotal(all)
+  if nm > 0 then
+    f.sum:SetText(("Marked: %d %s, %s items, %s"):format(nm, nm == 1 and "purchase" or "purchases", ns.num(q), money(c)))
+    f.sum:SetTextColor(rgba(T.accent))
   else
     quiet(f.sum, "Nothing marked")
   end
-  f.clear:SetEnabled(n > 0)
+  f.clear:SetUsable(nm > 0)
 end
 
 local function renderRecipe(f)
   local d = db() or {}
   local rs = recipes()
   local r = P.findRecipe(rs, d.boughtRecipe) or rs[1]
-  local y = f.recipeTop
+  local y = -46
   f.pick:SetText(r and ((r.name or ("recipe " .. r.id))) or "Pick a recipe")
-  f.pick:SetEnabled(#rs > 0)
+  f.pick:SetUsable(#rs > 0)
   local c = r and P.cost(list(), r, priceOf)
   for i, row in ipairs(f.mats) do
     local m = c and c.mats[i]
@@ -789,11 +872,11 @@ local function renderRecipe(f)
       row.name:SetTextColor(qualityColor(m.id))
       if m.src == "paid" then
         row.src:SetText(("you paid %s each (%d marked)"):format(money(math.floor(m.unit + 0.5)), m.have))
-        row.src:SetTextColor(unpack(GOLD))
+        row.src:SetTextColor(rgba(T.accent))
         setMoney(row.cost, math.floor(m.unit * m.need + 0.5))
       elseif m.src == "ah" then
         quiet(row.src, "not marked: lowest AH price")
-        setMoney(row.cost, math.floor(m.unit * m.need + 0.5), QUIET)
+        setMoney(row.cost, math.floor(m.unit * m.need + 0.5), T.muted)
       else
         quiet(row.src, "not marked, no AH price")
         quiet(row.cost, "-")
@@ -803,19 +886,19 @@ local function renderRecipe(f)
   end
   local lines = {}
   if c and #c.mats > 0 then
-    y = y - 4
-    lines[#lines + 1] = { "Cost per craft", c.total, c.paidAll and GOLD or WHITE }
+    y = y - 6
+    lines[#lines + 1] = { "Cost per craft", c.total, c.paidAll and T.accent or T.text }
     if c.crafts then lines[#lines + 1] = { "Your marked purchases cover", ("%d %s"):format(c.crafts, c.crafts == 1 and "craft" or "crafts") } end
     local each, at = r.out and priceOf(r.out)
     if each then
       local makes = r.makes or 1
       local value = math.floor(each * makes)
       lines[#lines + 1] = { makes > 1 and ("Sells for (makes %s)"):format(makes) or "Sells for", value,
-        (at and time() - at >= STALE) and QUIET or nil }
+        (at and time() - at >= STALE) and T.muted or nil }
       if c.unpriced == 0 then
         local cut = ns.ahCut and ns.ahCut() or 0.05
         local profit = math.floor(value * (1 - cut)) - c.total
-        lines[#lines + 1] = { ("Profit after the %d%% AH cut"):format(cut * 100), profit, profit >= 0 and GOOD or BAD }
+        lines[#lines + 1] = { ("Profit after the %d%% AH cut"):format(cut * 100), profit, profit >= 0 and T.ok or T.danger }
       end
     end
   end
@@ -827,7 +910,7 @@ local function renderRecipe(f)
       line:SetPoint("TOPLEFT", PAD, y)
       line:SetPoint("RIGHT", -PAD, 0)
       line.label:SetText(l[1])
-      if type(l[2]) == "number" then setMoney(line.value, l[2], l[3]) else line.value:SetText(l[2]); line.value:SetTextColor(unpack(WHITE)) end
+      if type(l[2]) == "number" then setMoney(line.value, l[2], l[3]) else line.value:SetText(l[2]); line.value:SetTextColor(rgba(T.text)) end
       y = y - ROW
     end
   end
@@ -842,39 +925,50 @@ local function renderRecipe(f)
   f.note:SetShown(note ~= nil)
   if note then
     f.note:ClearAllPoints()
-    f.note:SetPoint("TOPLEFT", PAD, y - 4)
+    f.note:SetPoint("TOPLEFT", PAD, y - 6)
     f.note:SetText(note)
-    y = y - 6 - math.max(12, f.note:GetStringHeight() or 12)
+    y = y - 8 - math.max(12, f.note:GetStringHeight() or 12)
   end
-  f:SetHeight(-(y - PAD))
+  f.recipe:SetHeight(-y + 12)
 end
 
 function B.render()
   local f = B.frame
   if not (f and f:IsShown()) then return end
+  paintAlpha(f)
   local income = B.mode == "income"
   for _, b in ipairs(f.tabs) do
     local on = (b.mode == "income") == income
-    b.line:SetShown(on)
-    b.label:SetTextColor(unpack(on and GOLD or QUIET))
+    b.active = on
+    b.bar:SetShown(on)
+    b.bg:SetVertexColor(rgba(T.accentDim))
+    b.bg:SetShown(on)
+    b.label:SetTextColor(rgba(on and T.accent or T.muted))
   end
-  f.sub:SetText(income and "gold you took from the mail; hover a sale for its margin" or "click the ones you used to mark them")
+  f.sub:SetText(income and "Gold you took from the mail. Hover a sale for its margin over crafting it again."
+    or "Everything you bought at the auction house. Click the purchases you crafted with to mark them.")
   f.craftHead:SetShown(income)
-  for _, w in ipairs({ f.marked, f.markedLabel, f.clear, f.mid, f.recipeLabel, f.pick }) do w:SetShown(not income) end
+  for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not income) end
   renderList(f)
+  local listH = f.list:GetHeight() or 0
   if income then
-    for _, r in ipairs(f.mats) do r:Hide() end
-    for _, l in ipairs(f.lines) do l:Hide() end
-    f.note:Hide()
     if B.picker then B.picker:Hide() end
-    f:SetHeight(-(f.recipeTop + 28 - 8) + PAD)
+    f:SetHeight(104 + listH + 16)
     return
   end
   renderRecipe(f)
+  f.recipe:ClearAllPoints()
+  f.recipe:SetPoint("TOPLEFT", f.list, "BOTTOMLEFT", 0, -10)
+  f.recipe:SetPoint("RIGHT", -16, 0)
+  f:SetHeight(104 + listH + 10 + (f.recipe:GetHeight() or 0) + 16)
 end
 
 function B.open(recipeID)
   local f = makeFrame()
+  if not f then
+    if ns.say then ns.say("the AH log needs the EverlookUI library, which didn't load.") end
+    return
+  end
   local d = db()
   if recipeID then B.mode = "bought" end
   if recipeID and d then d.boughtRecipe = recipeID end
@@ -884,10 +978,14 @@ end
 
 function B.toggle(mode)
   local f = makeFrame()
+  if not f then return B.open() end
   if f:IsShown() and (mode or "bought") == (B.mode or "bought") then f:Hide(); return end
   B.mode = mode or "bought"
   B.open()
 end
+
+-- A setting changed (opacity, rows): the open window follows.
+function B.refresh() if B.frame and B.frame:IsShown() then B.render() end end
 
 -- The crafting box tells us each recipe you pick, so the window can show it later without the profession window.
 function B.noteRecipe(w, changed)

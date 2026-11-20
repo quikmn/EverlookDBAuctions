@@ -2650,7 +2650,7 @@ def purchases():
     ns.itemFor = lua.eval("function(id) local p = MOCK_PRICES[id]; return p and { p, 1, 1, MOCK_TIME } end")
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run((ROOT / "Skin.lua").read_text(encoding="utf-8"), "Skin.lua", "EverlookDBAuctions", ns)
-    for name in ["PurchaseLog.lua", "Purchases.lua"]:
+    for name in ["Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua", "PurchaseLog.lua", "Purchases.lua"]:
         run((ROOT / name).read_text(encoding="utf-8"), name, "EverlookDBAuctions", ns)
     P = ns.purchaseLog
     G = lua.globals()

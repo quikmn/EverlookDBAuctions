@@ -106,6 +106,36 @@ local function build()
     get = function() return db().skin ~= false end,
     set = function(v) db().skin = v end,
   })
+  -- the AH log (Purchases.lua)
+  local function logRefresh() if ns.purchases and ns.purchases.refresh then ns.purchases.refresh() end end
+  app:Setting({
+    key = "logopacity", type = "number", label = "Window opacity", min = 30, max = 100, step = 5,
+    chatLabel = "AH log opacity", keywords = { "transparency", "alpha", "see through", "background", "log" },
+    desc = "How solid the AH log window is, in percent.",
+    get = function() return math.floor((tonumber(db().logAlpha) or 0.97) * 100 + 0.5) end,
+    set = function(v) db().logAlpha = math.max(30, math.min(100, tonumber(v) or 97)) / 100 end,
+    after = logRefresh,
+  })
+  app:Setting({
+    key = "logrows", type = "number", label = "Rows shown", min = 6, max = 30, step = 1,
+    chatLabel = "AH log rows", keywords = { "lines", "height", "size", "log" },
+    desc = "How many purchases or sales the list shows before you scroll.",
+    get = function() return tonumber(db().logRows) or 12 end,
+    set = function(v) db().logRows = math.max(6, math.min(30, math.floor(tonumber(v) or 12))) end,
+    after = logRefresh,
+  })
+  app:Setting({
+    key = "logbuys", type = "bool", label = "Log what you buy at the auction house",
+    chatLabel = "Logging purchases", keywords = { "bought", "purchases", "log", "record" },
+    get = function() return db().logBuys ~= false end,
+    set = function(v) db().logBuys = v end,
+  })
+  app:Setting({
+    key = "logincome", type = "bool", label = "Log money you take from the mail (auctions sold and other gold)",
+    chatLabel = "Logging income", keywords = { "sold", "sales", "income", "mail", "gold", "log", "record" },
+    get = function() return db().logIncome ~= false end,
+    set = function(v) db().logIncome = v end,
+  })
   app:Setting({
     key = "cheer", type = "bool", label = "Celebrate when an auction sells (Hurray! and fireworks at the top of the screen)",
     chatLabel = "Sale celebration", keywords = { "sold", "sale", "hurray", "fireworks", "banner", "celebrate" },
@@ -162,13 +192,29 @@ local function build()
     for _, t in ipairs(TIP_LINES) do app:Widget(stack, t[1]) end
     app:Widget(stack, "tipdetail")
   end)
+  app:Section("ahlog", "AH log", function(stack)
+    UI.Header(stack, "AH log", "What you bought and what you sold, with what a craft cost you. Open it anywhere with /eah bought or /eah income.")
+    UI.ButtonRow(stack, {
+      { label = "Open purchases", width = 150, style = "accent", onClick = function() if ns.purchases then ns.purchases.open() end end,
+        desc = "Everything you bought, and a recipe's cost per craft from what you paid.", keywords = { "bought", "log" } },
+      { label = "Open income", width = 150, onClick = function() if ns.purchases then ns.purchases.toggle("income") end end,
+        desc = "Money you took from the mail: auctions sold and other gold.", keywords = { "income", "sold" } },
+    })
+    UI.Header(stack, "Window")
+    app:Widget(stack, "logopacity")
+    app:Widget(stack, "logrows")
+    UI.Header(stack, "Logging")
+    app:Widget(stack, "logbuys")
+    app:Widget(stack, "logincome")
+    app:Widget(stack, "cheer")
+    UI.Note(stack, "Sales show up when you take their money from the mail. Bids aren't logged. Nothing about other players is saved: no sellers, buyers or senders.")
+  end, { icon = "coins" })
   app:Section("general", "General", function(stack)
     UI.Header(stack, "General")
     app:Widget(stack, "openon")
     app:Widget(stack, "auto")
     app:Widget(stack, "skin")
     app:Widget(stack, "crafting")
-    app:Widget(stack, "cheer")
     UI.Header(stack, "Chat commands")
     UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah income  what you sold (from the mail), with what crafting it again costs\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting")
   end)
