@@ -2835,9 +2835,10 @@ def cheer():
     check(G.EverlookAuctionsCheer is None or not G.EverlookAuctionsCheer.shown, "another message: nothing")
     fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Runed Copper Rod.")
     f = G.EverlookAuctionsCheer
-    check(f is not None and f.shown and f.line.text == "2x Runed Copper Rod sold for about 1800c", f"banner: {f and f.line.text}")
+    check(f is not None and f.shown and f.line.text == "2x Runed Copper Rod" and f.money.text == "for about 1800c",
+          f"card: {f and f.line.text} / {f and f.money.text}")
     fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Copper Bar.")
-    check(f.line.text == "2 auctions sold", f"two sales, one unpriced: {f.line.text}")
+    check(f.line.text == "2 auctions" and f.money.text == "", f"two sales, one unpriced: {f.line.text} / {f.money.text}")
     f.shown = False
     G.MOCK_DB.cheer = False
     fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Copper Bar.")

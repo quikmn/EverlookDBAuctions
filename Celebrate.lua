@@ -1,7 +1,7 @@
 -- EverlookDB Auctions: a little celebration when one of your auctions sells. The game says "A buyer has been found for
--- your auction of X." (anywhere, not only at the auction house); a banner at the top of the screen says Hurray! with
--- fireworks and what sold, and roughly for how much: the price you last posted it at with Quick sell (that many at
--- that price each, before the auction house's cut). Several sales close together share one banner.
+-- your auction of X." (anywhere, not only at the auction house); a card at the top of the screen says Hurray! with
+-- fireworks: the item's icon, what sold, and roughly for how much: the price you last posted it at with Quick sell (that many at
+-- that price each, before the auction house's cut). Several sales close together share one card.
 --   db.cheer = false turns it off (Options, General; /eah cheer off).
 local _, ns = ...
 local C = {}
@@ -42,24 +42,50 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- The banner and the fireworks
 
+local CARD_W, CARD_H, ICON = 340, 76, 48
+
 local function makeFrame()
   if C.frame then return C.frame end
-  local f = CreateFrame("Frame", "EverlookAuctionsCheer", UIParent)
-  f:SetSize(600, 120)
+  -- the card: dark slate, a gold line along the top, the item's icon, then Hurray!, what sold and the money
+  local f = CreateFrame("Frame", "EverlookAuctionsCheer", UIParent, "BackdropTemplate")
+  f:SetSize(CARD_W, CARD_H)
   f:SetPoint("TOP", 0, -90)
   f:SetFrameStrata("FULLSCREEN_DIALOG")
   f:EnableMouse(false)
-  f.big = f:CreateFontString(nil, "OVERLAY", _G.GameFontNormalHuge3 and "GameFontNormalHuge3" or "GameFontNormalHuge")
-  f.big:SetPoint("TOP", 0, -10)
-  f.big:SetText("Hurray!")
+  if f.SetBackdrop then
+    f:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8x8", edgeFile = "Interface\\Buttons\\WHITE8x8", edgeSize = 1 })
+    f:SetBackdropColor(0.07, 0.09, 0.12, 0.94)
+    f:SetBackdropBorderColor(0.22, 0.26, 0.32, 1)
+  end
+  f.accent = f:CreateTexture(nil, "ARTWORK")
+  f.accent:SetPoint("TOPLEFT", 1, -1)
+  f.accent:SetPoint("TOPRIGHT", -1, -1)
+  f.accent:SetHeight(2)
+  f.accent:SetColorTexture(1, 0.82, 0, 1)
+  f.icon = f:CreateTexture(nil, "ARTWORK")
+  f.icon:SetSize(ICON, ICON)
+  f.icon:SetPoint("LEFT", 14, -1)
+  f.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+  f.iconBorder = f:CreateTexture(nil, "BACKGROUND", nil, 1)
+  f.iconBorder:SetPoint("TOPLEFT", f.icon, -1, 1)
+  f.iconBorder:SetPoint("BOTTOMRIGHT", f.icon, 1, -1)
+  f.iconBorder:SetColorTexture(1, 0.82, 0, 0.8)
+  f.big = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+  f.big:SetPoint("TOPLEFT", f.icon, "TOPRIGHT", 12, 1)
+  f.big:SetText("Hurray! Sold")
   f.big:SetTextColor(1, 0.82, 0)
-  f.line = f:CreateFontString(nil, "OVERLAY", _G.GameFontHighlightLarge and "GameFontHighlightLarge" or "GameFontHighlight")
-  f.line:SetPoint("TOP", f.big, "BOTTOM", 0, -8)
-  f.line:SetWidth(580)
-  f.line:SetWordWrap(true)
+  f.line = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+  f.line:SetPoint("TOPLEFT", f.big, "BOTTOMLEFT", 0, -4)
+  f.line:SetPoint("RIGHT", -12, 0)
+  f.line:SetJustifyH("LEFT")
+  f.line:SetWordWrap(false)
+  f.money = f:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  f.money:SetPoint("TOPLEFT", f.line, "BOTTOMLEFT", 0, -4)
+  f.money:SetPoint("RIGHT", -12, 0)
+  f.money:SetJustifyH("LEFT")
   f.sparks = {}
   for i = 1, SPARKS * 3 do
-    local t = f:CreateTexture(nil, "ARTWORK")
+    local t = f:CreateTexture(nil, "OVERLAY")
     t:SetTexture("Interface\\Cooldown\\star4")
     t:SetBlendMode("ADD")
     t:SetSize(18, 18)
@@ -69,23 +95,24 @@ local function makeFrame()
   f:SetScript("OnUpdate", function(self, el)
     self.age = (self.age or 0) + el
     local a = self.age
-    -- sparks: three bursts, a moment apart, each flying out from its own point and fading
+    -- sparks: three bursts around the card, a moment apart, each flying out and fading
     for _, sp in ipairs(self.sparks) do
       local t = a - sp.delay
       if t > 0 and t < 1.4 then
         local d = sp.speed * (1 - (1 - t / 1.4) ^ 2)
         sp:ClearAllPoints()
-        sp:SetPoint("CENTER", self, "TOP", sp.x + math.cos(sp.angle) * d, -50 + sp.y + math.sin(sp.angle) * d - 30 * t * t)
+        sp:SetPoint("CENTER", self, "CENTER", sp.x + math.cos(sp.angle) * d, sp.y + math.sin(sp.angle) * d - 30 * t * t)
         sp:SetAlpha(1 - t / 1.4)
         sp:Show()
       else
         sp:Hide()
       end
     end
+    -- the card slides down a little as it fades in, and fades out at the end
     local alpha = a < 0.25 and a / 0.25 or (a > SHOW_FOR and math.max(0, 1 - (a - SHOW_FOR) / 1) or 1)
-    self.big:SetAlpha(alpha)
-    self.line:SetAlpha(alpha)
-    self.big:SetScale(a < 0.3 and (0.6 + a / 0.3 * 0.4) or 1)
+    self:SetAlpha(alpha)
+    self:ClearAllPoints()
+    self:SetPoint("TOP", 0, -90 + (a < 0.25 and (1 - a / 0.25) * 16 or 0))
     if a > SHOW_FOR + 1 then self:Hide() end
   end)
   f:Hide()
@@ -94,32 +121,48 @@ local function makeFrame()
 end
 
 local function burst(f, from, delay)
-  local cx, cy = ({ -180, 0, 180 })[from], ({ 0, 25, 0 })[from]
+  local cx, cy = ({ -CARD_W / 2, 0, CARD_W / 2 })[from], ({ 10, CARD_H / 2 + 6, 10 })[from]
   local c = COLORS[math.random(#COLORS)]
   for i = 1, SPARKS do
     local sp = f.sparks[(from - 1) * SPARKS + i]
     sp.delay = delay
     sp.angle = (i / SPARKS) * math.pi * 2 + math.random() * 0.3
-    sp.speed = 60 + math.random() * 50
+    sp.speed = 50 + math.random() * 45
     sp.x, sp.y = cx, cy
     sp:SetVertexColor(c[1], c[2], c[3])
   end
+end
+
+local function iconAndColor(name)
+  local okId, id, _, _, _, icon = pcall(C_Item.GetItemInfoInstant, name)
+  if not (okId and id) then return 133784, 1, 1, 1 end
+  local q = C_Item.GetItemQualityByID and select(2, pcall(C_Item.GetItemQualityByID, id))
+  local c = type(q) == "number" and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[q]
+  return icon or (C_Item.GetItemIconByID and select(2, pcall(C_Item.GetItemIconByID, id))) or 134400,
+    c and c.r or 1, c and c.g or 1, c and c.b or 1
 end
 
 function C.show(name, total, count)
   if not enabled() then return end
   local f = makeFrame()
   local now = GetTime()
-  -- another sale while the banner is up: one banner for all of them
+  -- another sale while the card is up: one card for all of them
   if f:IsShown() and C.since and now - C.since < SHOW_FOR then
     C.n = C.n + 1
     C.total = C.total and total and (C.total + total) or nil
-    f.line:SetText(("%d auctions sold%s"):format(C.n, C.total and (" for about " .. ns.money(C.total)) or ""))
+    f.big:SetText("Hurray! Sold")
+    f.line:SetText(("%d auctions"):format(C.n))
+    f.line:SetTextColor(1, 1, 1)
+    f.icon:SetTexture(133784)   -- coins
+    f.money:SetText(C.total and ("for about " .. ns.money(C.total)) or "")
     f.age = 0.3
   else
     C.n, C.total = 1, total
-    local what = (count and count > 1) and (count .. "x " .. name) or name
-    f.line:SetText(total and ("%s sold for about %s"):format(what, ns.money(total)) or (what .. " sold!"))
+    local icon, r, g, b = iconAndColor(name)
+    f.icon:SetTexture(icon)
+    f.line:SetText((count and count > 1) and (count .. "x " .. name) or name)
+    f.line:SetTextColor(r, g, b)
+    f.money:SetText(total and ("for about " .. ns.money(total)) or "")
     f.age = 0
   end
   C.since = now
