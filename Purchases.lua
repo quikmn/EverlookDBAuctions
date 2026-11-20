@@ -421,7 +421,7 @@ local function rows() return math.max(MIN_ROWS, math.min(MAX_ROWS, math.floor(to
 
 -- The window's width (drag its corner): narrow is the essentials (time, item, how many, total), normal adds each and
 -- the third column, wide gives names and sources more room.
-local MIN_W, MAX_W, MINI_W, COMPACT_W, WIDE_W = 340, 1200, 480, 1200, 620, 860
+local MIN_W, MAX_W, MINI_W, COMPACT_W, WIDE_W = 340, 1200, 480, 620, 860
 local function width() return math.max(MIN_W, math.min(MAX_W, math.floor(tonumber(setting("logW", W)) or W))) end
 local function layoutNow()
   local w = width()
@@ -431,9 +431,10 @@ local function layoutNow()
   local L = { w = w, compact = compact, mini = mini, wide = wide, looted = mode == "looted",
     craftW = wide and 170 or CRAFT_W, totalW = mini and 80 or TOTAL_W, top = compact and 84 or 104 }
   -- Columns by what matters most in each view, each only while item names keep NAME_MIN of room: in Looted where it
-  -- came from first; elsewhere how many, then each, then the craft cost. The full date last.
+  -- came from, and nothing else (how many goes with the name, the total says what it is worth); elsewhere how many,
+  -- then each, then the craft cost. The full date last.
   local NAME_MIN = 150
-  local order = mode == "looted" and { "craft", "qty", "each" } or (mode == "bought" and { "qty", "each" } or { "qty", "each", "craft" })
+  local order = mode == "looted" and { "craft" } or (mode == "bought" and { "qty", "each" } or { "qty", "each", "craft" })
   local widths = { qty = QTY_W, each = EACH_W, craft = L.craftW }
   local room = w - 32 - PAD * 2 - 22 - L.totalW - 60
   for _, c in ipairs(order) do
@@ -442,6 +443,9 @@ local function layoutNow()
   end
   L.fullDate = room - (DATE_W - 60) >= NAME_MIN
   L.dateW = L.fullDate and DATE_W or 60
+  if L.fullDate then room = room - (DATE_W - 60) end
+  -- Looted: FROM takes half the spare room, so it sits between the item and the total instead of hugging the total
+  if L.looted and L.craft and room > NAME_MIN then L.craftW = L.craftW + math.floor((room - NAME_MIN) / 2) end
   return L
 end
 B.layoutNow = layoutNow
@@ -1045,7 +1049,7 @@ local function renderList(f)
       if looted then
         -- where it dropped, then what it is worth today (the last scan, else a vendor)
         -- where it came from (a mob, a node, a container); the zone when that isn't known
-        if e.from or e.how then row.craft:SetText(e.from or e.how); row.craft:SetTextColor(rgba(T.text)) else quiet(row.craft, e.zone or "") end
+        if e.from or e.how then row.craft:SetText(e.from or e.how); row.craft:SetTextColor(rgba(T.text)) else quiet(row.craft, e.zone and ("in " .. e.zone) or "") end
         if e.copper then
           quiet(row.each, ""); setMoney(row.total, e.copper, T.accent)
         else
