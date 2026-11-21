@@ -1224,7 +1224,16 @@ local function join(...)
   end
   return table.concat(out, " \194\183 ")
 end
-local function listed(n) return (n and (Tip and Tip.Count(n) or num(n)) or "?") .. " listed" end
+-- Tooltip notes are short on purpose (the owner: "a fuckton shorter"): "2,255 · 4h", not "2,255 listed · 4 h ago".
+local function listed(n) return (n and (Tip and Tip.Count(n) or num(n)) or "?") end
+local function tago(t)
+  local d = time() - (t or 0)
+  if d < 90 then return "now" end
+  if d < 5400 then return math.floor(d / 60 + 0.5) .. "m" end
+  if d < 129600 then return math.floor(d / 3600 + 0.5) .. "h" end
+  return math.floor(d / 86400 + 0.5) .. "d"
+end
+ns.tago = tago
 
 -- What the tooltip's auction line says for one auction house. stack = " x20" while Shift shows a full stack's price
 -- (only on lines with a price). it = the saved price { low, quantity, auctions, time }
@@ -1234,20 +1243,20 @@ local function listed(n) return (n and (Tip and Tip.Count(n) or num(n)) or "?") 
 -- Every line says how old it is: a price is never shown as if it were live.
 function ns.auctionLine(label, stack, it, row, scanned, now, serverNow)
   -- shared prices (SharedPrices.lua) say whose scan they are: "other players' scan · 12 min ago"
-  local function src(p) return type(p) == "table" and p.shared and "other players' scan" or nil end
+  local function src(p) return type(p) == "table" and p.shared and "shared" or nil end
   if row and row.low then
     local at = now - (serverNow - (row.at or serverNow))
-    return label .. stack, join("this version", src(row), listed(row.qty), ago(at)), row.low, now - at < STALE, nil
+    return label .. stack, join("this roll", src(row), listed(row.qty), tago(at)), row.low, now - at < STALE, nil
   end
   if it and it[1] then
-    return label .. stack, join(row == false and "any version" or nil, src(it), listed(it[2]), ago(it[4])), it[1],
+    return label .. stack, join(row == false and "any roll" or nil, src(it), listed(it[2]), tago(it[4])), it[1],
       now - (it[4] or 0) < STALE, nil
   end
   if it and (it[2] or 0) > 0 then
     -- the last full scan found some, but only with a bid and no buyout
-    return label, join(listed(it[2]) .. " with bids only", src(it), ago(it[4])), nil, false, "no buyout"
+    return label, join(listed(it[2]) .. " bids only", src(it), tago(it[4])), nil, false, "no buyout"
   end
-  if scanned then return label, join("full scan " .. ago(scanned)), nil, false, "none listed" end
+  if scanned then return label, join("scan " .. tago(scanned)), nil, false, "none" end
 end
 
 -- How many are in the stack the mouse is over (a bag or bank slot), or nil: from the slot itself, else the count the
@@ -1302,7 +1311,7 @@ local function auctionLines(t, id, tooltip)
     -- our own prices and other players' shared scan, the newer of the two (ns.itemFor)
     local it = ns.itemFor(id, side)
     local d = ns.historyDays(id, side)
-    local label = side == "Neutral" and "Neutral auction house" or "Auction house"
+    local label = side == "Neutral" and "Neutral AH" or "AH"
     if tipOn("auction") and (h or (ns.shared and ns.shared.house(key))) then
       -- false: a version that isn't in the newest scan, so the line says the price is for any version
       local row = vkey and (ns.scanRowFor(vkey, side) or false) or nil
@@ -1319,8 +1328,8 @@ local function auctionLines(t, id, tooltip)
       if #list > 0 then
         -- one price per line, so every price sits in the right-hand column
         local low, med = list[1], list[math.floor((#list + 1) / 2)]
-        t:Detail(HISTORY_DAYS .. "-day low" .. suffix, Tip.Money(each(low)))
-        if #list > 2 then t:Detail(HISTORY_DAYS .. "-day median" .. suffix, Tip.Money(each(med))) end
+        t:Detail(HISTORY_DAYS .. "d low" .. suffix, Tip.Money(each(low)))
+        if #list > 2 then t:Detail(HISTORY_DAYS .. "d median" .. suffix, Tip.Money(each(med))) end
       end
     end
   end
@@ -1331,7 +1340,7 @@ local function disenchantLine(t, id)
   local value, oldest = ns.disenchantValue(id)
   if value then
     -- how old the oldest material price is, so an old estimate doesn't pass for today's
-    t:Line("Disenchant", Tip.Money(value), { note = join("estimate", "prices " .. ago(time() - (oldest or 0))),
+    t:Line("Disenchant", Tip.Money(value), { note = tago(time() - (oldest or 0)),
       stale = (oldest or 0) >= STALE })
   end
 end
@@ -1346,10 +1355,9 @@ local function craftLine(t, id)
     local it = ns.itemFor and ns.itemFor(id)
     local ah = it and it[1]
     local tone = type(ah) == "number" and ah > 0 and (cost < ah and "good" or cost > ah and "bad") or nil
-    t:Line("Craft cost", Tip.Money(cost), { note = join(makes and makes > 1 and "each" or nil, "AH materials",
-      oldest and ago(oldest) or nil), stale = oldest ~= nil and time() - oldest >= STALE, tone = tone or nil })
+    t:Line("Craft", Tip.Money(cost), { note = join(makes and makes > 1 and "each" or nil, oldest and tago(oldest) or nil), stale = oldest ~= nil and time() - oldest >= STALE, tone = tone or nil })
   elseif missing and missing > 0 then
-    t:Line("Craft cost", missing == 1 and "1 material unpriced" or (missing .. " materials unpriced"), { stale = true })
+    t:Line("Craft", missing .. " unpriced", { stale = true })
   end
 end
 
@@ -1411,12 +1419,13 @@ local function verdictLine(t, id, tt)
   if not which then return end
   local stack = tipMultiplier(id, tt)
   -- "Auction beats vendor  after 5% cut   +1s 97c": how much more the better way pays, per item (or stack)
+  -- "Sell on AH  +1s 97c": how much more the better way pays (after the AH cut), per item (or stack)
   if diff <= 0 then
-    t:Line("Auction or vendor", "same", { note = "after " .. cut .. "% cut", stale = stale })
+    t:Line("AH = vendor", "", { stale = stale })
     return
   end
-  t:Line(which == "auction" and "Auction beats vendor" or "Vendor beats auction", Tip.Money(diff * stack, { sign = true }),
-    { note = "after " .. cut .. "% cut", tone = not stale and "good" or nil, stale = stale })
+  t:Line(which == "auction" and "Sell on AH" or "Sell to vendor", Tip.Money(diff * stack, { sign = true }),
+    { tone = not stale and "good" or nil, stale = stale })
 end
 
 -- Whether 30-day lows and medians need Shift held (db.tip.detail = "shift"; shown always by default). The setting is

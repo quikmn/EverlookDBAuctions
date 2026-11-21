@@ -1,6 +1,7 @@
 # EverlookDB Auctions
 
 ## Unreleased
+- Much shorter tooltip lines: "AH 2,255 · 4h", "30d low", "Craft 4h", and "Sell on AH +1s 97c" (or "Sell to vendor") instead of the long "Auction beats vendor after 5% cut".
 - One main window for everything: the minimap button, `/eah`, a key binding (Key Bindings, AddOns) and an "EverlookDB Auctions" launcher on Everlook Bar all open it. The sidebar has Home, Advanced search, AH log, Crafting profit, Gear upgrades and Merchant's Favor, then the settings under a Settings heading, with the search box at the top. It opens on the page you used last, but never on Gear upgrades by itself.
 - Home: a card for each part of the addon: income today and this week (and sales waiting in the mail), today's loot, Merchant's Favor, the newest gear upgrades, crafting profit and the auction house tabs, plus a box that searches prices anywhere. Each card opens its page.
 - The AH log, Advanced search away from the auction house, Crafting profit and Gear upgrades away from the auction house are pages of the main window now, not windows of their own. /eah bought, forsale, income, loot, prices, profit and up open those pages.

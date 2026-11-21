@@ -953,17 +953,17 @@ def core_and_lists():
     now = 100 * 86400
     line = ns.auctionLine
     left, note, price, fresh, word = line("Auction house", "", lua.table(None, 4, 2, now), None, now - 3600, now, now)
-    check(price is None and "bids only" in note and "4 listed" in note and word == "no buyout",
+    check(price is None and "bids only" in note and note.startswith("4 ") and word == "no buyout",
           f"bid-only auctions aren't 'none listed': {note} / {word}")
     left, note, price, fresh, word = line("Auction house", "", None, None, now - 7200, now, now)
-    check(price is None and word == "none listed" and "2 h ago" in note, f"'none listed' says how old the scan is: {note}")
+    check(price is None and word == "none" and "2h" in note, f"'none listed' says how old the scan is: {note}")
     left, note, price, fresh, word = line("Auction house", "", lua.table(500, 3, 1, now - 2 * 86400), None, None, now, now)
-    check(price == 500 and fresh is False and "2 days ago" in note, f"an old price is marked old: {note}")
+    check(price == 500 and fresh is False and "2d" in note, f"an old price is marked old: {note}")
     row = lua.table(low=900, qty=2, at=now - 60)
     left, note, price, fresh, word = line("Auction house", " x20", lua.table(500, 3, 1, now), row, None, now, now)
-    check(price == 900 and fresh and "this version" in note and left == "Auction house x20", f"random-stat version priced: {left} {note}")
+    check(price == 900 and fresh and "this roll" in note and left == "Auction house x20", f"random-stat version priced: {left} {note}")
     left, note, price, fresh, word = line("Auction house", "", lua.table(500, 3, 1, now), False, None, now, now)
-    check(price == 500 and "any version" in note, f"a version missing from the scan says it's any version's: {note}")
+    check(price == 500 and "any roll" in note, f"a version missing from the scan says it's any version's: {note}")
     check("(" not in left + note, "no brackets in the auction line")
     check(line("Auction house", " x20", None, None, None, now, now) is None, "nothing known: no line")
 
@@ -2242,12 +2242,12 @@ def shared_tooltip():
     lines = show(2589)
     got = [lines[i] for i in range(1, len(lines) + 1)]
     want = [" ",
-            "Auction house  3,365 listed · 76 min ago = 95c",
-            "    30-day low = 93c",
-            "    30-day median = 95c",
-            "Disenchant  estimate · prices 10 min ago = 1g 23s",
+            "AH  3,365 · 76m = 95c",
+            "    30d low = 93c",
+            "    30d median = 95c",
+            "Disenchant  10m = 1g 23s",
             "Vendor = 13c",
-            "Auction beats vendor  after 5% cut = +77c"]
+            "Sell on AH = +77c"]
     check(got == want, f"lines and order: {got}")
     G.SHIFT = True
     lines = show(2589)
@@ -2365,8 +2365,8 @@ def shared_prices():
     check(G.EverlookAuctionsDB.shared is None and G.EverlookAuctionsDB.houses["EU-4-Alliance"] is None,
           "nothing shared goes into the saved variables")
     tip = show(2589)
-    check("Auction house  other players' scan · 4,002 listed · 12 min ago = 80c" in tip, f"the tooltip says whose and how old: {tip}")
-    check("30-day low = 88c" in tip and "30-day median = 93c" in tip, f"the 30-day lines use the shared daily lows too: {tip}")
+    check("AH  shared · 4,002 · 12m = 80c" in tip, f"the tooltip says whose and how old: {tip}")
+    check("30d low = 88c" in tip and "30d median = 93c" in tip, f"the 30-day lines use the shared daily lows too: {tip}")
     row = ns.scanRowFor("2589:0")
     check(row is not None and row.low == 90 and row.shared and row.at == G.MOCK_TIME - 720, "a version's row from the shared scan")
     check(ns.scanRowFor("4000:7") is None, "a version the newer (shared) scan doesn't list isn't up")
@@ -2412,7 +2412,7 @@ def shared_prices():
         lua, ns, show = start(broken)
         it = ns.itemFor(2589)
         check(it is not None and it[1] == 95 and not it.shared, f"{broken}: our own price")
-        check("Auction house" in show(2589), f"{broken}: the tooltip still works")
+        check("AH  " in show(2589), f"{broken}: the tooltip still works")
         check(len(lua.globals().ERRORS) == 0, f"{broken}: no errors")
     return failures + price_feed_lines(start)
 

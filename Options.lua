@@ -24,7 +24,7 @@ local TIP_LINES = {
   { "tipdisenchant", "disenchant", "What disenchanting it is worth (an estimate from material prices)" },
   { "tipcraft", "craft", "What crafting one costs, for items you can craft (materials at the latest AH prices)" },
   { "tipvendor", "vendor", "Vendor price, where the game doesn’t show one (quest rewards, loot, links)" },
-  { "tipverdict", "verdict", "Auction beats vendor (or the other way round): how much more the better one pays, after the auction house's cut (5%, 15% at a neutral one)" },
+  { "tipverdict", "verdict", "Sell on AH / Sell to vendor: how much more the better one pays (after the AH cut: 5%, 15% at a neutral one)" },
   { "tipstack", "stack", "Hold Shift for the price of a full stack, Ctrl for the stack under the mouse" },
 }
 
