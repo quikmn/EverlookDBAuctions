@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.17.0 (2026-11-21)
 - Gear upgrades now use our own simulated stat weights for every spec and level bracket, with error margins; estimates are marked.
 - A small self-test at login notes whether this game build still gives the addon what a price scan needs (the auction functions, item info, the realm), and saves the answer with your scans. EverlookDB.com uses it to spot quickly when a game update breaks scanning. It only holds yes/no answers and the game and addon version, nothing about you or your characters.
 
