@@ -131,6 +131,7 @@ def main() -> int:
     failures += start_tab()
     failures += upgrades_tab()
     failures += item_tip()
+    failures += health()
 
     if failures:
         for f in failures:
@@ -4434,6 +4435,46 @@ def item_tip():
     check(gt.suppressAutomaticCompareItem == "game", "setting off: no change to the comparison")
     gt.Hide(gt)
     check(gt.suppressAutomaticCompareItem == "game", "setting off: still the game's after hide")
+    return failures
+
+
+def health():
+    """Health.lua in a fresh Lua: words only, missing scan APIs named, nothing that throws escapes."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("health: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute("""
+      GetBuildInfo = function() return "1.60.1", "71037" end
+      GetServerTime = function() return 1795000000 end
+      GetRealmName = function() return "" end
+      date = os.date
+      C_AuctionHouse = { ReplicateItems = function() end, GetNumReplicateItems = function() end,
+        GetReplicateItemInfo = function() end, GetReplicateItemLink = function() end }
+      local loaded = false
+      C_Item = { GetItemInfo = function() if loaded then return "Linen Cloth" end end, RequestLoadItemDataByID = function() loaded = true end }
+      timers = {}
+      C_Timer = { After = function(_, f) timers[#timers + 1] = f end }
+    """)
+    ns = lua.table()
+    run = lua.eval("function(src, ...) local f = assert(loadstring(src, 'Health.lua')); return f(...) end")
+    run((ROOT / "Health.lua").read_text(encoding="utf-8"), "EverlookDBAuctions", ns)
+    db = lua.table()
+    h = ns.HealthCheck(db, "0.16.2")
+    check(h.build == "1.60.1.71037" and h.addon == "0.16.2" and lua.eval("rawequal")(db.health, h), f"build and version: {h.build} {h.addon}")
+    check(h.realm == "empty", f"blank realm API: {h.realm}")
+    check(h.missing is not None and list(h.missing.values()) == ["C_AuctionHouse.GetReplicateItemTimeLeft"], "missing API named")
+    check(h.item == "slow", f"item not loaded yet: {h.item}")
+    lua.eval("timers[1]")()
+    check(h.item == "ok", "item loads later: ok")
+    # a throwing realm API and no item API: reported, never raised
+    lua.execute("GetRealmName = function() error('boom') end; C_Item = nil; GetItemInfo = nil;"
+                "C_AuctionHouse.GetReplicateItemTimeLeft = function() end")
+    h = ns.HealthCheck(db, "0.16.2")
+    check(h.realm == "empty" and h.item == "none" and h.missing is None, "throwing realm, no item API, nothing missing")
     return failures
 
 

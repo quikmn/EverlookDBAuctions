@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- A small self-test at login notes whether this game build still gives the addon what a price scan needs (the auction functions, item info, the realm), and saves the answer with your scans. EverlookDB.com uses it to spot quickly when a game update breaks scanning. It only holds yes/no answers and the game and addon version, nothing about you or your characters.
+
 ## v0.16.1 (2026-11-21)
 - Price updates: scans are accepted by EverlookDB.com again. Since today's WoW Forever client update the game no longer tells addons the realm's name, so every scan was saved without it and refused as "This scan has a bad realm". The realm is now taken from your character and named from your own earlier scans or the Price Feed, so scans are saved with it again.
 - Scans and prices saved without their realm since the client update are put right at your next login: the scans get your realm (the EverlookDB App then sends them again by itself) and the prices saved under a nameless auction house go back to your realm's. Only when that's certain: the scan names your realm's ID, or this account has only played on this realm and the scan is of your side or neutral. Anything else is left alone, and /eah status says so.

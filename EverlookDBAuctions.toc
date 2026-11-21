@@ -14,6 +14,7 @@ Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\EverlookUI\EverlookUI.lua
 Libs\EverlookUI\EverlookTooltip.lua
 EverlookDBAuctions.lua
+Health.lua
 SharedPrices.lua
 Skin.lua
 ItemTip.lua

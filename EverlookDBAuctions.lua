@@ -1622,6 +1622,8 @@ function events.ADDON_LOADED(name)
     end
   end
   db.fixedLiveUnit2 = true
+  -- what the game gives us on this build, for EverlookDB.com's canary (Health.lua); a failing test never stops loading
+  if ns.HealthCheck then pcall(ns.HealthCheck, db, addonVersion()) end
   repairRealms()
   hookTooltips()
 end
