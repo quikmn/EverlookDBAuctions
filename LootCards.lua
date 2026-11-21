@@ -419,7 +419,7 @@ end
 
 local mailTaken        -- { from, how, t }: the mail you just took an item from
 local atMerchant       -- the merchant's name while its window is open
-local tradingWith      -- the other player's name while a trade window is open
+local tradingWith      -- true while a trade window is open (the other player's name is never kept)
 
 local function subjectIs(subject, global, fallback)
   local pat = pattern(_G[global] or fallback)
@@ -427,14 +427,14 @@ local function subjectIs(subject, global, fallback)
 end
 
 local function noteMail(index)
-  local ok, _, _, sender, subject = pcall(GetInboxHeaderInfo, index)
+  -- the sender's name is never read: the log saves no player names
+  local ok, _, _, _, subject = pcall(GetInboxHeaderInfo, index)
   if not ok then return end
-  sender, subject = okv(sender), okv(subject)
+  subject = okv(subject)
   local from
   if subjectIs(subject, "AUCTION_EXPIRED_MAIL_SUBJECT", "Auction expired: %s") then from = "Expired auction"
   elseif subjectIs(subject, "AUCTION_REMOVED_MAIL_SUBJECT", "Auction cancelled: %s") then from = "Cancelled auction"
   elseif subjectIs(subject, "AUCTION_WON_MAIL_SUBJECT", "Auction won: %s") then from = "Won auction"
-  elseif type(sender) == "string" and sender ~= "" then from = "Mail from " .. sender
   else from = "Mail" end
   mailTaken = { from = from, how = "Mailbox", t = GetTime() }
 end
@@ -450,8 +450,7 @@ where:SetScript("OnEvent", function(_, event)
     atMerchant = ok and okv(n) or "a merchant"
   elseif event == "MERCHANT_CLOSED" then atMerchant = nil
   elseif event == "TRADE_SHOW" then
-    local ok, n = pcall(UnitName, "NPC")
-    tradingWith = ok and okv(n) or "a player"
+    tradingWith = true
   elseif event == "TRADE_CLOSED" then
     -- the trade's items arrive just after the window closes
     local who = tradingWith
@@ -466,7 +465,7 @@ local function notLoot(pushed)
   if mailTaken and GetTime() - mailTaken.t < 10 then return { from = mailTaken.from, how = mailTaken.how, got = "mail" } end
   if mailOpen() then return { from = "Mail", how = "Mailbox", got = "mail" } end
   if atMerchant then return { from = atMerchant, how = "Bought", got = "bought" } end
-  if tradingWith then return { from = tradingWith, how = "Trade", got = "trade" } end
+  if tradingWith then return { from = "Trade with a player", how = "Trade", got = "trade" } end
 end
 L.notLoot = notLoot
 L.noteMail = noteMail
