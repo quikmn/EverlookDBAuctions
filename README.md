@@ -2,9 +2,9 @@
 
 Auction house prices, selling and shopping lists for WoW Forever, from the makers of [EverlookDB.com](https://everlookdb.com).
 
-- **Price updates:** a bar along the bottom of the auction house shows which house you're at, how many items have prices and how old they are. Prices update by themselves when you open the auction house and every 15 minutes while it's open (the server allows one update about every 15 minutes). An update reads every auction in about 30 seconds, with a progress bar, and you can keep buying and selling meanwhile. Update prices on the bar starts one by hand.
+- **Price updates:** a bar along the bottom of the auction house shows which house you're at, how many items have prices and how old they are. Prices update by themselves a few seconds after you open the auction house and every 30 minutes while it's open (the server allows one update about every 15 minutes, so other addons' scans fit in between). An update reads every auction in about 30 seconds, with a progress bar, and you can keep buying and selling meanwhile. Update prices on the bar starts one by hand.
 - **Searches count too:** prices from normal auction house searches are saved, no scan needed.
-- **Prices in tooltips:** lowest buyout per item, how many are up, how old the price is, and the 30-day low and median. Hold Shift for the price of a full stack. A vendor price line can be turned on in the options.
+- **Prices in tooltips:** lowest buyout per item, how many are up, how old the price is, and the 30-day low and median. Hold Shift for the price of a full stack, Ctrl for the stack under the mouse. Also what a vendor pays (where the game leaves it out), what crafting one costs at today's prices, and "More to vendor" or "More to auction": which pays more, after the auction house's cut. Each line can be turned off on the Tooltips page.
 - **Disenchant value:** for gear that can be disenchanted, the tooltip shows what the materials are worth on your auction house: each material's chance and amount (from classic-db) times its lowest price. It's an estimate, and it shows once every material has a price.
 - **Quick sell tab:** EverlookDB's own selling tab, next to Blizzard's Sell tab (which still works as before, with the same undercut and a warning when the deposit is more than the sale brings). Everything in your bags you can sell, with a filter, favourites (right-click) and hidden items (Shift+right-click). Pick one and the price is set just under the cheapest auction someone else has up (1 silver by default, copper works too; your own auctions are matched, never undercut), or your last price for it, or the typical price from your last full scan, with how old that is. The post block reads like Blizzard's own Sell frame: Quantity (or Max), Unit price in gold, silver and copper boxes, Duration, Deposit, Total price, Post. Stackable goods go up as one listing that buyers take any amount of, so there are no stacks to split. Type your own price and an Undercut cheapest link takes you back to the automatic one. A red line warns when the deposit is more than the sale brings. If the auction house doesn't answer, the tab says so instead of claiming nobody is selling. The item's live auctions are listed (click one to price under it), with a 30-day price chart. Each item's last price, quantity and duration are remembered. One click on Post posts once.
 - **Your auctions:** on the Quick sell tab, each of your auctions is checked against the live auctions and marked Undercut, Lowest or Sold, with a Cancel button (one click cancels one auction). The undercut button cancels your next undercut auction, one per click, and its tooltip shows what the cancel costs. When you post the last of an item, the next one in your list is picked for you. If the cheapest auction is a single one far below the usual price, the price line says so.
@@ -13,6 +13,11 @@ Auction house prices, selling and shopping lists for WoW Forever, from the maker
 - **Shopping tab:** named lists of searches. Run a whole list in one click and see each search's results under it, with live prices. Save in Advanced search adds a search to a list. Lists import and export as plain text (`# name`, then one search per line).
 - **Crafting cost:** beside the profession window, for the recipe you pick: each material and its lowest auction price, what the materials cost together, what the result sells for (and what disenchanting it is worth, for gear), and the profit after the auction house's 5% cut. It uses your saved prices, so it works away from the auction house.
 - **Shopping list from a recipe:** the Shopping list button under the crafting cost lists the recipe's materials with how many you have and how many to buy (ticked when you have too few; change the amounts or the number of crafts). Create list saves them as a shopping list named after the recipe, so at the auction house you can search each one with one click.
+- **Prices anywhere:** `/eah prices` opens Advanced search in its own window away from the auction house, over your last full scan. Live prices and buying still need the auction house.
+- **Crafting profit:** `/eah profit` lists every recipe you know whose result sells for more than its materials cost, after the cut, best first. Make shopping list saves what the crafts you plan need.
+- **AH log:** one window, four tabs, that opens anywhere. Bought (`/eah bought`): everything you bought at the auction house; mark the purchases you crafted with and a recipe shows its cost per craft at what you paid. For sale (`/eah forsale`): your auctions as the auction house last showed them. Income (`/eah income`): sales and other gold you took from the mail, with what crafting a sold item again costs. Looted (`/eah loot`): everything you picked up, with where it came from and what it's worth.
+- **Loot cards and Hurray!:** a short card at the top of the screen for each loot, with roughly what it's worth, and a card with fireworks when one of your auctions sells. Both can be turned off.
+- **Everlook Bar:** a Loot plugin for Everlook Bar (or any data-broker bar) shows today's loot.
 - **Options:** type `/eah` for the settings window (it is also in the game's Settings under AddOns). Every setting is a command too: `/eah get` lists them, `/eah duration 24` changes one.
 - Prices are kept per realm and per auction house (Alliance, Horde, and the neutral houses in Booty Bay, Gadgetzan and Everlook).
 
@@ -20,12 +25,15 @@ Sellers, bidders and other players are never saved. Nothing is ever posted, boug
 
 ## For addon authors: EverlookDBAuctionsAPI
 
-A small read-only API, so other addons can use these prices without reading the saved data. It reads what is already saved and never sends anything to the server.
+A small API, read-only apart from adding shopping lists, so other addons can use these prices without reading the saved data. It reads what is already saved and never sends anything to the server.
 
 ```lua
 local api = EverlookDBAuctionsAPI
 if api and api.version >= 1 then
   local low, age, qty, auctions = api.price(itemID)
+end
+if api and api.version >= 2 then
+  local ok, isNew = api.addShoppingList("Mageweave Bag", { { 4338, 8 }, { 2321, 2 } })
 end
 ```
 
@@ -39,6 +47,8 @@ end
 - `api.disenchant(item)` returns, or `nil` when the item can't be disenchanted or a material has no price yet:
   - the estimated auction house value of disenchanting it, in copper
   - the age in seconds of the oldest material price it used
+
+- `api.addShoppingList(name, items)` (version 2) saves a shopping list in the auction house's Shopping tab: `items = { { itemID, count }, ... }`. A list with the same name is replaced, so pushing it again updates it. Returns `true` and whether the list is new, or `false` and why: `"no name"`, `"no items"`, `"loading"` (the game hasn't loaded every item's name yet: call again in a moment) or `"not ready"` (the addon hasn't loaded its saved data yet). It is the one call that writes, and it only adds or replaces a list.
 
 `item` is an item ID or an item link. A link carries its random-stat version ("of the Bear"), and `price` then looks up that version. With an ID, pass the version's suffix ID as `suffix`. Prices are for the player's realm and their own faction's auction house, or for the one that is open now. Pass `side` (`"Alliance"`, `"Horde"` or `"Neutral"`) to pick one. Returned tables are copies, and the API table can't be written to.
 
@@ -56,13 +66,16 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 - `/eah status` shows the version, what's saved and which auction house API the game has; `/eah version`
 - `/eah scan` starts a full scan while the auction house is open
 - `/eah sell` opens the Quick sell tab, `/eah shop` the Shopping tab, `/eah run <list>` runs a shopping list
+- `/eah prices` searches your last full scan anywhere; `/eah profit` the crafting profit list
+- `/eah bought`, `/eah forsale`, `/eah income`, `/eah loot` open the AH log on that tab
+- `/eah lootmove` moves the loot cards, `/eah loottest` shows a few
 - `/eah undercut 1s` sets how far under the cheapest auction to price: `1c`, `50c`, `1g`, `5%`, or `0` to match it
 - `/eah get` lists every setting with its value (`/eah get duration` one); `/eah <setting> <value>` or `/eah set <setting> <value>` changes one (for example `/eah duration 24` or `/eah tipvendor on`), says so in chat and updates the open window. `/eah settings` still lists them too
 - `/eah search <words>` opens the options with the search box filled
 - `/eah debug` lists what is shown where, the addon's auction house searches and any cut-off labels (for bug reports)
 - `/eah feedback` (or the Feedback button in the options) shows a link for reporting bugs and ideas
 - `/eah test` reloads the UI after every full scan, so the scan is saved to disk at once (for testing)
-- `/eah auto off` (or `on`) stops or restarts automatic price updates: one when you open the auction house, then every 15 minutes while it's open
+- `/eah auto off` (or `on`) stops or restarts automatic price updates: one when you open the auction house, then every 30 minutes while it's open
 - `/eah skin off` (or `on`) turns the EverlookDB look for the auction house off or on (then `/reload`)
 
 ## Coming next
