@@ -2242,28 +2242,28 @@ def shared_tooltip():
     lines = show(2589)
     got = [lines[i] for i in range(1, len(lines) + 1)]
     want = [" ",
+            "Most profit: Auction = +77c",
             "AH  3,365 · 76m = 95c",
             "    30d low = 93c",
             "    30d median = 95c",
             "Disenchant  10m = 1g 23s",
-            "Vendor = 13c",
-            "Sell on AH = +77c"]
+            "Vendor = 13c"]
     check(got == want, f"lines and order: {got}")
     G.SHIFT = True
     lines = show(2589)
-    check(lines[2].endswith("= 19s") and "x20" in lines[2], f"Shift: a full stack's price: {lines[2]}")
+    check(lines[3].endswith("= 19s") and "x20" in lines[3], f"Shift: a full stack's price: {lines[3]}")
     G.SHIFT = False
     # Ctrl: the stack under the mouse (a bag button showing 14), over Shift's full stack
     lua.execute("MOCK_OWNER = { Count = { GetText = function() return '14' end } }; IsControlKeyDown = function() return true end")
     lines = show(2589)
-    check("x14" in lines[2] and lines[2].endswith("= 13s 30c"), f"Ctrl: the hovered stack's price: {lines[2]}")
+    check("x14" in lines[3] and lines[3].endswith("= 13s 30c"), f"Ctrl: the hovered stack's price: {lines[3]}")
     lua.execute("MOCK_OWNER = nil")
     lines = show(2589)
-    check("x14" not in lines[2], f"Ctrl with no stack under the mouse: one: {lines[2]}")
+    check("x14" not in lines[3], f"Ctrl with no stack under the mouse: one: {lines[3]}")
     lua.execute("IsControlKeyDown = nil")
     ns.tipDetail("shift")
     lines = show(2589)
-    check(len(lines) == 5 and "30-day" not in "".join(lines[i] for i in range(1, len(lines) + 1)),
+    check(len(lines) == 5 and "30d" not in "".join(lines[i] for i in range(1, len(lines) + 1)),
           "details hidden without Shift when set so")
     check(G.EverlookAuctionsDB.tip.detail == "shift", "the detail setting is saved")
     ns.tipDetail("always")

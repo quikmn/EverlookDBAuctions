@@ -1419,12 +1419,14 @@ local function verdictLine(t, id, tt)
   if not which then return end
   local stack = tipMultiplier(id, tt)
   -- "Auction beats vendor  after 5% cut   +1s 97c": how much more the better way pays, per item (or stack)
-  -- "Sell on AH  +1s 97c": how much more the better way pays (after the AH cut), per item (or stack)
+  -- The top line of our block (the owner's ask: "Most Profit: Vendor / Most Profit: Auction, top most, clearly
+  -- visible"): "Most profit: Auction  +1s 97c", how much more the better way pays after the AH cut, per item (or stack).
   if diff <= 0 then
-    t:Line("AH = vendor", "", { stale = stale })
+    t:Line("Most profit: |cffffffffeither|r", "", { stale = stale })
     return
   end
-  t:Line(which == "auction" and "Sell on AH" or "Sell to vendor", Tip.Money(diff * stack, { sign = true }),
+  local word = which == "auction" and "|cff5ce070Auction|r" or "|cffffd100Vendor|r"
+  t:Line("Most profit: " .. word, Tip.Money(diff * stack, { sign = true }),
     { tone = not stale and "good" or nil, stale = stale })
 end
 
@@ -1452,7 +1454,7 @@ local function hookTooltips()
     add = function(t, ctx) if ctx.id then craftLine(t, ctx.id) end end })
   Tip:Register({ id = "EverlookDBAuctions.vendor", kind = "item", order = Tip.ORDER.vendor,
     add = function(t, ctx) if ctx.id then vendorLine(t, ctx.id, ctx.tooltip) end end })
-  Tip:Register({ id = "EverlookDBAuctions.verdict", kind = "item", order = Tip.ORDER.verdict or (Tip.ORDER.vendor + 1),
+  Tip:Register({ id = "EverlookDBAuctions.verdict", kind = "item", order = 1, -- first: "Most profit" tops our block
     add = function(t, ctx) if ctx.id then verdictLine(t, ctx.id, ctx.tooltip) end end })
 end
 ns.tooltipLines = { auction = auctionLines, disenchant = disenchantLine, vendor = vendorLine, craft = craftLine }
