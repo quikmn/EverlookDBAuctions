@@ -1,4 +1,4 @@
--- EverlookDB Auctions: the item tooltip of our own list rows (Buy, Advanced search, Crafting, Profit, AH log).
+-- EverlookDB Auctions: the item tooltip of our own list rows (Buy, Quick sell, Advanced search, Gear upgrades, Crafting, Profit, AH log).
 -- The hovered item's tooltip opens right next to the mouse, not at the far end of a wide row, and the "Equipped"
 -- comparison shows only while the game's compare key (Shift) is held: GameTooltip.suppressAutomaticCompareItem
 -- (honoured by Blizzard's TooltipUtil.ShouldDoItemComparison) is set while our tooltip is up and put back the moment

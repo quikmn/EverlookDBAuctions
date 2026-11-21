@@ -1270,7 +1270,7 @@ local function buildBagRow(L)
   b:SetScript("OnEnter", function(self)
     local g = self.item
     if not g or not g.slots[1] then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    ns.itemTipOwner(self)   -- next to the mouse; "Equipped" only with Shift (ItemTip.lua)
     -- the item's own tooltip, so a name cut short in the row is shown in full; when it has moved in the bags since,
     -- its link, or at least its name
     local shown = pcall(GameTooltip.SetBagItem, GameTooltip, g.slots[1][1], g.slots[1][2])
@@ -1368,7 +1368,7 @@ local function buildOwnRow(L)
   b:SetScript("OnEnter", function(self)
     local a = self.item
     if not a then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    ns.itemTipOwner(self)   -- next to the mouse; "Equipped" only with Shift (ItemTip.lua)
     if a.link then pcall(GameTooltip.SetHyperlink, GameTooltip, a.link)
     elseif a.itemID then pcall(GameTooltip.SetItemByID, GameTooltip, a.itemID) end
     local state, _, lower, from = ownedState(a)
@@ -1584,7 +1584,7 @@ local function makeFrame()
   hover:SetScript("OnEnter", function(self)
     local g = S.sel
     if not g then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    ns.itemTipOwner(self)   -- next to the mouse; "Equipped" only with Shift (ItemTip.lua)
     if not (g.link and pcall(GameTooltip.SetHyperlink, GameTooltip, g.link)) then pcall(GameTooltip.SetItemByID, GameTooltip, g.id) end
     GameTooltip:Show()
   end)

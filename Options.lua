@@ -119,7 +119,7 @@ local function build()
     key = "compareshift", type = "bool", label = "Compare with what I wear: only while holding Shift",
     chatLabel = "Compare with equipped only with Shift",
     keywords = { "compare", "comparison", "equipped", "wear", "worn", "shift", "tooltip", "gear", "side by side" },
-    desc = "In our lists (Buy, Advanced search, Crafting, Profit, AH log) the hovered item's tooltip shows on its own; hold Shift to see what you wear beside it. Off: the game decides, as in its own windows.",
+    desc = "In our lists (Buy, Quick sell, Advanced search, Gear upgrades, Crafting, Profit, AH log) the hovered item's tooltip shows on its own; hold Shift to see what you wear beside it. Off: the game decides, as in its own windows.",
     get = function() return db().compareShift ~= false end,
     set = function(v) db().compareShift = v end,
   })

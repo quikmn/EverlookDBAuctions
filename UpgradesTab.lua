@@ -68,7 +68,7 @@ end
 
 local function itemTip(owner, e)
   if not e then return end
-  GameTooltip:SetOwner(owner, "ANCHOR_RIGHT")
+  ns.itemTipOwner(owner, function(o) itemTip(o, e) end)   -- next to the mouse; "Equipped" only with Shift (ItemTip.lua)
   local okT = pcall(GameTooltip.SetHyperlink, GameTooltip, U.linkOf(e.id, e.suffix))
   if not okT then GameTooltip:SetText(e.name) end
   GameTooltip:AddLine("Right-click: find it in Buy.  Shift-click: link it in chat.", T.dim[1], T.dim[2], T.dim[3], true)
