@@ -17,7 +17,7 @@ ns.upgradesView = V
 
 local PLACE = T.places.upgrades
 local GOOD = T.good
-local CARD_H, CARD_W = 44, 226
+local CARD_H, CARD_W = 44, 206
 
 local function plain(t) return (tostring(t or ""):gsub("|", "||")) end
 local function money(c) return ns.money and ns.money(c) or tostring(c) end
@@ -84,11 +84,11 @@ function V.slotWhy(slot)
   if slot.nextLevel and slot.usable > 0 and slot.better == 0 then
     return ("Next upgrade needs level %d"):format(slot.nextLevel)
   end
-  if slot.twohand then return "You wear a two-handed weapon" end
+  if slot.twohand then return "You wear a two-hander" end
   if (slot.overMax or 0) > 0 and slot.better == 0 then
     return ("%d over your max price"):format(slot.overMax)
   end
-  if slot.usable == 0 then return "Nothing on the AH you can use" end
+  if slot.usable == 0 then return "Nothing you can use" end
   return ("%d on the AH, none better than yours"):format(slot.usable)
 end
 
@@ -120,11 +120,11 @@ local function makeCard(parent, group)
   b.pct:SetPoint("TOPRIGHT", -8, -6)
   b.pct:SetJustifyH("RIGHT")
   b.price = UI.text(b, "small")
-  b.price:SetPoint("BOTTOMRIGHT", -8, 7)
+  b.price:SetPoint("RIGHT", b.pct, "LEFT", -8, 0)
   b.price:SetJustifyH("RIGHT")
   b.name = UI.text(b, "small")
   b.name:SetPoint("BOTTOMLEFT", b.icon, "BOTTOMRIGHT", 8, 0)
-  b.name:SetPoint("RIGHT", b.price, "LEFT", -6, 0)
+  b.name:SetPoint("RIGHT", b, "RIGHT", -8, 0)
   b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   b:SetScript("OnClick", function(self, button)
     if itemClick(self.best, button) then return end
@@ -164,11 +164,11 @@ local function buildOption(L)
   b.price = UI.text(b, "small")
   b.price:SetPoint("RIGHT", b.best, "LEFT", -6, 0)
   b.price:SetJustifyH("RIGHT")
-  b.price:SetWidth(78)
+  b.price:SetWidth(66)
   b.pct = UI.text(b, "small")
   b.pct:SetPoint("RIGHT", b.price, "LEFT", -4, 0)
   b.pct:SetJustifyH("RIGHT")
-  b.pct:SetWidth(52)
+  b.pct:SetWidth(44)
   b.name = UI.text(b, "small")
   b.name:SetPoint("LEFT", b.icon, "RIGHT", 6, 0)
   b.name:SetPoint("RIGHT", b.pct, "LEFT", -4, 0)
@@ -194,7 +194,7 @@ local function makeSpecButtons(f)
   local x = 0
   for _, s in ipairs(U.specs()) do
     local w = math.max(56, math.min(110, #s.name * 7 + 18))
-    local b = UI.button(f.specBar, s.name, w, 20, "quiet")
+    local b = UI.button(f.specBar, s.name, w, 20, "small")
     b:SetPoint("LEFT", x, 0)
     x = x + w + 4
     b.spec = s
@@ -288,14 +288,14 @@ local function make(parent)
   f.optNote:SetPoint("RIGHT", -10, 0)
   f.optNote:SetWordWrap(true)
   local band = UI.headerBand(R, 18)
-  band:SetPoint("TOPLEFT", 1, -48)
-  band:SetPoint("TOPRIGHT", -1, -48)
+  band:SetPoint("TOPLEFT", 1, -64)
+  band:SetPoint("TOPRIGHT", -1, -64)
   local l1 = UI.label(band, "ITEM")
   l1:SetPoint("LEFT", 30, 0)
   local l2 = UI.label(band, "UPGRADE · PRICE")
   l2:SetPoint("RIGHT", -46, 0)
   f.opts = UI.list(R, 24, buildOption, fillOption)
-  f.opts:SetPoint("TOPLEFT", 1, -66)
+  f.opts:SetPoint("TOPLEFT", 1, -82)
   f.opts:SetPoint("BOTTOMRIGHT", -3, 4)
 
   -- summary and the one gold button
@@ -314,10 +314,14 @@ local function make(parent)
   return f
 end
 
-local function ageText(at)
-  if not at then return "no scan yet" end
-  local serverNow = GetServerTime and GetServerTime() or time()
-  return ns.ago and ns.ago(time() - (serverNow - at)) or ""
+local function ageText(r)
+  local at = r.at
+  if not at then return "" end
+  if r.source == "shared" and ns.shared and ns.shared.localAt then
+    local okA, l = pcall(ns.shared.localAt, r.scan)
+    if okA and l then at = l end
+  end
+  return ns.ago and ns.ago(at) or ""
 end
 
 function render()
@@ -342,13 +346,14 @@ function render()
   else
     local who = r.source == "shared" and "other players (shared prices)" or "you"
     local busy = not r.done and (" · reading %d%%"):format((r.progress or 0) * 100) or ""
-    f.head:SetText(("Last scan %s by %s · %s gear items · %s upgrades%s"):format(ageText(r.at), who,
+    f.head:SetText(("Last scan %s by %s · %s gear items · %s upgrades%s"):format(ageText(r), who,
       ns.num and ns.num(r.gear) or r.gear, ns.num and ns.num(r.upgrades) or r.upgrades, busy))
   end
   for _, g in ipairs(U.ORDER) do fillCard(f.cards[g], r.slots[g]) end
   local sel = V.sel or "head"
   local slot = r.slots[sel]
-  f.optTitle:SetText(U.SLOT_NAME[sel] .. ": " .. (slot and #slot.list or 0) .. " upgrades")
+  local n = slot and #slot.list or 0
+  f.optTitle:SetText(("%s: %d %s"):format(U.SLOT_NAME[sel], n, n == 1 and "upgrade" or "upgrades"))
   local note
   if slot and #slot.list == 0 then
     note = slot.usable == 0 and "Nothing for this slot on the AH that you can use."
@@ -359,8 +364,9 @@ function render()
   elseif slot then
     local best = slot.best
     local vs = best and best.cmp.vs and best.cmp.vs.link
-    note = (U.get("rich") and "Biggest upgrade first" or "Most upgrade per gold first") .. (vs and (", against " .. vs) or "")
-      .. (best and U.worthText(best.cmp) and (". Best: " .. U.worthText(best.cmp)) or "") .. "."
+    note = (U.get("rich") and "Biggest first" or "Most per gold first")
+      .. (best and U.worthText(best.cmp) and (", the best " .. U.worthText(best.cmp)) or "") .. "."
+      .. (vs and ("\nAgainst " .. vs) or (best and best.cmp.note == "empty" and "\nYou wear nothing there." or ""))
   end
   f.optNote:SetText(note or "")
   f.opts.empty:SetText("")
@@ -426,6 +432,7 @@ local function place(parent, inAH)
   f:SetParent(parent)
   f:ClearAllPoints()
   if inAH then
+    f:SetFrameLevel(parent:GetFrameLevel() + 150)
     f:SetPoint("TOPLEFT", parent, "TOPLEFT", 2, -24)
     f:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -2, (ns.BAR_H or 0) + 2)   -- the price bar and tabs stay visible
   else

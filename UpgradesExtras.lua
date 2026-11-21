@@ -416,8 +416,8 @@ function X.questPick(choices)
     end
     if sb then
       local ch = choices[si]
-      lines[#lines + 1] = ("Best quest reward for %s: %s %s vs %s"):format(spec.name, ch.link,
-        sb.r.note == "empty" and "fills an empty slot" or U.pctText(sb.r), sb.r.vs and sb.r.vs.link or "nothing")
+      lines[#lines + 1] = sb.r.note == "empty" and ("Best quest reward for %s: %s fills an empty slot"):format(spec.name, ch.link)
+        or ("Best quest reward for %s: %s %s vs %s"):format(spec.name, ch.link, U.pctText(sb.r), sb.r.vs and sb.r.vs.link or "?")
       if not bestV or sb.v > bestV then bestI, bestV = si, sb.v end
     else
       -- none is an upgrade: the one that sells for the most (vendor or auction house)
