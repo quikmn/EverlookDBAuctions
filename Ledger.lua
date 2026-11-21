@@ -627,4 +627,37 @@ function L.migrateForSale(s, forSale, ch, t)
   return n
 end
 
+-- A character's looted coins from the loot log (EverlookAuctionsCharDB.looted) as "Looted money", once per character.
+-- Only real loot (e.loot, not items or gold from the mail).
+function L.migrateLoot(s, looted, ch, t)
+  if not s or not ch or type(looted) ~= "table" then return 0 end
+  s.migrated = s.migrated or { at = now_(t) }
+  s.migrated.loot = s.migrated.loot or {}
+  if s.migrated.loot[ch] then return 0 end
+  local n = 0
+  for _, e in ipairs(looted) do
+    local c = type(e) == "table" and tonumber(e.copper)
+    if c and c > 0 and e.loot and not e.got then
+      local x = L.addMoney(s, "loot", c, { ch = ch, zone = e.zone, migrated = true }, e.t)
+      if x then x.t = tonumber(e.t) or x.t; n = n + 1 end
+    end
+  end
+  table.sort(s.money, function(a, b) return (a.t or 0) < (b.t or 0) end)
+  s.migrated.loot[ch] = n
+  return n
+end
+
+-- The item ID of a record or entry that only has a name: from another record or entry with the same name.
+function L.itemByName(s, name)
+  if not s or type(name) ~= "string" then return nil end
+  for i = #s.auctions, 1, -1 do
+    local r = s.auctions[i]
+    if r.item and r.name == name then return r.item end
+  end
+  for i = #s.money, 1, -1 do
+    local e = s.money[i]
+    if e.item and e.name == name then return e.item end
+  end
+end
+
 return L

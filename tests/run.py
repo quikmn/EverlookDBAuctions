@@ -5070,6 +5070,13 @@ def ledger():
     check(s2.migrated.income == 3 and s2.migrated.pending == 1, "what was moved is noted")
     W.login()
     check(len(s2.money) == 3 and len(s2.auctions) == 2, "migrated once")
+    # looted coins from the loot log become "Looted money", once per character; mail entries are left out
+    s3 = lua.eval("{ v = 1, seq = 0, auctions = {}, money = {}, mails = {}, alts = {} }")
+    looted = lua.eval("{ { t = 10, copper = 120, loot = true, zone = 'Tanaris' }, { t = 11, copper = 99, got = 'mail' }, { t = 12, id = 2770, q = 1, loot = true } }")
+    check(L.migrateLoot(s3, looted, "c1", 20) == 1 and s3.money[1].cat == "loot" and s3.money[1].c == 120 and s3.money[1].t == 10, "looted coins migrated")
+    check(L.migrateLoot(s3, looted, "c1", 20) == 0 and len(s3.money) == 1, "looted coins migrated once")
+    s3.auctions[1] = lua.eval("{ name = 'Copper Bar', item = 2840 }")
+    check(L.itemByName(s3, "Copper Bar") == 2840 and L.itemByName(s3, "Nope") is None, "item by name")
     # the hub's numbers come from the ledger
     t, w, waiting, est = L.hubNumbers(s2, None, 100)
     check(t == 140 and waiting == 1 and est == 900, f"hub: today {t}, waiting {waiting} ~{est}")

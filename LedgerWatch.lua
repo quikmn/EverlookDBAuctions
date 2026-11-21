@@ -301,7 +301,10 @@ function W.login()
   local d = db()
   L.migrate(d, s)
   local ch = L.ch()
-  if ch then L.migrateForSale(s, charDB().forSale, ch) end
+  if ch then
+    L.migrateForSale(s, charDB().forSale, ch)
+    L.migrateLoot(s, charDB().looted, ch)
+  end
   L.prune(s)
   L.tick(s)
 end

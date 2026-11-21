@@ -1117,6 +1117,11 @@ end
 local function paintLedgerRow(row, e, L)
   local q = math.max(1, tonumber(e.q) or 1)
   local id = e.item
+  if not id and e.name and ns.ledger then
+    -- older records kept only the name: another record with that name knows the item
+    id = ns.ledger.itemByName(ns.ledger.get and ns.ledger.get() or nil, e.name)
+    if not id and C_Item and C_Item.GetItemInfoInstant then id = try(C_Item.GetItemInfoInstant, e.name) end
+  end
   row.check:Hide()
   local t = e.st and (e.t or e.at) or e.t
   if t then
