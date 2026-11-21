@@ -1,5 +1,10 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Tooltips: one tidy look shared by every EverlookDB addon. Prices sit in the right-hand column with their coins lined up (gold under gold, silver under silver), labels are brighter, how many and how old are in a soft blue, and profit is green. A blank line separates prices, gear upgrades and crafting.
+- Tooltips: the 30-day low and median are two lines; "More to auction" now reads "Auction beats vendor · after 5% cut · +1s 97c" (in green); the craft cost is green when crafting is cheaper than buying and red when dearer; the gear upgrade line no longer repeats the price in its note (the auction house line has it).
+- New setting "Solid tooltip background" (on by default, Tooltips page): item and unit tooltips get an opaque background so nothing shows through. Shared by every EverlookDB addon; left alone when TipTac, ElvUI or a similar tooltip skin is loaded.
+
 ## v0.17.0 (2026-11-21)
 - Gear upgrades now use our own simulated stat weights for every spec and level bracket, with error margins; estimates are marked.
 - A small self-test at login notes whether this game build still gives the addon what a price scan needs (the auction functions, item info, the realm), and saves the answer with your scans. EverlookDB.com uses it to spot quickly when a game update breaks scanning. It only holds yes/no answers and the game and addon version, nothing about you or your characters.

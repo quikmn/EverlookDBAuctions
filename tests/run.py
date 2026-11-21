@@ -2242,10 +2242,11 @@ def shared_tooltip():
     got = [lines[i] for i in range(1, len(lines) + 1)]
     want = [" ",
             "Auction house  3,365 listed · 76 min ago = 95c",
-            "    30-day low / median = 93c / 95c",
+            "    30-day low = 93c",
+            "    30-day median = 95c",
             "Disenchant  estimate · prices 10 min ago = 1g 23s",
             "Vendor = 13c",
-            "More to auction  after the 5% cut = +77c"]
+            "Auction beats vendor  after 5% cut = +77c"]
     check(got == want, f"lines and order: {got}")
     G.SHIFT = True
     lines = show(2589)
@@ -2364,7 +2365,7 @@ def shared_prices():
           "nothing shared goes into the saved variables")
     tip = show(2589)
     check("Auction house  other players' scan · 4,002 listed · 12 min ago = 80c" in tip, f"the tooltip says whose and how old: {tip}")
-    check("30-day low / median = 88c / 93c" in tip, f"the 30-day line uses the shared daily lows too: {tip}")
+    check("30-day low = 88c" in tip and "30-day median = 93c" in tip, f"the 30-day lines use the shared daily lows too: {tip}")
     row = ns.scanRowFor("2589:0")
     check(row is not None and row.low == 90 and row.shared and row.at == G.MOCK_TIME - 720, "a version's row from the shared scan")
     check(ns.scanRowFor("4000:7") is None, "a version the newer (shared) scan doesn't list isn't up")
@@ -4068,7 +4069,8 @@ def upgrades():
     check(U.bracket(sc, 60, "raid")[0].a == 1 and U.bracket(sc, 60)[0].a == 2 and U.bracket(sc, 60, "group")[0].a == 2,
           "a bracket per play setting")
     lines = X.tipLines("item:13", 13)
-    check("1000c" in (lines[1].note or "") or True, "price next to the gain")
+    check("Icon" not in (lines[1].note or "") and not re.search(r"\d+[gsc]\b", lines[1].note or ""),
+          f"no money in the upgrade note (the price is the auction house line's): {lines[1].note}")
 
     # an item the game hasn't loaded: one line, whatever the number of specs, and read again when it arrives
     O.slash("spec all")

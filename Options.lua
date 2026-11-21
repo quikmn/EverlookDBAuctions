@@ -20,7 +20,7 @@ local TIP_LINES = {
   { "tipdisenchant", "disenchant", "What disenchanting it is worth (an estimate from material prices)" },
   { "tipcraft", "craft", "What crafting one costs, for items you can craft (materials at the latest AH prices)" },
   { "tipvendor", "vendor", "Vendor price, where the game doesn’t show one (quest rewards, loot, links)" },
-  { "tipverdict", "verdict", "More to vendor or More to auction: which pays more, after the auction house's cut (5%, 15% at a neutral one)" },
+  { "tipverdict", "verdict", "Auction beats vendor (or the other way round): how much more the better one pays, after the auction house's cut (5%, 15% at a neutral one)" },
   { "tipstack", "stack", "Hold Shift for the price of a full stack, Ctrl for the stack under the mouse" },
 }
 
@@ -85,6 +85,11 @@ local function build()
     get = function() return ns.tipDetail() end,
     set = function(v) ns.tipDetail(v) end,
   })
+  -- the shared EverlookTooltip switch: an opaque tooltip background (kept in db.tip)
+  local Tip = LibStub and LibStub("EverlookTooltip-1", true)
+  if Tip and Tip.SolidSetting then
+    Tip:SolidSetting(app, function() local d = db(); d.tip = d.tip or {}; return d.tip end)
+  end
 
   -- general
   app:Setting({
@@ -264,9 +269,10 @@ local function build()
     app:Widget(stack, "duration")
   end)
   app:Section("tooltips", "Tooltips", function(stack)
-    UI.Header(stack, "Tooltips", "Lines added to item tooltips. Every price says how old it is; prices over a day old are grey.")
+    UI.Header(stack, "Tooltips", "Lines added to item tooltips: labels left, prices right with their coins in line. Every price says how old it is; prices over a day old are grey.")
     for _, t in ipairs(TIP_LINES) do app:Widget(stack, t[1]) end
     app:Widget(stack, "tipdetail")
+    if app:GetSetting("tipsolid") then app:Widget(stack, "tipsolid") end
   end)
   app:Section("ahlog", "AH log", function(stack)
     UI.Header(stack, "AH log", "What you bought and what you sold, with what a craft cost you. Open it anywhere with /eah bought, /eah forsale, /eah income or /eah loot, or from its Loot plugin on Everlook Bar.")

@@ -1311,9 +1311,10 @@ local function auctionLines(t, id, tooltip)
       for _, p in pairs(d) do list[#list + 1] = p end
       table.sort(list)
       if #list > 0 then
+        -- one price per line, so every price sits in the right-hand column
         local low, med = list[1], list[math.floor((#list + 1) / 2)]
-        t:Detail(HISTORY_DAYS .. "-day low" .. (#list > 2 and " / median" or "") .. suffix,
-          Tip.Money(each(low)) .. (#list > 2 and (" / " .. Tip.Money(each(med))) or ""))
+        t:Detail(HISTORY_DAYS .. "-day low" .. suffix, Tip.Money(each(low)))
+        if #list > 2 then t:Detail(HISTORY_DAYS .. "-day median" .. suffix, Tip.Money(each(med))) end
       end
     end
   end
@@ -1335,10 +1336,14 @@ local function craftLine(t, id)
   if not db or not tipOn("craft") or not (ns.purchases and ns.purchases.craftLine) then return end
   local cost, missing, oldest, makes = ns.purchases.craftLine(id)
   if cost then
-    t:Line("Craft cost", Tip.Money(cost), { note = join(makes and makes > 1 and "each" or nil, "materials at AH prices",
-      oldest and ago(oldest) or nil), stale = oldest ~= nil and time() - oldest >= STALE })
+    -- green when crafting it is cheaper than buying it, red when dearer
+    local it = ns.itemFor and ns.itemFor(id)
+    local ah = it and it[1]
+    local tone = type(ah) == "number" and ah > 0 and (cost < ah and "good" or cost > ah and "bad") or nil
+    t:Line("Craft cost", Tip.Money(cost), { note = join(makes and makes > 1 and "each" or nil, "AH materials",
+      oldest and ago(oldest) or nil), stale = oldest ~= nil and time() - oldest >= STALE, tone = tone or nil })
   elseif missing and missing > 0 then
-    t:Line("Craft cost", missing == 1 and "1 material has no AH price" or (missing .. " materials have no AH price"), { stale = true })
+    t:Line("Craft cost", missing == 1 and "1 material unpriced" or (missing .. " materials unpriced"), { stale = true })
   end
 end
 
@@ -1399,8 +1404,13 @@ local function verdictLine(t, id, tt)
   local which, diff, stale, cut = ns.sellVerdict(id)
   if not which then return end
   local stack = tipMultiplier(id, tt)
-  t:Line(which == "auction" and "More to auction" or "More to vendor", diff > 0 and ("+" .. Tip.Money(diff * stack)) or "the same",
-    { note = which == "auction" and ("after the " .. cut .. "% cut") or nil, stale = stale })
+  -- "Auction beats vendor  after 5% cut   +1s 97c": how much more the better way pays, per item (or stack)
+  if diff <= 0 then
+    t:Line("Auction or vendor", "same", { note = "after " .. cut .. "% cut", stale = stale })
+    return
+  end
+  t:Line(which == "auction" and "Auction beats vendor" or "Vendor beats auction", Tip.Money(diff * stack, { sign = true }),
+    { note = "after " .. cut .. "% cut", tone = not stale and "good" or nil, stale = stale })
 end
 
 -- Whether 30-day lows and medians need Shift held (db.tip.detail = "shift"; shown always by default). The setting is
@@ -1418,15 +1428,16 @@ end
 local function hookTooltips()
   if not Tip then return end
   ns.tipDetail()
+  if Tip.LoadSolid then Tip:LoadSolid(db and db.tip) end
   Tip:Register({ id = "EverlookDBAuctions.auction", kind = "item", order = Tip.ORDER.auction,
     add = function(t, ctx) if ctx.id then auctionLines(t, ctx.id, ctx.tooltip) end end })
   Tip:Register({ id = "EverlookDBAuctions.disenchant", kind = "item", order = Tip.ORDER.disenchant,
     add = function(t, ctx) if ctx.id then disenchantLine(t, ctx.id) end end })
-  Tip:Register({ id = "EverlookDBAuctions.craft", kind = "item", order = Tip.ORDER.disenchant + 2,
+  Tip:Register({ id = "EverlookDBAuctions.craft", kind = "item", order = Tip.ORDER.craftCost or (Tip.ORDER.disenchant + 2),
     add = function(t, ctx) if ctx.id then craftLine(t, ctx.id) end end })
   Tip:Register({ id = "EverlookDBAuctions.vendor", kind = "item", order = Tip.ORDER.vendor,
     add = function(t, ctx) if ctx.id then vendorLine(t, ctx.id, ctx.tooltip) end end })
-  Tip:Register({ id = "EverlookDBAuctions.verdict", kind = "item", order = Tip.ORDER.vendor + 1,
+  Tip:Register({ id = "EverlookDBAuctions.verdict", kind = "item", order = Tip.ORDER.verdict or (Tip.ORDER.vendor + 1),
     add = function(t, ctx) if ctx.id then verdictLine(t, ctx.id, ctx.tooltip) end end })
 end
 ns.tooltipLines = { auction = auctionLines, disenchant = disenchantLine, vendor = vendorLine, craft = craftLine }

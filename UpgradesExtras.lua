@@ -18,7 +18,6 @@ ns.upExtras = X
 local function say(msg) if ns.say then ns.say(msg) end end
 local function inCombat() return InCombatLockdown and InCombatLockdown() end
 local function money(c) return ns.money and ns.money(c) or tostring(c) end
-local GOOD_HEX = UI and UI.hex(T.good) or "|cff62cf88"
 
 ---------------------------------------------------------------------------------------------------------------------
 -- One item against every ticked spec
@@ -127,7 +126,8 @@ function X.tipLines(link, id)
       if r.vs and r.note ~= "empty" then notes[#notes + 1] = "vs " .. nameOf(r.vs.link) end
       if r.needs then notes[#notes + 1] = "needs level " .. r.needs end
       local it = ns.itemFor and ns.itemFor(id)
-      if it and it[1] then notes[#notes + 1] = money(it[1]) end   -- the price next to the gain
+      -- the price stays in the auction house line's column (never money in a note)
+      if it and it[1] then line.price = it[1] end
       line.note = table.concat(notes, " \194\183 ")
       line.why = U.whyText(r)                                      -- always: why it's better
       line.detail = U.worthText(r)
@@ -178,12 +178,14 @@ local function tooltipLines(t, ctx)
   link = link or ("item:" .. ctx.id)
   local okL, lines = pcall(X.tipLines, link, ctx.id)
   if not okL or not lines then return end
+  -- the verdict right (green for an upgrade); why it's better and its threat indented under it, always; the stat
+  -- worth as finer print; a better one in your bags in red. The price is the auction house line's.
   for _, l in ipairs(lines) do
-    t:Line(l.left, l.good and (GOOD_HEX .. l.right .. "|r") or l.right, { note = l.note ~= "" and l.note or nil, stale = not l.good })
-    if l.why and l.why ~= "" then t:Line("  " .. l.why, "", { stale = true }) end
-    if l.threat then t:Line("  " .. l.threat, "", { stale = true }) end
-    if l.detail then t:Detail(l.detail, "") end
-    if l.bags then t:Detail(l.bags, "") end
+    t:Line(l.left, l.right, { note = l.note ~= "" and l.note or nil, tone = l.good and "good" or nil, stale = not l.good })
+    if l.why and l.why ~= "" then t:Detail(l.why, nil, { always = true }) end
+    if l.threat then t:Detail(l.threat, nil, { always = true }) end
+    if l.detail then t:Detail(l.detail) end
+    if l.bags then t:Detail(l.bags, nil, { always = true, wrap = true, labelColor = Tip.COLOR and Tip.COLOR.bad or nil }) end
   end
 end
 
@@ -614,7 +616,7 @@ if CreateFrame then
   ev:SetScript("OnEvent", function(_, e, arg)
     if e == "ADDON_LOADED" then
       if arg == ADDON and Tip then
-        Tip:Register({ id = "EverlookDBAuctions.upgrade", kind = "item", order = 5, add = tooltipLines })
+        Tip:Register({ id = "EverlookDBAuctions.upgrade", kind = "item", order = Tip.ORDER.gear or 5, add = tooltipLines })
       end
       if arg == ADDON or arg == "Bagnon" then if arg ~= ADDON then X.bagsHooked = nil end; pcall(hookBagAddons) end
     elseif e == "PLAYER_ENTERING_WORLD" then
