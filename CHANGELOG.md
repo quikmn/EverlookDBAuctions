@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.15.0 (2026-11-21)
 - Shared prices: with the EverlookDB App running, you get the newest scan anyone uploaded to EverlookDB.com for your auction houses, one /reload or login away, even out in the world. Wherever it is newer than your own scan it's used for that item, and it says so: "other players' scan · 12 min ago" in tooltips, "other players' scan" in the Prices window (/eah prices), Quick sell's usual price, loot cards, Crafting profit and the AH log. The 30-day low and median use everyone's daily lows. Your own saved scans are never changed: the two are only combined when a price is read. Turn it off on the General page ("Use other players' prices", or /eah shared off). /eah status lists the shared houses.
 - For addon authors: EverlookDBAuctionsAPI version 3: `price()` returns a fifth value, `"own"` or `"shared"` (other players' scan), and `price()` and `history()` include shared prices.
 - Posting on the Sell tab: the addon's own price searches hold off while an item sits on the Sell tab and for a few seconds after you post, so the server doesn't refuse your post (the item used to jump back into your bags and you had to try again). If the auction house still refuses a post, chat now says so and why.
