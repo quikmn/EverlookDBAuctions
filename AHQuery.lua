@@ -77,8 +77,29 @@ local function later(secs)
   C_Timer.After(secs, function() pumpQueued = false; Q.pump() end)
 end
 
+-- Blizzard's Sell tab with an item on it: posting shares the server's message throttle with searches, and a post
+-- sent while one of ours is out can be refused (the item just goes back to the bags). Background searches wait then.
+local function blizzardSelling()
+  local ah = _G.AuctionHouseFrame
+  if not (ah and ah.IsShown and ah:IsShown()) then return false end
+  for _, k in ipairs({ "ItemSellFrame", "CommoditiesSellFrame" }) do
+    local fr = ah[k]
+    if fr and fr.IsVisible and fr:IsVisible() and fr.GetItem then
+      local okCall, loc = pcall(fr.GetItem, fr)
+      if okCall and loc then return true end
+    end
+  end
+  return false
+end
+Q.blizzardSelling = blizzardSelling
+
 local function allowed(job)
-  return not (job.background and (ns.buyOpen or Q.blizzard))
+  return not (job.background and (ns.buyOpen or Q.blizzard or blizzardSelling()))
+end
+
+-- A post is going out: nothing of ours is sent for a few seconds, so the server answers the post first.
+function Q.holdForPost(secs)
+  Q.pausedUntil = math.max(Q.pausedUntil, now() + (secs or 4))
 end
 
 -- front: ahead of background searches (after other front ones, so they keep their order)

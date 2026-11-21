@@ -290,6 +290,32 @@ local function blizzardDepositLine(frame)
   frame.edbDepositLine:SetText(text or "")
 end
 
+-- Watch one post for a few seconds: the auction house answers with "auction created" or an error line. A refusal
+-- is said in chat (the game only flashes it, and Blizzard's frame has already put the item back in your bags).
+local postWatch = CreateFrame("Frame")
+local watchingUntil = 0
+local function stopWatch() watchingUntil = 0; postWatch:UnregisterAllEvents() end
+postWatch:SetScript("OnEvent", function(_, event, a1, a2)
+  if GetTime() > watchingUntil then stopWatch(); return end
+  if event == "AUCTION_HOUSE_AUCTION_CREATED" or event == "AUCTION_HOUSE_AUCTIONS_CREATED" then stopWatch(); return end
+  if event == "UI_ERROR_MESSAGE" or event == "AUCTION_HOUSE_POST_ERROR" then
+    local msg = type(a2) == "string" and a2 or (type(a1) == "string" and a1) or nil
+    msg = okv(msg)
+    stopWatch()
+    local text = "the auction house refused that post" .. (msg and (": " .. msg) or "") ..
+      ". The item is back in your bags; wait a moment and post it again."
+    print("|cffffd100EverlookDB Auctions|r: " .. text)
+    S.lastPostError = { at = time(), msg = msg }
+  end
+end)
+function ns.watchPost()
+  if ns.ahq then ns.ahq.holdForPost(4) end
+  watchingUntil = GetTime() + 5
+  for _, e in ipairs({ "AUCTION_HOUSE_AUCTION_CREATED", "AUCTION_HOUSE_AUCTIONS_CREATED", "UI_ERROR_MESSAGE", "AUCTION_HOUSE_POST_ERROR" }) do
+    pcall(postWatch.RegisterEvent, postWatch, e)
+  end
+end
+
 local function hookSellFrames()
   local ah = _G.AuctionHouseFrame
   if S.hooked or not ah or not ah.ItemSellFrame or not ah.CommoditiesSellFrame then return end
@@ -307,6 +333,14 @@ local function hookSellFrames()
     if type(p) ~= "number" or r.containsOwnerItem then return end
     pcall(function() self.PriceInput:SetAmount(undercutPrice(p)) end)
   end)
+  -- posting: our searches hold off, and a refused post says why instead of the item silently going back to the bags
+  for _, fr in ipairs({ items, goods }) do
+    if fr.PostItem then hooksecurefunc(fr, "PostItem", function() pcall(ns.watchPost) end) end
+    if fr.ConfirmPost then hooksecurefunc(fr, "ConfirmPost", function() pcall(ns.watchPost) end) end
+  end
+  if ah.SetPostItem then
+    hooksecurefunc(ah, "SetPostItem", function() if ns.ahq then ns.ahq.holdForPost(2) end end)
+  end
   hooksecurefunc(items, "UpdatePriceSelection", function(self) pcall(fallback, self, false) end)
   hooksecurefunc(goods, "UpdatePriceSelection", function(self) pcall(fallback, self, true) end)
   -- a red line under Post when the deposit is more than the sale brings
@@ -1116,10 +1150,12 @@ local function post()
   local okCall, needsConfirm
   if g.commodity then
     if not AH.PostCommodity then setStatus("This client can't post commodities.", T.bad); return end
+    if ns.ahq then ns.ahq.holdForPost(4) end
     okCall, needsConfirm = pcall(AH.PostCommodity, loc, dur, qty, unit)
   else
     -- quantity is how many auctions of one; the buyout is per auction, so per item (as Blizzard's own Sell tab does)
     if not AH.PostItem then setStatus("This client can't post items.", T.bad); return end
+    if ns.ahq then ns.ahq.holdForPost(4) end
     okCall, needsConfirm = pcall(AH.PostItem, loc, dur, qty, nil, unit)
   end
   if not okCall then

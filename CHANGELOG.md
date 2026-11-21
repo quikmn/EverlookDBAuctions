@@ -1,6 +1,7 @@
 # EverlookDB Auctions
 
 ## Unreleased
+- Posting on the Sell tab: the addon's own price searches hold off while an item sits on the Sell tab and for a few seconds after you post, so the server doesn't refuse your post (the item used to jump back into your bags and you had to try again). If the auction house still refuses a post, chat now says so and why.
 - Loot log: items from mail and trades are logged as "Mail" and "Trade with a player", never with the other player's name, so the addon still saves no player names.
 - Loot log: items you take from the mail, buy from a merchant or get in a trade are no longer taken for loot. They're logged with where they came from ("Expired auction", "Cancelled auction", "Won auction", "Mail from <name>", the merchant's name, the player you traded with), get no loot card and don't count in today's loot.
 - Prices window (/eah prices): a title bar on top to drag it anywhere, and it opens where you left it. Its bottom edge no longer gets cut off. The first time you open it, it starts with a search (the most listed items, rare and better, recipes, items below vendor price and the like, picked at random) so the list isn't empty.

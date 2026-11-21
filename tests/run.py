@@ -639,6 +639,37 @@ def search_queue():
     Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
     G.advance(1)
 
+    # background searches wait while an item sits on Blizzard's Sell tab, and nothing is sent just after a post
+    reset()
+    answers.clear()
+    lua.execute("""
+      local function shown(on) return { IsShown = function() return on end, IsVisible = function() return on end } end
+      SELL_ITEM = { bagID = 0, slotIndex = 1 }
+      AuctionHouseFrame = shown(true)
+      AuctionHouseFrame.ItemSellFrame = shown(true)
+      AuctionHouseFrame.ItemSellFrame.GetItem = function() return SELL_ITEM end
+    """)
+    Q.browse("WhileSelling", 4, lua.table(owner="live", background=True), cb)
+    G.advance(2)
+    check(sent() == [], f"no background search while an item is on the Sell tab: {sent()}")
+    lua.execute("SELL_ITEM = nil")
+    G.advance(1)
+    check(sent() == [("browse", "WhileSelling")], f"sent once the Sell tab is empty: {sent()}")
+    G.BROWSE.results = results()
+    Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    G.advance(1)
+    reset()
+    Q.holdForPost(4)
+    Q.browse("AfterPost", 5, lua.table(owner="buy", front=True), cb)
+    G.advance(2)
+    check(sent() == [], f"nothing sent right after a post: {sent()}")
+    G.advance(3)
+    check(sent() == [("browse", "AfterPost")], f"sent once the post had its moment: {sent()}")
+    G.BROWSE.results = results()
+    Q.onEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+    G.advance(1)
+    lua.execute("AuctionHouseFrame = nil")
+
     # an answer for another ItemKey is ignored, not read as empty
     reset()
     got = []
