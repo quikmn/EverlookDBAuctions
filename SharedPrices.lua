@@ -1,6 +1,7 @@
--- EverlookDB Auctions: shared prices, the newest scans other players uploaded to EverlookDB.com.
+-- EverlookDB Auctions: the Price Feed, the newest scans other players uploaded to EverlookDB.com.
 --
--- The EverlookDB App writes them into the game as a small data addon, EverlookDBAuctions_Shared, which sets the
+-- The Price Feed is its own small addon, EverlookDBAuctions_Shared ("EverlookDB Auctions: Price Feed"). It ships
+-- empty (written = 0, no houses); the EverlookDB App fills it with the scans of the player's auction houses. It sets the
 -- global EverlookDBAuctionsShared = { version = 1, written = <unix time>, houses = { [server key] = {
 --   region, realm, realmID, side, at (server time of the scan), auctions, firstDay (day number of lows' first value),
 --   rows = { ["id:suffix"] = row text, the same as our own scans' rows },
@@ -142,15 +143,75 @@ function S.source(p)
   return type(p) == "table" and p.shared and "other players' scan" or nil
 end
 
--- For /eah status: one line per shared house.
+-- The Price Feed's lines, where the addon shows its scan status (the bar at the bottom of the auction house, the
+-- General settings page, /eah status and the one-time hint).
+S.OFF_TEXT = "Price Feed: off · the EverlookDB App brings other players' newest scans (everlookdb.com)"
+S.EMPTY_TEXT = "Price Feed: no data yet · the EverlookDB App fills it (everlookdb.com)"
+S.IGNORED_TEXT = "Price Feed: turned off in your settings (/eah, General)"
+
+-- "on" (it holds scans), "empty" (installed, but nothing in it yet: the shipped empty copy, the app isn't running)
+-- or "none" (not installed, or not loaded).
+function S.state()
+  local d = rawget(_G, "EverlookDBAuctionsShared")
+  if type(d) ~= "table" or d.version ~= 1 then return "none" end
+  return next(load()) and "on" or "empty"
+end
+
+-- How old a scan is: "12 min old".
+local function old(t)
+  local d = math.max(0, time() - (t or 0))
+  if d < 5400 then return math.max(1, math.floor(d / 60 + 0.5)) .. " min old" end
+  if d < 129600 then return math.floor(d / 3600 + 0.5) .. " h old" end
+  return math.floor(d / 86400 + 0.5) .. " days old"
+end
+
+-- The house to show when none is given (the settings page): this realm's, your faction's first.
+local function here()
+  local realm = GetRealmName and GetRealmName()
+  if not realm then return nil end
+  local all = load()
+  for _, side in ipairs({ UnitFactionGroup and UnitFactionGroup("player") or "?", "Neutral" }) do
+    if all[realm .. "-" .. side] then return realm .. "-" .. side end
+  end
+  return nil
+end
+
+-- One line: "Price Feed: <house> · other players' scan, 12 min old", or why there is none. `label` names the house
+-- in the line (the bar says only the side, as its own line does).
+function S.feedLine(hk, label)
+  if not S.enabled() then return S.IGNORED_TEXT end
+  local state = S.state()
+  if state == "none" then return S.OFF_TEXT end
+  if state == "empty" then return S.EMPTY_TEXT end
+  hk = hk or here()
+  local h = hk and load()[hk]
+  if not h then
+    if hk then return "Price Feed: on · no one has uploaded a scan of this auction house yet" end
+    return "Price Feed: on · no scan of this realm's auction houses yet"
+  end
+  return ("Price Feed: %s · other players' scan, %s"):format(label or (h.realm .. " " .. h.side), old(S.localAt(h)))
+end
+
+-- Once per account, the first time the auction house opens without the feed's data: one quiet chat line.
+function S.hintOnce()
+  local db = ns.db and ns.db()
+  if type(db) ~= "table" or db.feedHinted or not S.enabled() then return false end
+  local state = S.state()
+  if state == "on" then return false end
+  db.feedHinted = true
+  if ns.say then ns.say(state == "empty" and S.EMPTY_TEXT or S.OFF_TEXT) end
+  return true
+end
+
+-- For /eah status: one line per house in the feed, or why there is none.
 function S.statusLines()
   local out = {}
-  if not S.enabled() then return { "Shared prices: ignored (setting on the General page)" } end
+  if not S.enabled() or S.state() ~= "on" then return { S.feedLine() } end
   for hk, h in pairs(load()) do
     prepare(h)
     local n = 0
     for _ in pairs(h.items) do n = n + 1 end
-    out[#out + 1] = ("Shared prices, %s: %s items, other players' scan %s"):format(hk, ns.num and ns.num(n) or n,
+    out[#out + 1] = ("Price Feed, %s: %s items, other players' scan %s"):format(hk, ns.num and ns.num(n) or n,
       ns.ago and ns.ago(S.localAt(h)) or "")
   end
   table.sort(out)

@@ -2368,7 +2368,7 @@ def shared_prices():
     check(which == "auction" and diff == 76 - 13, f"More to auction uses the newer price: {which} {diff}")
     at, shared = ns.pricesAt()
     check(at == G.MOCK_TIME - 720 and shared is True, "how old the prices are: the shared scan")
-    check(any("Shared prices, Test-Alliance" in l for l in ns.statusLines().values()), "/eah status lists the shared house")
+    check(any("Price Feed, Test-Alliance" in l for l in ns.statusLines().values()), "/eah status lists the feed's house")
     check(len(G.ERRORS) == 0, f"no errors: {list(G.ERRORS.values())}")
 
     # the setting: only our own scans
@@ -2398,6 +2398,67 @@ def shared_prices():
         check(it is not None and it[1] == 95 and not it.shared, f"{broken}: our own price")
         check("Auction house" in show(2589), f"{broken}: the tooltip still works")
         check(len(lua.globals().ERRORS) == 0, f"{broken}: no errors")
+    return failures + price_feed_lines(start)
+
+
+def price_feed_lines(start):
+    """The Price Feed's status line (the auction house's bar, the General page, /eah status, /eah feed) and its
+    one-time hint, with the feed, without it, installed but empty, and turned off in the settings."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("price feed: " + what)
+
+    def said(G):
+        return [p for p in G.PRINTED.values() if "Price Feed" in p]
+
+    OFF = "Price Feed: off · the EverlookDB App brings other players' newest scans (everlookdb.com)"
+    EMPTY = "Price Feed: no data yet · the EverlookDB App fills it (everlookdb.com)"
+
+    # with the feed: the house, whose scan and how old
+    lua, ns, _ = start()
+    G = lua.globals()
+    S = ns.shared
+    check(S.state() == "on", f"state: {S.state()}")
+    line = S.feedLine("Test-Alliance", "Alliance")
+    check(line == "Price Feed: Alliance · other players' scan, 12 min old", f"the bar's line: {line}")
+    line = S.feedLine()
+    check(line == "Price Feed: Test Alliance · other players' scan, 12 min old", f"the settings page's line: {line}")
+    line = S.feedLine("Test-Neutral", "Neutral")
+    check(line.startswith("Price Feed: on · no one has uploaded"), f"a house the feed doesn't have: {line}")
+    check(S.hintOnce() is False and not said(G) and G.EverlookAuctionsDB.feedHinted is None, "no hint with the feed")
+
+    # without it (not installed): the line says where it comes from; one chat line, once per account
+    lua, ns, _ = start("EverlookDBAuctionsShared = nil")
+    G = lua.globals()
+    S = ns.shared
+    check(S.state() == "none", f"state without: {S.state()}")
+    check(S.feedLine("Test-Alliance", "Alliance") == OFF, f"the bar without: {S.feedLine('Test-Alliance', 'Alliance')}")
+    check(S.feedLine() == OFF, "the settings page without")
+    check(list(ns.statusLines().values())[-1] == OFF, f"/eah status without: {list(ns.statusLines().values())}")
+    check(S.hintOnce() is True and G.EverlookAuctionsDB.feedHinted is True, "the hint the first time")
+    check(S.hintOnce() is False, "never again")
+    check(len(said(G)) == 1 and said(G)[0].endswith(OFF), f"one chat line: {said(G)}")
+    # the saved flag is account-wide: another session with it set says nothing
+    lua, ns, _ = start("EverlookDBAuctionsShared = nil; EverlookAuctionsDB.feedHinted = true")
+    check(ns.shared.hintOnce() is False and not said(lua.globals()), "not again after a reload")
+
+    # installed from CurseForge but empty (the app isn't running yet)
+    lua, ns, _ = start("EverlookDBAuctionsShared = { version = 1, written = 0, houses = {} }")
+    G = lua.globals()
+    S = ns.shared
+    check(S.state() == "empty", f"state empty: {S.state()}")
+    check(S.feedLine("Test-Alliance", "Alliance") == EMPTY, f"the bar, empty: {S.feedLine('Test-Alliance', 'Alliance')}")
+    check(S.hintOnce() is True and len(said(G)) == 1 and said(G)[0].endswith(EMPTY), f"the hint, empty: {said(G)}")
+    check(len(G.ERRORS) == 0, f"no errors: {list(G.ERRORS.values())}")
+
+    # turned off in the settings: says so, no hint
+    lua, ns, _ = start("EverlookAuctionsDB.ignoreShared = true")
+    G = lua.globals()
+    line = ns.shared.feedLine("Test-Alliance", "Alliance")
+    check(line == "Price Feed: turned off in your settings (/eah, General)", f"ignored: {line}")
+    check(ns.shared.hintOnce() is False and not said(G), "no hint when the player turned it off")
     return failures
 
 

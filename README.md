@@ -19,20 +19,21 @@ Auction house prices, selling and shopping lists for WoW Forever, from the maker
 - **Loot cards and Hurray!:** a short card at the top of the screen for each loot, with roughly what it's worth, and a card with fireworks when one of your auctions sells. Both can be turned off.
 - **Everlook Bar:** a Loot plugin for Everlook Bar (or any data-broker bar) shows today's loot.
 - **Options:** type `/eah` for the settings window (it is also in the game's Settings under AddOns). Every setting is a command too: `/eah get` lists them, `/eah duration 24` changes one.
-- **Shared prices:** with the [EverlookDB App](https://github.com/quikmn/everlookdb-uploader) running, the newest scan anyone uploaded to EverlookDB.com for your auction houses is in the game at your next `/reload` or login, so prices are fresh even when you haven't been to the auction house for days. See below.
+- **Price Feed:** with the [EverlookDB App](https://github.com/quikmn/everlookdb-uploader) running, the newest scan anyone uploaded to EverlookDB.com for your auction houses is in the game at your next `/reload` or login, so prices are fresh even when you haven't been to the auction house for days. See below.
 - Prices are kept per realm and per auction house (Alliance, Horde, and the neutral houses in Booty Bay, Gadgetzan and Everlook).
 
 Sellers, bidders and other players are never saved. Nothing is ever posted, bought or cancelled without your click.
 
-## Shared prices
+## Price Feed
 
-Players' scans are uploaded to EverlookDB.com by the [EverlookDB App](https://github.com/quikmn/everlookdb-uploader). The app also goes the other way: every 15 minutes, and right after each of your uploads, it fetches the newest scan of each auction house you play on (your realms and factions, and the realm's neutral house) and writes it into the game as a small data addon, `EverlookDBAuctions_Shared`. The game only reads addon files at login and `/reload`, so that is when new shared prices arrive. Without the app (or with its Shared prices switch off) nothing changes.
+Players' scans are uploaded to EverlookDB.com by the [EverlookDB App](https://github.com/quikmn/everlookdb-uploader). The app also goes the other way: every 15 minutes, and right after each of your uploads, it fetches the newest scan of each auction house you play on (your realms and factions, and the realm's neutral house) and writes it into the game as the Price Feed: a small data addon, **EverlookDB Auctions: Price Feed** (folder `EverlookDBAuctions_Shared`), listed under EverlookDB Auctions in the addon list. It is also on CurseForge, empty, for the app to fill (like TradeSkillMaster's AppHelper). The game only reads addon files at login and `/reload`, so that is when new prices from the feed arrive. Without the app (or with its Price Feed switch off) nothing changes.
 
-- For each item and random-stat version, whichever is newer is used: your own scan or the shared one. A shared price always says so ("other players' scan · 12 min ago").
+- The bar at the bottom of the auction house and the General page of `/eah` say how the feed is: "Price Feed: Alliance · other players' scan, 12 min old", "Price Feed: no data yet" (installed, the app isn't filling it yet) or "Price Feed: off" (with where to get it). The first time you open the auction house without it, one chat line says so; never again.
+- For each item and random-stat version, whichever is newer is used: your own scan or the feed's. A price from the feed always says so ("other players' scan · 12 min ago").
 - The 30-day low and median combine your daily lows with everyone's (the lower of the two each day).
-- Your own saved scans and prices are never overwritten; the shared file is kept apart and only combined when a price is read. A missing, old or broken shared file is simply ignored.
-- The shared data has no player names, like everything else here.
-- Turn it off on the General page of `/eah` ("Use other players' prices") or with `/eah shared off`.
+- Your own saved scans and prices are never overwritten; the feed is kept apart and only combined when a price is read. A missing, old or broken feed is simply ignored.
+- The feed has no player names, like everything else here.
+- `/eah feed` says how it is. Turn it off on the General page of `/eah` ("Use the Price Feed") or with `/eah feed off` (`/eah shared off` still works).
 
 ## Gear upgrades
 

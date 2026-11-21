@@ -103,9 +103,9 @@ local function build()
     end,
   })
   app:Setting({
-    key = "shared", type = "bool", label = "Use other players' prices (shared prices from the EverlookDB App)",
-    chatLabel = "Shared prices", keywords = { "shared", "other players", "app", "everlookdb app", "server", "website", "prices", "ignore", "scan" },
-    desc = "The EverlookDB App puts the newest scan anyone uploaded for your auction houses into the game; it's read at login or /reload. Where it is newer than your own scan, prices come from it and say \"other players' scan\". Your own saved scans are never changed. Off: only your own scans.",
+    key = "feed", type = "bool", label = "Use the Price Feed (other players' newest scans, from the EverlookDB App)",
+    chatLabel = "Price Feed", keywords = { "price feed", "feed", "shared", "other players", "app", "everlookdb app", "server", "website", "prices", "ignore", "scan" },
+    desc = "Where it is newer than your own scan, prices come from it and say \"other players' scan\". Your own saved scans are never changed. Off: only your own scans.",
     get = function() return not db().ignoreShared end,
     set = function(v) db().ignoreShared = (not v) or nil end,
   })
@@ -186,6 +186,16 @@ local function build()
   -- the addon's own commands; the shared ones (help, get, set, search, status, version, feedback) come with the app
   app:StatusLines(function() return ns.statusLines and ns.statusLines() or {} end)
   app:Command("scan", "scan", "update prices now (auction house open)", function() if ns.startScan then ns.startScan() end end)
+  -- "/eah feed" says how the Price Feed is; "/eah feed off" (or the old "/eah shared off") switches it
+  app:Command("feed", "feed [on|off]", "the Price Feed: other players' newest scans, from the EverlookDB App", function(rest, a)
+    local def = a:GetSetting("feed")
+    if def and (rest or ""):match("%S") then
+      a:SetFromText(def, rest)
+      return
+    end
+    local lines = ns.shared and ns.shared.statusLines() or { "Price Feed: not available" }
+    for _, l in ipairs(lines) do ns.say(l) end
+  end, { "shared", "pricefeed" })
   app:Command("sell", "sell", "open Quick sell (auction house open)", function() ns.slash("sell") end, { "selling", "quicksell", "quick" })
   app:Command("shop", "shop", "open Shopping (auction house open)", function() ns.slash("shop") end, { "shopping", "lists" })
   app:Command("bought", "bought", "your auction house purchases, and a recipe's cost from what you paid (works anywhere)", function()
@@ -285,11 +295,12 @@ local function build()
     UI.Header(stack, "General")
     app:Widget(stack, "openon")
     app:Widget(stack, "auto")
-    app:Widget(stack, "shared")
+    app:Widget(stack, "feed")
+    UI.Note(stack, function() return ns.shared and ns.shared.feedLine() or "" end)
     app:Widget(stack, "skin")
     app:Widget(stack, "crafting")
     UI.Header(stack, "Chat commands")
-    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah prices  search the last price update, anywhere\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah forsale  your auctions up for sale, with time left\n/eah income  what you sold (from the mail), with what crafting it again costs\n/eah loot  everything you looted\n/eah profit  recipes that sell for more than their materials\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\n/eah up  gear upgrades (/eah up help for its commands)")
+    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah feed  the Price Feed (/eah feed off turns it off)\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah prices  search the last price update, anywhere\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah forsale  your auctions up for sale, with time left\n/eah income  what you sold (from the mail), with what crafting it again costs\n/eah loot  everything you looted\n/eah profit  recipes that sell for more than their materials\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\n/eah up  gear upgrades (/eah up help for its commands)")
   end)
   if ns.upgradesSettings then ns.upgradesSettings(app, UI) end   -- the Gear upgrades page (UpgradesOptions.lua)
 end

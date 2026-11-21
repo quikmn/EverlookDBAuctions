@@ -366,9 +366,9 @@ function render()
     return
   end
   if r.none then
-    f.head:SetText("No scan yet: open the auction house and let it update prices, or run the EverlookDB App for shared prices.")
+    f.head:SetText("No scan yet: open the auction house and let it update prices, or run the EverlookDB App for the Price Feed.")
   else
-    local who = r.source == "shared" and "other players (shared prices)" or "you"
+    local who = r.source == "shared" and "other players (Price Feed)" or "you"
     local busy = not r.done and (" · reading %d%%"):format((r.progress or 0) * 100) or ""
     local _, _, from, _, meta = U.weights(spec)
     local est = (from == "built-in" and meta and meta.src == "estimate") and " · weights: estimates at your level" or ""

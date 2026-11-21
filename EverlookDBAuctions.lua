@@ -249,10 +249,27 @@ local function fitBarText()
   if w > 0 and need > w then fs:SetFontObject(ns.UI.fontObject("small")) end
 end
 
+-- The Price Feed's line under the bar's own (SharedPrices.lua): "Price Feed: Alliance · other players' scan, 12 min
+-- old", or why there is none.
+local function refreshFeedLine()
+  if not panel.feed then return end
+  local okF, line = pcall(function()
+    return ns.shared and ns.shared.feedLine(house, house:match("%-(%a+)$")) or nil
+  end)
+  local fs = panel.feed
+  fs:SetText(okF and line or "")
+  -- one size down when it would be cut off ("Price Feed: off · the EverlookDB App brings..." is about the width)
+  fs:SetFontObject(ns.UI.fontObject("mute"))
+  local w = fs:GetWidth() or 0
+  local need = fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth() or fs:GetStringWidth() or 0
+  if w > 0 and need > w then fs:SetFontObject(ns.UI.fontObject("head")) end
+end
+
 local function refreshPanel()
   if not panel or not house then return end
   local T = ns.T
   local h = getHouse(house)
+  refreshFeedLine()
   if scan then
     local took = time() - scan.started
     local pct = scan.total and scan.total > 0 and math.min(0.99, (scan.done or 0) / scan.total) or 0
@@ -440,11 +457,17 @@ local function makePanel(parent)
   bar:Hide()
   f.bar = bar
 
+  -- two lines: the house's prices, and under it the Price Feed's (quieter, smaller)
   f.text = UI.text(f, "body")
-  f.text:SetPoint("LEFT", mark, "RIGHT", 8, 0)
-  f.text:SetPoint("RIGHT", f.button, "LEFT", -12, 0)
+  f.text:SetPoint("LEFT", mark, "RIGHT", 8, 6)
+  f.text:SetPoint("RIGHT", f.button, "LEFT", -12, 6)
   f.text:SetJustifyH("LEFT")
   f.text:SetWordWrap(false)
+  f.feed = UI.text(f, "mute")
+  f.feed:SetPoint("LEFT", mark, "RIGHT", 8, -7)
+  f.feed:SetPoint("RIGHT", f.button, "LEFT", -12, -7)
+  f.feed:SetJustifyH("LEFT")
+  f.feed:SetWordWrap(false)
   UI.tip(f, "Auction prices", tipText)
 
   -- the countdown on the button and the progress bar, and a fresh update every 30 minutes while the auction house
@@ -1347,6 +1370,8 @@ local function onShow(retried)
   if parent and not panel then panel = makePanel(parent) end
   setStatus(nil)
   refreshPanel()
+  -- once per account, without the Price Feed's data: one quiet chat line saying where it comes from
+  if ns.shared and ns.shared.hintOnce then pcall(ns.shared.hintOnce) end
   -- Automatic full scan when the last one is 30+ minutes old (db.auto, on by default; /eah auto off).
   -- AUTO_DELAY seconds after opening first: a quick visit (buy one thing, close) doesn't spend the server's one scan
   -- per 15 minutes on a list nobody waits for, and the window finishes opening before the list comes in.
@@ -1646,7 +1671,7 @@ end
 -- the open auction house, else your faction's (what tooltips use), for searches away from the auction house
 ns.houseOrFaction = function() return keyFor() end
 
--- Shared prices (SharedPrices.lua): other players' newest scan, from the EverlookDB App. It is never written into
+-- The Price Feed (SharedPrices.lua): other players' newest scan, from the EverlookDB App. It is never written into
 -- db; each lookup below takes whichever is newer, our own or the shared one, per item and per item version.
 
 -- The newest full scan's row for "id:suffix": { low, p10, med, qty, n, at } (at is server time), or nil. A row from
