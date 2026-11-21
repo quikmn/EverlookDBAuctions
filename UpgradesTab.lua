@@ -241,18 +241,15 @@ local function make(parent)
   local f = UI.own(CreateFrame("Frame", "EverlookAuctionsUpgrades", parent))
   f:EnableMouse(true)
   UI.place(f, "upgrades")
-  UI.panel(f, T.bg, T.edge)
+  -- opaque: the Buy panel's search row (Filter, Search) sits under this one and mustn't show through
+  UI.panel(f, { T.bg[1], T.bg[2], T.bg[3], 1 }, T.edge)
   UI.placeEdge(f, PLACE)
   f:Hide()
   F = f
 
-  f.title = UI.text(f, "title")
-  f.title:SetPoint("TOPLEFT", 12, -12)
-  f.title:SetText("Gear upgrades")
-  f.title:SetTextColor(unpack(PLACE))
   f.specBar = CreateFrame("Frame", nil, f)
   f.specBar:SetHeight(20)
-  f.specBar:SetPoint("LEFT", f.title, "RIGHT", 14, 0)
+  f.specBar:SetPoint("TOPLEFT", 12, -10)   -- the title bar says "Gear upgrades"; the spec buttons lead here
   makeSpecButtons(f)
 
   f.head = UI.text(f, "dim")
