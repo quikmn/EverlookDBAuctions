@@ -2,7 +2,7 @@
 ## Title: EverlookDB Auctions
 ## Notes: Auction house prices, a Selling tab, shopping lists, price tooltips and an income ledger. Uploads no player names. /eah
 ## Author: quikmn
-## Version: v0.17.0
+## Version: v0.18.0
 ## SavedVariables: EverlookAuctionsDB
 ## SavedVariablesPerCharacter: EverlookAuctionsCharDB
 ## OptionalDeps: EverlookDBAuctions_Shared, Bagnon, Pawn
