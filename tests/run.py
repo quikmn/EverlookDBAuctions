@@ -2854,6 +2854,46 @@ def realm_repair():
     BYID = OTHER.replace('realm = "", realmID = 0', 'realm = "", realmID = 6946')
     lua, ns, db = login_with(BYID, KNOWN)
     check(db.scans[1].realm == "Test" and db.scans[1].realmFixed is True, "its ID is this realm's: named")
+    # client build 71037 (2026-11-21): GetRealmName() and GetNormalizedRealmName() say "", GetRealmID() the ID, and
+    # UnitFullName's "realm" is part of the character's name: the name comes from our own older scans, never from that
+    B71037 = ('function GetRealmName() return "" end; function GetNormalizedRealmName() return "" end;'
+              'function GetRealmID() return 6946 end; function UnitFullName() return "Isa", "Insidejob" end;')
+    lua, ns, fire = scan_lua(B71037 + 'EverlookAuctionsDB.scans = { { region = "EU", realm = "Test", realmID = 6946,'
+                             ' side = "Alliance", at = 8630000, auctions = 5, packed = "" } }')
+    db, sc = scan_now(lua, fire)
+    check(sc.realm == "Test" and sc.realmID == 6946 and sc.realmNormalized == "Test" and sc.needsRealm is None,
+          f"build 71037: named from an older scan ({sc.realm}, {sc.realmNormalized})")
+    check(db.houses["Test-Alliance"].scanned is not None and db.houses["?-Alliance"] is None, "build 71037: the realm's own house")
+    # ... or from the Price Feed's houses
+    lua, ns, fire = scan_lua(B71037 + 'EverlookDBAuctionsShared = { version = 1, houses = { ["EU-6946-Alliance"] = {'
+                             ' realm = "Test", realmID = 6946, side = "Alliance", at = 1, rows = {} } } }')
+    db, sc = scan_now(lua, fire)
+    check(sc.realm == "Test" and sc.needsRealm is None, f"build 71037: named from the Price Feed ({sc.realm})")
+
+    # the user's own file after 0.16.0 on build 71037: good older scans, then one with the ID only (and a wrong
+    # normalized name), prices under "-Alliance" and "?-Alliance": all put right at login, the game saying no name
+    MINE = """{ version = 2, houses = {
+        ["Test-Alliance"] = { items = { [5] = { 100, 1, 1, 8630000 } }, days = {}, scanned = 8630000 },
+        ["-Alliance"] = { items = { [6] = { 50, 1, 1, 8638000 } }, days = {}, scanned = 8638000 },
+        ["?-Alliance"] = { items = { [5] = { 90, 1, 1, 8639000 } }, days = {}, scanned = 8639000 } },
+      scans = { { region = "EU", realm = "Test", realmID = 6946, side = "Alliance", at = 8630000, auctions = 5, packed = "" },
+        { region = "EU", realmID = 6946, realmNormalized = "Insidejob", needsRealm = true, side = "Alliance", at = 8639000,
+          auctions = 10, rows = {} } } }"""
+    lua, ns, db = login_with(MINE, B71037)
+    sc = db.scans[2]
+    h = db.houses["Test-Alliance"]
+    check(sc.realm == "Test" and sc.realmNormalized == "Test" and sc.needsRealm is None and sc.realmFixed is True,
+          f"ID-only scan named at login: {sc.realm} {sc.realmNormalized}")
+    check(db.houses["-Alliance"] is None and db.houses["?-Alliance"] is None and h["items"][5][1] == 90
+          and h["items"][6] is not None and h.scanned == 8639000, "both nameless houses merged into the realm's")
+
+    # trimming: a scan saved without its name is the same house as the named ones (one newest kept unpacked)
+    lua, ns, fire = scan_lua(KNOWN)
+    scans = lua.eval('''{ { realm = "Test", realmID = 6946, side = "Alliance", at = 8630000, rows = { ["1:0"] = "1,1,1,1,1,0,0,0,0,0,1," } },
+      { realmID = 6946, side = "Alliance", at = 8639000, rows = { ["1:0"] = "1,1,1,1,1,0,0,0,0,0,1," } } }''')
+    ns.trimScans(scans, 8640000)
+    check(scans[1].rows is None and scans[2].rows is not None, "the older scan of the same realm ID is packed")
+
     BYID2 = OLD.replace('realmID = 0', 'realmID = 77')
     lua, ns, db = login_with(BYID2, KNOWN)
     check(db.scans[1].realmFixed is None and db.scans[1].realmID == 77, "another realm's ID: left for the site")

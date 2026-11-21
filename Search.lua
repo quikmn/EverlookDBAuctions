@@ -894,11 +894,14 @@ end
 -- The newest full scan of a house ("Realm-Side"): our own, or other players' shared one (SharedPrices.lua, the same
 -- row form, shared = true) when that is newer. nil when there is neither.
 local function newestScan(db, house)
-  local side, realm = house:match("%-(%a+)$"), ns.realmName and ns.realmName() or GetRealmName()
+  local side = house:match("%-(%a+)$")
+  local realm, realmID
+  if ns.realmInfo then realm, realmID = ns.realmInfo() else realm = GetRealmName() end
   local scanned
   for k = #db.scans, 1, -1 do
     local sc = db.scans[k]
-    if sc.realm == realm and sc.side == side then scanned = sc; break end
+    -- by name, or by realm ID (a scan saved while the game didn't say the realm's name)
+    if sc.side == side and ((realm and sc.realm == realm) or (realmID and sc.realmID == realmID)) then scanned = sc; break end
   end
   local shared = ns.shared and ns.shared.scan(house)
   if shared and (not scanned or shared.at > (scanned.at or 0)) then return shared end

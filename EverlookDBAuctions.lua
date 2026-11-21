@@ -79,19 +79,39 @@ local function ok(v)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
--- The realm. GetRealmName() and GetRealmID() can come back empty ("" and 0) while the client doesn't know its realm
--- (seen on a fresh install: a scan saved with no realm name and realm ID 0, which EverlookDB.com can't place). So
--- the realm is read from every source there is, kept for the session once known, and remembered per account
--- (db.realms[id] = { name, norm }) so a later session where the game says nothing can still name it:
---   name  GetRealmName(), else the remembered name for this realm ID or normalized name
---   id    GetRealmID(), else the realm in the character's GUID ("Player-6946-..."), else the remembered ID
---   norm  GetNormalizedRealmName(), else UnitFullName("player")'s realm
+-- The realm. Since the WoW Forever client update of 2026-11-21 (1.60.1, build 71037) GetRealmName() and
+-- GetNormalizedRealmName() return "" (every scan of that build: no realm name; EverlookDB Crafting saves realm "" for
+-- every character too), and GetRealmID() can return 0 (report K46304), while the character's GUID
+-- ("Player-6946-07376D91") still carries the realm ID. EverlookDB.com refused such scans ("This scan has a bad realm").
+-- So the realm is read from every source there is and kept for the session once known:
+--   id    GetRealmID(), else the realm in the character's GUID
+--   name  GetRealmName(), else for that ID: the name remembered per account (db.realms[id] = { name, norm }), a saved
+--         scan of ours that has both, or the Price Feed (the EverlookDB App's copy of the site's houses)
+--   norm  GetNormalizedRealmName(), else the name without spaces
+-- (UnitFullName("player")'s realm is not used: on this build it is part of the character's name, not the realm.)
 local realmNow = {}   -- { name, id, norm } as far as known this session
 local realmUnfixed = 0  -- saved scans that name no realm at all (/eah status); counted at login and per scan
 
 local function textOnly(v) v = ok(v); return type(v) == "string" and v ~= "" and v or nil end
 local function idOnly(v) v = ok(v); return type(v) == "number" and v > 0 and v or nil end
 local function squash(s) return s and (s:gsub("[%s%-']", ""):lower()) or nil end
+
+-- A realm name for this realm ID from what is saved: db.realms, our own scans, the Price Feed.
+local function knownName(id)
+  local known = db and type(db.realms) == "table" and db.realms or nil
+  if known and type(known[id]) == "table" and textOnly(known[id].name) then return known[id].name end
+  for i = #(db and db.scans or {}), 1, -1 do
+    local sc = db.scans[i]
+    if type(sc) == "table" and sc.realmID == id and textOnly(sc.realm) and sc.realm ~= "?" then return sc.realm end
+  end
+  local feed = rawget(_G, "EverlookDBAuctionsShared")
+  if type(feed) == "table" and type(feed.houses) == "table" then
+    for _, h in pairs(feed.houses) do
+      if type(h) == "table" and h.realmID == id and textOnly(h.realm) then return h.realm end
+    end
+  end
+  return nil
+end
 
 local function readRealm()
   if realmNow.name and realmNow.id then return realmNow.name, realmNow.id, realmNow.norm end
@@ -102,25 +122,19 @@ local function readRealm()
     id = guid and idOnly(tonumber(guid:match("^Player%-(%d+)%-")))
   end
   local norm = textOnly(GetNormalizedRealmName and GetNormalizedRealmName())
-  if not norm and UnitFullName then norm = textOnly(select(2, UnitFullName("player"))) end
   -- known earlier this session
   name, id, norm = name or realmNow.name, id or realmNow.id, norm or realmNow.norm
-  -- remembered from an earlier session
-  local known = db and type(db.realms) == "table" and db.realms or {}
-  if id and not name and type(known[id]) == "table" then name = known[id].name end
-  if not id then
-    for kid, r in pairs(known) do
-      if type(r) == "table" and ((name and r.name == name) or (not name and norm and squash(r.norm or r.name) == squash(norm))) then
-        id, name = kid, name or r.name
-        break
-      end
+  if id and not name then name = knownName(id) end
+  if not id and name and db and type(db.realms) == "table" then
+    for kid, r in pairs(db.realms) do
+      if type(r) == "table" and r.name == name then id = kid; break end
     end
   end
   if not norm and name then norm = (name:gsub("[%s%-]", "")) end
   realmNow.name, realmNow.id, realmNow.norm = name, id, norm
   if db and name and id then
-    db.realms = known
-    known[id] = { name = name, norm = norm }
+    db.realms = type(db.realms) == "table" and db.realms or {}
+    db.realms[id] = { name = name, norm = norm }
   end
   return name, id, norm
 end
@@ -675,7 +689,12 @@ local function compactScan(sc)
 end
 ns.compactScan = compactScan
 
-local function houseOf(sc) return tostring(sc.realm) .. "-" .. tostring(sc.side) end
+-- A scan's house for trimming: realm ID and side (a scan saved without its realm name is still the same house; on
+-- 2026-11-21 one such scan kept two unpacked "newest" scans of one house and pushed five older ones out for room).
+local function houseOf(sc)
+  local id = type(sc.realmID) == "number" and sc.realmID > 0 and sc.realmID
+  return (id and ("#" .. id) or tostring(sc.realm)) .. "-" .. tostring(sc.side)
+end
 
 -- The newest scan of each house: { [scan] = true }.
 local function newestPerHouse(scans)
@@ -1460,8 +1479,8 @@ local function maxStackOf(id)
   return nil
 end
 
--- Scans and houses saved while the game didn't say the realm (v0.16.0 and older saved realm "" and realm ID 0, and the
--- house "-Alliance"; this version saves "?" and marks the scan needsRealm). At each login, once the realm is known,
+-- Scans and houses saved while the game didn't say the realm (v0.16.0 and older on client build 71037 saved realm ""
+-- and realm ID 0 or the real ID, and the house "-Alliance"; this version saves "?" and marks the scan needsRealm). At each login, once the realm is known,
 -- they get this realm, but only when that is certain:
 --   - the scan names its realm in part (its ID, name or normalized name) and that part is this realm's, or
 --   - nothing in it names a realm, it is of this character's side (or Neutral), and the account's saved data names
@@ -1530,12 +1549,12 @@ local function repairRealms()
     local same
     if not noRealmID(sc.realmID) then same = sc.realmID == id
     elseif not noRealm(sc.realm) then same = name ~= nil and sc.realm == name
-    elseif textOnly(sc.realmNormalized) then same = norm ~= nil and squash(sc.realmNormalized) == squash(norm)
+    elseif textOnly(sc.realmNormalized) and norm then same = squash(sc.realmNormalized) == squash(norm)
     else same = not others and mySide(sc.side) end
     if same and ((noRealm(sc.realm) and name) or noRealmID(sc.realmID)) then
       if noRealm(sc.realm) then sc.realm = name end
       if noRealmID(sc.realmID) then sc.realmID = id end
-      sc.realmNormalized = textOnly(sc.realmNormalized) or norm
+      sc.realmNormalized = norm or textOnly(sc.realmNormalized)
       sc.region = textOnly(sc.region) or region
       sc.realmFixed = true
     end
@@ -1824,6 +1843,7 @@ ns.house = function() return house end
 ns.money, ns.num, ns.ago, ns.say, ns.variantOf, ns.ahFrame, ns.ok = money, num, ago, say, variantOf, ahFrame, ok
 ns.plain = plain
 ns.realmName = realmName   -- the realm's name, or nil while nothing says it
+ns.realmInfo = readRealm    -- name, ID, normalized name (each nil while unknown)
 
 -- Which saved auction house to read: the one given ("Alliance", "Horde" or "Neutral" on this realm), else the one
 -- that is open, else the player's own faction's.
