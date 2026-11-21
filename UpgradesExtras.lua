@@ -112,6 +112,7 @@ function X.tipLines(link, id)
   local out = {}
   for _, spec in ipairs(specs) do
     local r, why = X.forSpec(link, id, spec, worn)
+    local before = #out
     if why == "armor" then
       out[#out + 1] = { left = spec.name, right = "Not your armor type" }
     elseif why == "class" then
@@ -138,6 +139,8 @@ function X.tipLines(link, id)
     elseif r then
       out[#out + 1] = { left = spec.name, right = "Not an upgrade", rank = 1 }
     end
+    -- a tank: the verdict is survival; threat is said beside it
+    if r and #out > before and spec.role == "tank" then out[#out].threat = U.threatText(r) end
   end
   if all and #out > 1 then out = X.trimAll(out) end
   return out
@@ -147,7 +150,7 @@ end
 function X.trimAll(out)
   local same = true
   for _, l in ipairs(out) do
-    if l.good or l.why or l.right ~= out[1].right or (l.note or "") ~= (out[1].note or "") then same = false; break end
+    if l.good or l.why or l.threat or l.right ~= out[1].right or (l.note or "") ~= (out[1].note or "") then same = false; break end
   end
   if same then return { { left = "All specs", right = out[1].right, note = out[1].note } } end
   if #out <= 2 then return out end
@@ -178,6 +181,7 @@ local function tooltipLines(t, ctx)
   for _, l in ipairs(lines) do
     t:Line(l.left, l.good and (GOOD_HEX .. l.right .. "|r") or l.right, { note = l.note ~= "" and l.note or nil, stale = not l.good })
     if l.why and l.why ~= "" then t:Line("  " .. l.why, "", { stale = true }) end
+    if l.threat then t:Line("  " .. l.threat, "", { stale = true }) end
     if l.detail then t:Detail(l.detail, "") end
     if l.bags then t:Detail(l.bags, "") end
   end

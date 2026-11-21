@@ -4,6 +4,7 @@ bars, and below vendor price (Vendor.lua and its search words in Search.lua) ove
 
 Usage: python -P tests/run.py
 """
+import re
 import sys
 from pathlib import Path
 
@@ -128,6 +129,7 @@ def main() -> int:
     failures += profit()
     failures += shared_prices()
     failures += upgrades()
+    failures += upgrades_ours()
     failures += start_tab()
     failures += upgrades_tab()
     failures += item_tip()
@@ -4061,9 +4063,10 @@ def upgrades():
     check(r.est and U.whyText(r).endswith("(estimate)") and "estimate" in U.weights(fury)[3], "estimated weights say so")
     G.MOCK_LEVEL = 60
     U.changed()
-    # scenarios: the asked-for one, else raid
+    # play settings: the asked-for one, else solo (the default), else raid
     sc = lua.eval("""{ key = "x", brackets = { { upTo = 60, scenario = "raid", w = { a = 1 } }, { upTo = 60, scenario = "solo", w = { a = 2 } } } }""")
-    check(U.bracket(sc, 60, "solo")[0].a == 2 and U.bracket(sc, 60)[0].a == 1, "a bracket per scenario")
+    check(U.bracket(sc, 60, "raid")[0].a == 1 and U.bracket(sc, 60)[0].a == 2 and U.bracket(sc, 60, "group")[0].a == 2,
+          "a bracket per play setting")
     lines = X.tipLines("item:13", 13)
     check("1000c" in (lines[1].note or "") or True, "price next to the gain")
 
@@ -4110,15 +4113,183 @@ def upgrades():
     d = ns2.UP_DATA
     classes = sorted(d.classes.keys())
     check(classes == ["DRUID", "HUNTER", "MAGE", "PALADIN", "PRIEST", "ROGUE", "SHAMAN", "WARLOCK", "WARRIOR"], f"every class: {classes}")
+    unpack_w = lua2.eval(r"""function(text)
+      local w = {}
+      for k, v in tostring(text):gmatch("([%w_]+)=([^/,]+)") do w[k] = tonumber(v) end
+      return w
+    end""")
     for c in classes:
         for i in range(1, len(d.classes[c].specs) + 1):
             sp = d.classes[c].specs[i]
             last = sp.brackets[len(sp.brackets)]
             check(last.upTo == 60 and len(sp.brackets) >= 10 and sp.brackets[1].upTo < 20, f"{c} {sp.key}: level brackets up to 60")
-            bad = [k for b in sp.brackets.values() for k, v in b.w.items() if v < 0]
+            bad = [k for b in sp.brackets.values() for k, v in unpack_w(b.w).items() if v < 0]
             check(not bad, f"{c} {sp.key}: no negative weights {bad}")
     builds = [d.classes[c].specs[i].key for c in classes for i in range(1, len(d.classes[c].specs) + 1) if d.classes[c].specs[i].build]
     check({"hunter_bm_melee", "paladin_prot_sp", "priest_disc_leveling"} <= set(builds), f"levelling builds: {builds}")
+    return failures
+
+
+def upgrades_ours():
+    """Gear upgrades with our own simulated weights (the real UpgradesData.lua): known values come through from the
+    ForeverSims export (Fury dual wield at 40, solo levelling), with their standard errors; the error margin of the
+    verdict is twice the standard error from those; estimates (healers, early dual wield, below level 10) say so;
+    mana-dependent stats are labelled and never negative; tanks are judged on survival, with threat beside it; the
+    play setting picks the levelling or the dungeon weights."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("upgrades (our sims): " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute(UPGRADES_SETUP)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    ns = lua.table()
+    run(UPGRADES_NS, "ns", ns)
+    run(source_of("UpgradesData.lua"), "UpgradesData.lua", "EverlookDBAuctions", ns)
+    for name in ("Upgrades.lua", "UpgradesExtras.lua", "UpgradesOptions.lua"):
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    G = lua.globals()
+    U, X, O = ns.up, ns.upExtras, ns.upOptions
+    G.ns_up = U
+    T = lua.table_from
+    U.set("talents", False)   # the sims' own talents; no adjustment on top
+    gear = lua.eval("""function(id, loc, cls, sub, stats, name)
+      MOCK_GEAR[id] = { loc, cls, sub, stats, name or ("Item " .. id), 2, 1 }
+    end""")
+    worn = lua.eval("""function(t)
+      local out = {}
+      for slot, id in pairs(t) do
+        local link = "item:" .. id
+        out[slot] = { link = link, id = id, key = id .. ":0", equipLoc = MOCK_GEAR[id][1], stats = ns_up.stats(link, id) }
+      end
+      ns_up.testWorn = out
+      ns_up.wornChanged()
+    end""")
+
+    def as_char(cls, level, *specs):
+        G.MOCK_CLASS, G.MOCK_LEVEL = cls, level
+        G.EverlookAuctionsCharDB = lua.eval("{ up = { specs = {}, asked = true, profile = {} } }")
+        for k in specs:
+            G.EverlookAuctionsCharDB.up.specs[k] = True
+        U.forgetStats()
+        U.changed()
+
+    # 1. a known value: Fury (warrior_fury_dw), level 40, levelling, base: Strength EP 2.002 +- 0.003 in the export
+    want_str, want_se = 2.002, 0.003
+    export = Path(r"D:\Dev\ForeverSims\export\EverlookStatWeights.lua")
+    if export.exists():
+        text = export.read_text(encoding="utf-8")
+        i = text.index('["warrior_fury_dw"]')
+        i = text.index('["levelling"]', i)
+        i = text.index('["base"]', i)
+        i = text.index("[40] = ", i)
+        m = re.search(r"Strength = \{ ([\d.]+), ([\d.]+) \}", text[i:i + 2000])
+        want_str, want_se = float(m.group(1)), float(m.group(2))
+    as_char("WARRIOR", 40, "fury")
+    fury = U.spec("fury")
+    w, _, src, label, meta = U.weights(fury)
+    check(src == "built-in" and meta.src == "simulated" and meta.scenario == "solo",
+          f"Fury 40: our simulated solo bracket ({src}, {meta.src}, {meta.scenario})")
+    check(abs(w.str - want_str) <= max(want_se, 0.005), f"Fury 40 Strength EP {w.str} within the export's {want_str} +- {want_se}")
+    check(meta.se and abs(meta.se.str - want_se) <= 0.0005, f"Fury 40: Strength's standard error kept ({meta.se and meta.se.str} vs {want_se})")
+    check((w.spi or 0) > 1 and (w.ohdps or 0) > 0, "Fury 40 levelling: Spirit (rest) and the off-hand count")
+    check("solo levelling" in label, f"the label names the play setting: {label}")
+    U.set("scenario", "group")
+    wg, _, _, _, mg = U.weights(fury)
+    check(mg.scenario == "group" and abs(wg.str - 2.2) < 0.05 and (wg.spi or 0) == 0, f"group: the dungeon weights ({mg.scenario}, str {wg.str})")
+    O.slash("solo")
+    check(U.get("scenario") == "solo", "/eah up solo")
+    w, _, _, _, meta = U.weights(fury)
+
+    # 2. the standard errors decide "about the same": 30 Agility + 1 Stamina against 31 Strength
+    gear(301, "INVTYPE_CHEST", 4, 3, T({"ITEM_MOD_STRENGTH_SHORT": 31}), "Worn Chest")
+    gear(302, "INVTYPE_CHEST", 4, 3, T({"ITEM_MOD_AGILITY_SHORT": 30, "ITEM_MOD_STAMINA_SHORT": 1}), "Agile Chest")
+    gear(303, "INVTYPE_CHEST", 4, 3, T({"ITEM_MOD_STRENGTH_SHORT": 40}), "Strong Chest")
+    worn(T({5: 301}))
+    r = U.compare(U.stats("item:302", 302), 302, "INVTYPE_CHEST", fury)
+    expect = 2 * ((30 * meta.se.agi) ** 2 + (1 * meta.se.sta) ** 2 + (31 * meta.se.str) ** 2) ** 0.5
+    check(abs(r.err - expect) < 1e-6, f"the margin is twice the standard error from our se ({r.err} vs {expect})")
+    check(r.delta > 0 and r.delta <= r.err and r.same and not U.isUpgrade(r, 0), f"inside the margin: about the same ({r.delta} <= {r.err})")
+    r = U.compare(U.stats("item:303", 303), 303, "INVTYPE_CHEST", fury)
+    check(r.delta > r.err and U.isUpgrade(r, 0) and not r.est, "beyond it: an upgrade, not an estimate")
+
+    # 3. estimates say so: early dual wield, below level 10, healers
+    as_char("WARRIOR", 15, "fury")
+    _, _, _, label, meta = U.weights(fury)
+    check(meta.src == "estimate" and "dual wield" in (meta.why or "") and "(estimate)" in label, f"Fury 15: an estimate, with why: {meta.why}")
+    as_char("WARRIOR", 5, "fury")
+    _, _, _, _, meta = U.weights(fury)
+    check(meta.src == "estimate" and "below level 10" in (meta.why or ""), f"level 5: the level-10 weights, as an estimate: {meta.why}")
+    as_char("PALADIN", 40, "holy")
+    holy = U.spec("holy")
+    _, _, _, label, meta = U.weights(holy)
+    check(meta.src == "estimate" and "analytical mana model" in (meta.why or ""), f"Holy paladin: an estimate: {meta.why}")
+    gear(311, "INVTYPE_HEAD", 4, 4, T({"ITEM_MOD_INTELLECT_SHORT": 3}), "Old Helm")
+    gear(312, "INVTYPE_HEAD", 4, 4, T({"ITEM_MOD_INTELLECT_SHORT": 12, "ITEM_MOD_SPIRIT_SHORT": 8}), "Helm of Light")
+    worn(T({1: 311}))
+    lines = X.tipLines("item:312", 312)
+    check(lines and lines[1].left == "Upgrade for Holy" and (lines[1].why or "").endswith("(estimate)"),
+          f"healer tooltip says estimate: {lines and lines[1].why}")
+    check("An estimate: analytical mana model" in O.weightsText(holy), "the weights text says why it's an estimate")
+
+    # 4. mana-dependent stats: labelled, never negative
+    d = ns.UP_DATA
+    neg = []
+    for c in d.classes.keys():
+        specs = d.classes[c].specs
+        for i in range(1, len(specs) + 1):
+            for j in range(1, len(specs[i].brackets) + 1):
+                b = U.ready(specs[i].brackets[j])
+                for k in (b.mana or {}).keys():
+                    if (b.w[k] or 0) < 0:
+                        neg.append((c, specs[i].key, b.upTo, k))
+    check(not neg, f"no negative mana-dependent weight: {neg}")
+    as_char("PRIEST", 60, "shadow")
+    shadow = U.spec("shadow")
+    w, _, _, _, meta = U.weights(shadow)
+    check(meta.mana and meta.mana.int and meta.mana.haste and (w.haste is None or w.haste >= 0) and (w.int or 0) > 0,
+          f"Shadow 60 solo: Intellect and haste depend on mana; haste is never negative ({w.haste})")
+    gear(321, "INVTYPE_HEAD", 4, 1, T({"ITEM_MOD_SPELL_POWER_SHORT": 5}), "Hood")
+    gear(322, "INVTYPE_HEAD", 4, 1, T({"ITEM_MOD_SPELL_POWER_SHORT": 5, "ITEM_MOD_INTELLECT_SHORT": 20}), "Hood of Wits")
+    worn(T({1: 321}))
+    r = U.compare(U.stats("item:322", 322), 322, "INVTYPE_HEAD", shadow)
+    check("Intellect (mana-dependent)" in (U.whyText(r) or ""), f"the tooltip labels a mana-dependent stat: {U.whyText(r)}")
+    check("Depends on your mana: " in O.weightsText(shadow), "the weights text lists them")
+
+    # 5. tanks: survival decides, threat beside it
+    as_char("WARRIOR", 60, "protection")
+    prot = U.spec("protection")
+    w, _, _, _, meta = U.weights(prot)
+    check(meta.metric == "tmi" and w.sta == 1 and (w["def"] or 0) > 0 and meta.tps and (meta.tps.str or 0) > 0,
+          f"Protection 60: survival weights (TMI per Stamina), threat weights beside ({meta.metric})")
+    gear(331, "INVTYPE_HEAD", 4, 4, T({"ITEM_MOD_STAMINA_SHORT": 12}), "Guard Helm")
+    gear(332, "INVTYPE_HEAD", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 25}), "Helm of Fury")
+    gear(333, "INVTYPE_HEAD", 4, 4, T({"ITEM_MOD_STAMINA_SHORT": 25, "ITEM_MOD_DEFENSE_SKILL_RATING_SHORT": 8}), "Bulwark Helm")
+    worn(T({1: 331}))
+    r = U.compare(U.stats("item:332", 332), 332, "INVTYPE_HEAD", prot)
+    check(not U.isUpgrade(r, 0) and r.threat and r.threat.delta > 0, "a Strength helm: more threat, but not a survival upgrade")
+    lines = X.tipLines("item:332", 332)
+    check(lines and lines[1].right == "Not an upgrade" and (lines[1].threat or "").startswith("threat +"),
+          f"tank tooltip: the verdict is survival, threat beside it: {lines and lines[1].right} / {lines and lines[1].threat}")
+    lines = X.tipLines("item:333", 333)
+    check(lines and lines[1].good and lines[1].threat, f"a Stamina and Defense helm is the tank's upgrade: {lines and lines[1].right}")
+    check("Tanks: the weights are for survival" in O.weightsText(prot), "the weights text says tanks are weighed for survival")
+    as_char("WARRIOR", 30, "protection")
+    _, _, _, _, meta = U.weights(prot)
+    check(meta.src == "estimate" and "survival" in (meta.why or "") and meta.tps, f"tank below 60: estimated survival, our dungeon threat: {meta.why}")
+
+    # 6. Holy Shock Retribution: our level-60 sim of it, per play setting
+    as_char("PALADIN", 60, "retribution")
+    U.set("talents", True)
+    U.testTalents = T({"name:Holy Shock": 1})
+    U.changed()
+    w, why, _, _, meta = U.weights(U.spec("retribution"))
+    check((w.sp or 0) == 1 and why.int == "Holy Shock" and meta.mana and meta.mana.int, f"Holy Shock: its own weights (spell damage 1): {w.sp}")
+    U.testTalents = None
+    U.set("talents", False)
     return failures
 
 
@@ -4249,8 +4420,7 @@ def upgrades_tab():
     lua.execute("PRIEST_BRACKETS = {}")
     for i in range(1, len(disc_w.brackets) + 1):
         b = disc_w.brackets[i]
-        w = ", ".join(f"{k} = {v}" for k, v in b.w.items())
-        lua.execute(f'table.insert(PRIEST_BRACKETS, {{ upTo = {b.upTo}, src = "{b.src}", w = {{ {w} }} }})')
+        lua.execute(f'table.insert(PRIEST_BRACKETS, {{ upTo = {b.upTo}, src = "{b.src or "simulated"}", w = "{b.w}" }})')
     lua.execute('UPDATA.classes.PRIEST.specs[1] = { key = "discipline", name = "Discipline", role = "healer", brackets = PRIEST_BRACKETS }')
     lua.execute("MOCK_CLASS, MOCK_LEVEL = 'PRIEST', 34")
     U, V = ns.up, ns.upgradesView

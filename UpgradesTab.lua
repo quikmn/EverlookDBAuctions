@@ -492,7 +492,8 @@ function V.headText(r, spec)
   local _, _, from, _, meta = U.weights(spec)
   if from == "built-in" and meta and meta.src == "estimate" then
     parts[#parts + 1] = ("using estimated weights for %s at level %d"):format(spec.name, U.level())
-    tip[#tip + 1] = "There are no simulated stat weights for " .. spec.name .. " at your level: these are estimates, so close calls can go either way."
+    tip[#tip + 1] = "The stat weights for " .. spec.name .. " at your level are estimates" .. (meta.why and (" (" .. meta.why .. ")") or "")
+      .. ", so close calls can go either way."
   end
   if (r.pending or 0) > 0 then
     parts[#parts + 1] = ("%s items still loading"):format(ns.num and ns.num(r.pending) or r.pending)

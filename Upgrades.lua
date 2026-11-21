@@ -265,10 +265,35 @@ end
 --   spec.alt = { { tab, tier, col, w = {...}, name } }: a talent wowsims picks other weights for (Holy Shock)
 --   class.talents = { { tab, tier, col, stat, pct, name } (+pct% of a stat per rank),
 --                     { tab, tier, col, from, to, pct, name } (pct% of `from` counts as `to`, per rank) }
+-- Packed weights (UpgradesData.lua): "agi=1.61/.076,ap=1/.001,sta=.27" = { agi = 1.61, ap = 1, sta = .27 } and their
+-- standard errors { agi = .076, ap = .001 }. Unpacked the first time a bracket is used (only your class's).
+function U.unpack(text)
+  local w, se = {}, nil
+  for k, v, e in tostring(text):gmatch("([%w_]+)=([^/,]+)/?([^,]*)") do
+    w[k] = tonumber(v)
+    if e ~= "" then se = se or {}; se[k] = tonumber(e) end
+  end
+  return w, se
+end
+
+function U.ready(b)
+  if b and type(b.w) == "string" then
+    local w, se = U.unpack(b.w)
+    b.w, b.se = w, b.se or se
+  end
+  if b and type(b.tps) == "string" then
+    local w, se = U.unpack(b.tps)
+    b.tps, b.tpsSe = w, b.tpsSe or se
+  end
+  return b
+end
+
 -- The built-in weights of a spec at a level: its level bracket (spec.brackets = { { upTo, w, src } }, the first
 -- whose upTo is the level or more), else spec.w. Returns the weights and the bracket.
--- A level can have one bracket per scenario ("raid", "solo", "dungeon"): the one asked for (or the setting), else
--- "raid", else one without a scenario, else the first.
+-- A level can have one bracket per play setting ("solo": levelling, "group": dungeons and groups; at 60 the sims'
+-- solo and 5-man buff sets): the one asked for (or the setting), else "solo", else "raid", else one without a
+-- scenario, else the first.
+U.SCENARIOS = { solo = "Solo levelling", group = "Groups and dungeons" }
 function U.bracket(spec, level, scenario)
   level = level or U.level()
   scenario = scenario or U.get("scenario")
@@ -280,34 +305,55 @@ function U.bracket(spec, level, scenario)
   upTo = upTo or (list[#list] and list[#list].upTo)
   if not upTo then return spec.w or {}, nil end
   local pick
-  for _, want in ipairs({ scenario or false, "raid", false }) do
+  for _, want in ipairs({ scenario or false, "solo", "raid", false }) do
     for _, b in ipairs(list) do
       if b.upTo == upTo and (b.scenario or false) == want then pick = pick or b end
     end
   end
   if not pick then for _, b in ipairs(list) do if b.upTo == upTo then pick = b; break end end end
+  U.ready(pick)
   return pick.w, pick
 end
 
+-- What one bracket says about itself, for the verdict and the labels: { src = "simulated" | "estimate", se, est,
+-- scenario, why (the reason it is an estimate), mana = { stat = true } (stats whose value depends on mana: a
+-- level-60 fight cut before running out of mana), metric ("tmi" = a tank's survival, "tps" = threat), tps, tpsSe
+-- (a tank's threat weights, shown beside its survival verdict) }. Below the bracket's first simulated level (lo:
+-- the sims start at 10) it is an estimate.
+function U.bracketMeta(br, level)
+  if not br then return {} end
+  local d = ns.UP_DATA
+  local why = type(br.why) == "number" and d and d.why and d.why[br.why] or br.why
+  local m = { src = br.src == "estimate" and "estimate" or "simulated", se = br.se, est = br.est, scenario = br.scenario,
+    why = why, mana = br.mana, metric = br.metric, tps = br.tps, tpsSe = br.tpsSe }
+  if br.lo and (level or U.level()) < br.lo then
+    m.src = "estimate"
+    m.why = (d and d.belowLo) or ("no simulation below level " .. br.lo)
+  end
+  return m
+end
+
 -- How far off one weight may be: its standard error from the sim, else a share of the weight (3% for a sim without
--- errors, 15% for an estimate). Your own profiles and Pawn scales count as exact (your numbers).
+-- errors, 15% for an estimate without them). Your own profiles and Pawn scales count as exact (your numbers).
 U.REL_ERR = { simulated = 0.03, estimate = 0.15 }
 function U.weightErr(meta, k, w)
   if not meta or not meta.src then return 0 end
   local se = meta.se and meta.se[k]
-  if se and not (meta.est and meta.est[k]) then return se end
+  if se and se > 0 and not (meta.est and meta.est[k]) then return se end
   local rel = (meta.src == "estimate" or (meta.est and meta.est[k])) and U.REL_ERR.estimate or U.REL_ERR.simulated
   return math.abs(w or 0) * rel
 end
 
 function U.adjusted(spec, classData, rankOf, level)
   local base, br = U.bracket(spec, level)
-  local w, why = {}, {}
+  local w, why, used = {}, {}, nil
   for k, v in pairs(base) do w[k] = v end
   if not rankOf then return w, why end
-  -- wowsims' talent-picked weights are level-60 sims: only for the level-60 bracket
+  -- the talent-picked weights are level-60 sims: only for the level-60 bracket, the one of its play setting
   for _, a in ipairs((not br or br.upTo >= 60) and spec.alt or {}) do
-    if (rankOf(a.tab, a.tier, a.col, a.name) or 0) > 0 then
+    if (not a.scenario or not br or a.scenario == (br.scenario or "solo")) and (rankOf(a.tab, a.tier, a.col, a.name) or 0) > 0 then
+      U.ready(a)
+      used = a
       w = {}
       for k, v in pairs(a.w) do w[k] = v end
       for k in pairs(U.NAME) do
@@ -330,7 +376,7 @@ function U.adjusted(spec, classData, rankOf, level)
       end
     end
   end
-  return w, why
+  return w, why, used
 end
 
 -- "40-44" for a bracket of a spec.
@@ -356,7 +402,7 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- Saved settings: account-wide (db.up) and per character (EverlookAuctionsCharDB.up)
 
-U.DEFAULTS = { tip = true, bags = true, chat = true, quest = true, junk = false, procs = true, armor = true,
+U.DEFAULTS = { scenario = "solo", tip = true, bags = true, chat = true, quest = true, junk = false, procs = true, armor = true,
   talents = true, pawn = false, rich = false, min = 0, max = nil }
 
 function U.db()
@@ -487,12 +533,17 @@ function U.weights(spec)
           return t[tab .. ":" .. tier .. ":" .. col]
         end
       end
-      w, why = U.adjusted(spec, U.classData(), ranks, U.level())
+      local alt
+      w, why, alt = U.adjusted(spec, U.classData(), ranks, U.level())
       local _, br = U.bracket(spec)
       from, label = "built-in", br and ("Built-in, level " .. U.bracketText(spec, br)) or "Built-in"
       if br then
-        meta = { src = br.src == "estimate" and "estimate" or "simulated", se = br.se, est = br.est, scenario = br.scenario }
+        meta = U.bracketMeta(br)
+        if alt then meta.se, meta.mana = alt.se, alt.mana end
+        if br.scenario and U.SCENARIOS[br.scenario] then label = label .. ", " .. U.SCENARIOS[br.scenario]:lower() end
         if meta.src == "estimate" then label = label .. " (estimate)" end
+        -- a mana-dependent stat never counts against an item
+        for k in pairs(meta.mana or {}) do if (w[k] or 0) < 0 then w[k] = nil end end
       end
     end
   end
@@ -851,11 +902,14 @@ end
 -- an empty slot), delta (score points), score, vs (worn item), note ("empty" / "twohand"), ref (stat key), worth
 -- (delta in that stat), err (the error margin of delta: twice its standard error from the weights' errors), same
 -- (better, but within the margin: "about the same"), est (rests on estimated weights), why ({ {stat, amount} }: the
--- stat changes that matter most) }.
-function U.compare(st, id, equipLoc, spec, worn)
+-- stat changes that matter most), mana (stats whose value depends on mana), threat (a tank's threat: the same
+-- comparison with its threat weights; the verdict itself is survival) }. `with` = { w, meta } compares with other
+-- weights (a tank's threat).
+function U.compare(st, id, equipLoc, spec, worn, with)
   local group = U.GROUP_OF[equipLoc or ""]
   if not group then return nil end
   local w, _, _, _, meta = U.weights(spec)
+  if with then w, meta = with.w, with.meta end
   local s = U.score(st, w, group, id, spec.role)
   local ws, vs, note, parts = U.against(group, equipLoc, w, spec.role, worn)
   local ref = U.refStat(w, spec.role)
@@ -886,9 +940,24 @@ function U.compare(st, id, equipLoc, spec, worn)
   r.why = why
   r.err = 2 * math.sqrt(var)
   r.same = r.delta > 0 and r.delta <= r.err
+  r.mana = meta and meta.mana
   local total = U.wornTotal(w, spec.role, worn)
   r.pct = total > 0 and r.delta / total * 100 or nil
+  -- a tank: survival decides; threat is said beside it
+  if not with and spec.role == "tank" and meta and meta.tps then
+    r.threat = U.compare(st, id, equipLoc, spec, worn, { w = meta.tps, meta = { src = meta.src, se = meta.tpsSe } })
+  end
   return r
+end
+
+-- A tank's threat beside its survival verdict: "threat +1.2% of your gear", "threat about the same", "less threat
+-- (-0.8%)". nil when there are no threat weights.
+function U.threatText(r)
+  local t = r and r.threat
+  if not t or not t.delta or t.note == "twohand" then return nil end
+  if t.same or (t.delta <= 0 and t.delta >= -(t.err or 0)) then return "threat about the same" end
+  if t.delta > 0 then return "threat " .. (t.pct and (U.pctText(t) .. " of your gear") or "higher") end
+  return "less threat" .. (t.pct and (" (" .. ("%+.1f%%"):format(t.pct) .. ")") or "")
 end
 
 -- Whether a compare result counts as an upgrade with at least minPct (% of your gear).
@@ -1163,7 +1232,7 @@ function U.whyText(r, max)
   for i = 1, math.min(max or 3, #r.why) do
     local k, v = r.why[i][1], r.why[i][2]
     local amount = (math.abs(v) >= 10 or v == math.floor(v)) and ("%+d"):format(math.floor(v + (v > 0 and 0.5 or -0.5))) or ("%+.1f"):format(v)
-    parts[#parts + 1] = amount .. " " .. (U.NAME[k] or k)
+    parts[#parts + 1] = amount .. " " .. (U.NAME[k] or k) .. ((r.mana and r.mana[k]) and " (mana-dependent)" or "")
   end
   local text = table.concat(parts, ", ")
   local slot = U.slotText(r)

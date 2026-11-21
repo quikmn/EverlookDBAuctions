@@ -1,20 +1,119 @@
 {
-  "notes": "Levelling builds beside the talent-tree specs: a build is picked like a spec (first-time question, settings, /eah up spec <key>, the Upgrades tab). Until our own sims cover a build (tools/upgrades/sims/<file>.json with \"spec\": <build key>), its weights come from the wowsims source and model spec named here. role: melee, ranged, caster, healer or tank.",
+  "notes": "Levelling builds beside the talent-tree specs: a build is picked like a spec (first-time question, settings, /eah up spec <key>, the Upgrades tab). \"ours\" names the build in our own sims (ForeverSims results: lvl = its levelling/dungeon build key, from = the first level it fits); levels it doesn't cover fall back to the wowsims source and Forever Leveling BiS model spec named here (estimates). role: melee, ranged, caster, healer or tank.",
   "builds": [
-    { "class": "HUNTER", "key": "hunter_bm_melee", "name": "Beast Mastery (melee two-hander)", "role": "melee",
-      "wowsims": { "preset": ["hunter/dps/presets.ts", "MeleeEpWeights"] }, "model": "survivalmelee",
-      "note": "Levelling in melee with a two-handed weapon while the pet tanks." },
-    { "class": "HUNTER", "key": "hunter_dw_melee", "name": "Dual-wield melee (Fiery Weapon)", "role": "melee",
-      "wowsims": { "preset": ["hunter/dps/presets.ts", "MeleeEpWeights"] }, "model": "survivalmelee",
-      "note": "Two one-handers (Fiery Weapon enchants), melee levelling." },
-    { "class": "WARRIOR", "key": "warrior_prot_leveling", "name": "Protection (levelling)", "role": "melee",
-      "wowsims": { "preset": ["warrior/protection/presets.ts", "PreBiSBalancedEpWeights"] }, "model": "protection",
-      "note": "Shield and one-hander, levelling solo: damage first, then staying alive." },
-    { "class": "PALADIN", "key": "paladin_prot_sp", "name": "Protection (spell power, 40+)", "role": "melee",
-      "wowsims": { "sim": "paladin_protection" }, "model": "protection",
-      "note": "Spell-power Protection from level 40: wowsims' damage and threat sim, where spell damage is worth about 3 attack power." },
-    { "class": "PRIEST", "key": "priest_disc_leveling", "name": "Discipline (levelling 1-40, then Shadow)", "role": "caster",
-      "wowsims": { "preset": ["priest/dps/presets.ts", "ShadowEpWeights"] }, "model": "shadow",
-      "note": "Wand and Smite levelling in Discipline, Shadow from 40: damage weights." }
+    {
+      "class": "HUNTER",
+      "key": "hunter_bm_melee",
+      "name": "Beast Mastery (melee two-hander)",
+      "role": "melee",
+      "wowsims": {
+        "preset": [
+          "hunter/dps/presets.ts",
+          "MeleeEpWeights"
+        ]
+      },
+      "model": "survivalmelee",
+      "note": "Levelling in melee with a two-handed weapon while the pet tanks.",
+      "ours": {
+        "lvl": "hunter_bm_melee_2h"
+      }
+    },
+    {
+      "class": "HUNTER",
+      "key": "hunter_dw_melee",
+      "name": "Dual-wield melee (Fiery Weapon)",
+      "role": "melee",
+      "wowsims": {
+        "preset": [
+          "hunter/dps/presets.ts",
+          "MeleeEpWeights"
+        ]
+      },
+      "model": "survivalmelee",
+      "note": "Two one-handers (Fiery Weapon enchants), melee levelling.",
+      "ours": {
+        "lvl": "hunter_mm_dw_fiery"
+      }
+    },
+    {
+      "class": "WARRIOR",
+      "key": "warrior_prot_leveling",
+      "name": "Protection (levelling)",
+      "role": "melee",
+      "wowsims": {
+        "preset": [
+          "warrior/protection/presets.ts",
+          "PreBiSBalancedEpWeights"
+        ]
+      },
+      "model": "protection",
+      "note": "Shield and one-hander, levelling solo: damage first, then staying alive.",
+      "ours": {
+        "lvl": "warrior_protection"
+      }
+    },
+    {
+      "class": "PALADIN",
+      "key": "paladin_prot_sp",
+      "name": "Protection (spell power, 40+)",
+      "role": "melee",
+      "wowsims": {
+        "sim": "paladin_protection"
+      },
+      "model": "protection",
+      "note": "Spell-power Protection from level 40: wowsims' damage and threat sim, where spell damage is worth about 3 attack power.",
+      "ours": {
+        "lvl": "paladin_protection"
+      }
+    },
+    {
+      "class": "PRIEST",
+      "key": "priest_disc_leveling",
+      "name": "Discipline (levelling 1-40, then Shadow)",
+      "role": "caster",
+      "wowsims": {
+        "preset": [
+          "priest/dps/presets.ts",
+          "ShadowEpWeights"
+        ]
+      },
+      "model": "shadow",
+      "note": "Wand and Smite levelling in Discipline, Shadow from 40: damage weights.",
+      "ours": {
+        "lvl": "priest_shadow",
+        "from": 40
+      }
+    },
+    {
+      "class": "WARRIOR",
+      "key": "warrior_fury_dw_spirit",
+      "name": "Fury (dual wield, Spirit gear)",
+      "role": "melee",
+      "wowsims": {
+        "preset": [
+          "warrior/dps/presets.ts",
+          "PreBiSFuryEpWeights"
+        ]
+      },
+      "model": "fury",
+      "ours": {
+        "lvl": "warrior_fury_dw_spirit"
+      },
+      "note": "Dual-wield Fury levelling in Spirit-heavy gear (faster rest between pulls); Ankh of Life from 40."
+    },
+    {
+      "class": "MAGE",
+      "key": "mage_arcane_aoe",
+      "name": "Arcane (AoE pulls)",
+      "role": "caster",
+      "wowsims": {
+        "sim": "mage_arcane"
+      },
+      "model": "arcane",
+      "ours": {
+        "lvl": "mage_arcane_aoe"
+      },
+      "note": "Pulling four mobs and Arcane Explosion. An estimate: the sim has no kiting, the mobs hit the mage all pull."
+    }
   ]
 }

@@ -24,7 +24,7 @@ end
 -- "Strength 2.2*, Agility 1.7, ..." for a spec's weights in use (biggest first; * = a talent changed it).
 function O.weightsText(spec)
   if not spec then return "No specs for your class." end
-  local w, why, from, label = U.weights(spec)
+  local w, why, from, label, meta = U.weights(spec)
   local rows = {}
   for k, v in pairs(w) do if v ~= 0 and U.NAME[k] then rows[#rows + 1] = { k, v } end end
   table.sort(rows, function(a, b) return a[2] > b[2] end)
@@ -38,9 +38,16 @@ function O.weightsText(spec)
   for t in pairs(talents) do tnames[#tnames + 1] = t end
   table.sort(tnames)
   local tail = #tnames > 0 and ("\n* changed by your talents: " .. table.concat(tnames, ", ")) or ""
-  local _, br = U.bracket(spec)
-  local est = from == "built-in" and br and br.src == "model" and "\nAn estimate for your level (wowsims sims level 60)." or ""
-  return head .. "\n" .. (#parts > 0 and table.concat(parts, ", ") or "no stats") .. tail .. est
+  local notes = ""
+  if from == "built-in" and meta then
+    if meta.src == "estimate" then notes = notes .. "\nAn estimate" .. (meta.why and (": " .. meta.why) or "") .. "." end
+    local mana = {}
+    for k in pairs(meta.mana or {}) do if w[k] then mana[#mana + 1] = U.NAME[k] or k end end
+    table.sort(mana)
+    if #mana > 0 then notes = notes .. "\nDepends on your mana: " .. table.concat(mana, ", ") .. " (the fight ends before you run out; never counted against an item)." end
+    if spec.role == "tank" then notes = notes .. "\nTanks: the weights are for survival; threat is shown beside it in tooltips." end
+  end
+  return head .. "\n" .. (#parts > 0 and table.concat(parts, ", ") or "no stats") .. tail .. notes
 end
 
 -- An item from what was typed: a link, an item ID, or a name the game has loaded. Returns link, id.
@@ -70,6 +77,7 @@ local HELP = {
   { "max <price>", "the most an upgrade may cost: 25g, 5s, 1g 50s; /eah up max off" },
   { "min <percent>", "the smallest upgrade shown, in % of your gear: /eah up min 1" },
   { "rich on|off", "on: the biggest upgrade within the max price; off: the most upgrade per gold" },
+  { "solo|group", "weights for solo levelling (the default) or for groups and dungeons" },
   { "check", "check every worn item's stats were read" },
   { "stats <item>", "an item's stats and score (a link, an item ID or a name)" },
   { "price <item>", "an item's lowest price now and over 30 days" },
@@ -249,6 +257,9 @@ function O.slash(rest)
     if on ~= "on" and on ~= "off" then say("/eah up rich on|off"); return end
     U.set("rich", on == "on")
     say(on == "on" and "rich mode: the biggest upgrade within your max price." or "the most upgrade per gold.")
+  elseif word == "solo" or word == "group" then
+    U.set("scenario", word)
+    say("stat weights for " .. U.SCENARIOS[word]:lower() .. ".")
   elseif word == "check" then
     O.check()
   elseif word == "stats" or word == "stat" then
@@ -315,6 +326,11 @@ function ns.upgradesSettings(app, UI)
         U.changed()
       end })
   end
+  app:Setting({ key = "upscenario", type = "choice", label = "Weights for", width = 170,
+    choices = { { value = "solo", text = U.SCENARIOS.solo }, { value = "group", text = U.SCENARIOS.group } },
+    desc = "Solo levelling: what kills mobs fastest, rest included. Groups and dungeons: longer fights in a group (at 60: the 5-man buffs). /eah up solo, /eah up group.",
+    keywords = { "solo", "group", "dungeon", "levelling", "leveling", "scenario", "party" },
+    get = function() return U.get("scenario") end, set = function(v) U.set("scenario", v) end })
   local specChoices = {}
   for _, s in ipairs(specs) do specChoices[#specChoices + 1] = { value = s.key, text = s.name } end
   if #specChoices > 0 then
@@ -345,6 +361,7 @@ function ns.upgradesSettings(app, UI)
     app:Widget(stack, "upquest")
     app:Widget(stack, "upjunk")
     UI.Header(stack, "Stat weights", "What one point of each stat is worth. Built in per spec and level; copy them into a profile of your own to change any value.")
+    app:Widget(stack, "upscenario")
     if #specChoices > 0 then app:Widget(stack, "upweightspec") end
     app:Widget(stack, "uptalents")
     app:Widget(stack, "uppawn")
@@ -397,9 +414,9 @@ function ns.upgradesSettings(app, UI)
     for _, h in ipairs(HELP) do lines[#lines + 1] = "/eah up" .. (h[1] ~= "" and (" " .. h[1]) or "") .. "  " .. h[2] end
     UI.Note(stack, table.concat(lines, "\n"))
     UI.Header(stack, "Where the numbers come from")
-    UI.Note(stack, "Stat weights at level 60, talent effects, item procs and rating conversions: wowsims/forever (github.com/wowsims/forever), MIT license. "
-      .. "Weights below level 60, and for specs wowsims has none for (Holy and Protection paladin, Restoration shaman and druid): the per-level model of Forever Leveling BiS v0.12.0-beta, MIT license, Copyright (c) 2026 Thunder, met to wowsims' numbers at 60. "
-      .. "Those are estimates. Item names and prices: EverlookDB and your own scans.")
+    UI.Note(stack, "Stat weights: our own simulations (wowsims/forever, MIT, with levelling added), estimates marked. "
+      .. "Where we have no simulation yet (some specs below 60, tanks' survival below 60): the per-level model of Forever Leveling BiS v0.12.0-beta, MIT license, Copyright (c) 2026 Thunder, marked as estimates. "
+      .. "Talent effects, item procs and rating conversions: wowsims/forever (github.com/wowsims/forever), MIT license. Item names and prices: EverlookDB and your own scans.")
   end, { icon = "sword" })
 
   app:Command("up", "up", "gear upgrades: the Upgrades tab or window (/eah up help for its commands)", function(rest) O.slash(rest) end, { "upgrades", "upgrade", "gear" })
