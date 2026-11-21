@@ -34,6 +34,23 @@ Players' scans are uploaded to EverlookDB.com by the [EverlookDB App](https://gi
 - The shared data has no player names, like everything else here.
 - Turn it off on the General page of `/eah` ("Use other players' prices") or with `/eah shared off`.
 
+## Gear upgrades
+
+What gear is worth to your spec, and what the auction house has that beats what you wear.
+
+- **Your specs:** the first time you open the auction house, pick the spec (or specs, if you're not sure yet) this character gears for. "Not now" counts every spec of your class. Change it on the Gear upgrades page of `/eah` or with `/eah up spec fury`.
+- **Upgrades tab:** a tab at the bottom of the auction house, beside Quick sell and Shopping, read from the last full scan (yours or other players' shared one), so `/eah up` opens it in a window of its own anywhere. Every slot like the character window, with the best upgrade within your max price; click a slot for all its upgrades. Right-click an item to find it in Buy, Shift-click to link it. "Make shopping list" saves the best upgrade of every slot as a list in the Shopping tab. Max price per item, smallest upgrade in %, and rich mode (the biggest upgrade instead of the most upgrade per gold).
+- **Scores:** every stat the game reports (spell damage per school, healing, weapon DPS for main hand, off hand and ranged, random "of the Bear" suffixes each on their own), times your spec's stat weights, plus the average value of procs and Use: effects. Compared with what you wear: rings and trinkets against the weaker of your two, an off-hand while you wear a two-hander says so, an empty slot is "fills an empty slot". Items your class can't use are skipped; plate and mail wearers see only their best armor type (casters and healers see every type they can wear). An item above your level shows as "Next upgrade needs level N".
+- **Stat weights per level:** each spec has weights for every five levels up to 60, because ratings, talents and abilities change as you level. Adjusted to your talents (a * marks a weight a talent changed). Copy them into a profile of your own and change any value, import and export strings to share, or import a Pawn scale. Optionally Pawn's own scale for your spec.
+- **Around the game:** the upgrade for each of your specs on gear tooltips ("+23% for Fury", "Not your armor type", "You have a better one in your bags"), a "+23%" badge on bag slots (Blizzard's bags and Bagnon), one chat line when new gear in your bags is an upgrade, the upgrade on each quest reward with a star on the best, and, if you turn it on, your grey items sold when you open a vendor (`/eah up junk` does it once). Only grey items, never anything else.
+
+`/eah up help` lists its commands: `spec`, `weights`, `reset`, `set <stat> <value>`, `export`, `import`, `max 25g`, `min 5`, `rich on|off`, `check`, `stats <item>`, `price <item>`, `junk`, `mem`.
+
+Where the numbers come from:
+- Level-60 stat weights, talent effects, item procs and rating conversions: [wowsims/forever](https://github.com/wowsims/forever) (MIT license): its EP presets, and its own sims for mage and warlock (run for this addon with its test harness). `tools/gen_upgrades.py` rebuilds `UpgradesData.lua` from a clone of it; its inputs are in `tools/upgrades/`, with wowsims' license.
+- Weights below level 60, and for specs wowsims has no weights for (Holy and Protection paladin, Restoration shaman and druid): the per-level model in Forever Leveling BiS v0.12.0-beta's `Data/ModelWeights.lua`, MIT license, Copyright (c) 2026 Thunder (`tools/upgrades/ForeverLevelingBiS-LICENSE`), met to wowsims' numbers at 60. Those brackets are estimates. Nothing else from that addon is used.
+- Items and prices: the game and EverlookDB's own data and scans.
+
 ## For addon authors: EverlookDBAuctionsAPI
 
 A small API, read-only apart from adding shopping lists, so other addons can use these prices without reading the saved data. It reads what is already saved and never sends anything to the server.
@@ -81,6 +98,7 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 - `/eah status` shows the version, what's saved and which auction house API the game has; `/eah version`
 - `/eah scan` starts a full scan while the auction house is open
 - `/eah sell` opens the Quick sell tab, `/eah shop` the Shopping tab, `/eah run <list>` runs a shopping list
+- `/eah up` opens Gear upgrades (the tab at the auction house, else its window); `/eah up help` lists its commands
 - `/eah prices` searches your last full scan anywhere; `/eah profit` the crafting profit list
 - `/eah bought`, `/eah forsale`, `/eah income`, `/eah loot` open the AH log on that tab
 - `/eah lootmove` moves the loot cards, `/eah loottest` shows a few
@@ -99,4 +117,4 @@ Alerts when a shopping list has a match under your price.
 
 ## License
 
-GPL-3.0-or-later (see LICENSE). Disenchant chances come from classic-db by the CMaNGOS community (GPL-3.0, https://github.com/cmangos/classic-db); `tools/disenchant_data.py` rebuilds Disenchant.lua from its dump. Not affiliated with Blizzard Entertainment.
+GPL-3.0-or-later (see LICENSE). Disenchant chances come from classic-db by the CMaNGOS community (GPL-3.0, https://github.com/cmangos/classic-db); `tools/disenchant_data.py` rebuilds Disenchant.lua from its dump. Gear upgrade stat weights: wowsims/forever (MIT) and the Forever Leveling BiS v0.12.0-beta model (MIT, Copyright (c) 2026 Thunder); see Gear upgrades above. Not affiliated with Blizzard Entertainment.

@@ -1,5 +1,15 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Gear upgrades: a new Upgrades tab at the bottom of the auction house shows, for every slot, the best upgrade for your spec in the last price update (yours, or other players' shared one), within your max price. Click a slot for all its upgrades; right-click an item to find it in Buy, Shift-click to link it. "Make shopping list" puts the best of every slot in a Shopping list. /eah up opens it anywhere, away from the auction house too.
+- Gear upgrades: the first time you open the auction house you're asked which spec (or specs) you gear for; "Not now" counts them all. Change it any time on the new Gear upgrades page of /eah or with /eah up spec.
+- Gear upgrades: items are scored with stat weights for your spec and level (every five levels up to 60), adjusted to your talents, and compared with what you wear: rings and trinkets with the weaker one, an off-hand while you wear a two-hander, empty slots. Procs and Use: effects count too (a setting). Plate and mail wearers only see their best armor type unless you turn that off.
+- Gear upgrades: your own stat weight profiles (copy, change, import, export), and Pawn scales: paste Pawn's export text, or let it use Pawn's scale for your spec.
+- Gear upgrades: tooltips on gear say how big an upgrade it is for each of your specs, or why it isn't one; bag slots holding an upgrade get a small "+23%"; chat says when new gear in your bags is an upgrade, once per item.
+- Gear upgrades: the quest reward window shows the upgrade on each choice and a star on the best one, and chat says which to take, or which sells for the most when none is an upgrade.
+- Gear upgrades: sell your grey items when you open a vendor (off unless you turn it on), or with /eah up junk at a vendor. Only grey items.
+- Gear upgrades: /eah up price <item> gives an item's lowest price now and over 30 days; /eah up stats <item> its stats and score; /eah up check checks your worn gear was read.
+
 ## v0.15.0 (2026-11-21)
 - Shared prices: with the EverlookDB App running, you get the newest scan anyone uploaded to EverlookDB.com for your auction houses, one /reload or login away, even out in the world. Wherever it is newer than your own scan it's used for that item, and it says so: "other players' scan · 12 min ago" in tooltips, "other players' scan" in the Prices window (/eah prices), Quick sell's usual price, loot cards, Crafting profit and the AH log. The 30-day low and median use everyone's daily lows. Your own saved scans are never changed: the two are only combined when a price is read. Turn it off on the General page ("Use other players' prices", or /eah shared off). /eah status lists the shared houses.
 - For addon authors: EverlookDBAuctionsAPI version 3: `price()` returns a fifth value, `"own"` or `"shared"` (other players' scan), and `price()` and `history()` include shared prices.
