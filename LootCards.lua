@@ -452,14 +452,23 @@ end
 
 local function noteMail(index)
   -- the sender's name is never read: the log saves no player names
-  local ok, _, _, _, subject = pcall(GetInboxHeaderInfo, index)
-  if not ok then return end
-  subject = okv(subject)
+  -- what kind of mail: the classifier shared with the income ledger (MailClassify.lua)
+  local C = LibStub and LibStub("EverlookMailClassify-1", true)
   local from
-  if subjectIs(subject, "AUCTION_EXPIRED_MAIL_SUBJECT", "Auction expired: %s") then from = "Expired auction"
-  elseif subjectIs(subject, "AUCTION_REMOVED_MAIL_SUBJECT", "Auction cancelled: %s") then from = "Cancelled auction"
-  elseif subjectIs(subject, "AUCTION_WON_MAIL_SUBJECT", "Auction won: %s") then from = "Won auction"
-  else from = "Mail" end
+  if C then
+    local ok, m = pcall(C.read, index, ns.ledger and ns.ledger.isAlt)
+    local cat = ok and m and m.cat
+    from = ({ ah_expired = "Expired auction", ah_cancelled = "Cancelled auction", ah_won = "Won auction",
+      alt = "Mail from your alt", player = "Mail from a player", npc = "Mail from an NPC", cod = "C.O.D. mail" })[cat]
+  else
+    local ok, _, _, _, subject = pcall(GetInboxHeaderInfo, index)
+    if not ok then return end
+    subject = okv(subject)
+    if subjectIs(subject, "AUCTION_EXPIRED_MAIL_SUBJECT", "Auction expired: %s") then from = "Expired auction"
+    elseif subjectIs(subject, "AUCTION_REMOVED_MAIL_SUBJECT", "Auction canceled: %s") then from = "Cancelled auction"
+    elseif subjectIs(subject, "AUCTION_WON_MAIL_SUBJECT", "Auction won: %s") then from = "Won auction" end
+  end
+  from = from or "Mail"
   mailTaken = { from = from, how = "Mailbox", t = GetTime() }
 end
 for _, fn in ipairs({ "TakeInboxItem", "AutoLootMailItem" }) do

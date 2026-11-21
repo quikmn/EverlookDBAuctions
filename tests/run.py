@@ -121,6 +121,7 @@ def main() -> int:
     failures += scan_storage()
     failures += commodity_note()
     failures += purchases()
+    failures += ledger()
     failures += cheer()
     failures += buy_sort()
     failures += item_cache()
@@ -3147,7 +3148,8 @@ def purchases():
     ns.itemFor = lua.eval("function(id) local p = MOCK_PRICES[id]; return p and { p, 1, 1, MOCK_TIME } end")
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
-    for name in ["Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua", "PurchaseLog.lua", "Purchases.lua", "LootCards.lua"]:
+    for name in ["Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua", "MailClassify.lua", "PurchaseLog.lua", "Ledger.lua",
+                 "LedgerWatch.lua", "Purchases.lua", "LootCards.lua"]:
         run(source_of(name), name, "EverlookDBAuctions", ns)
     P = ns.purchaseLog
     G = lua.globals()
@@ -3234,35 +3236,45 @@ def purchases():
     except Exception as e:
         failures.append(f"purchases: window error {e}")
 
-    # income: an auction sold (net 950 of 1000), another mail with gold, and the same mail reached twice
+    # income: an auction sold (the mail pays 950 + 30 deposit back), gold from a player, the same mail reached twice
     lua.execute("""
       GetTime = function() return MOCK_TIME end
       MOCK_MAIL = {
-        { 'Auction House', 'Auction successful: Runed Copper Rod', 950, 'seller', 'Runed Copper Rod', 1000, 2 },
-        { 'Somebody', 'hi', 500 },
+        { 'Auction House', 'Auction successful: Runed Copper Rod (2)', 980, 'seller', 'Runed Copper Rod', 1000, 2, 30, 50, false },
+        { 'Somebody', 'hi', 500, nil, nil, nil, nil, nil, nil, true },
       }
-      function GetInboxHeaderInfo(i) local m = MOCK_MAIL[i]; return nil, nil, m[1], m[2], m[3], 0, 29 end
+      function GetInboxNumItems() return #MOCK_MAIL, #MOCK_MAIL end
+      function GetInboxHeaderInfo(i) local m = MOCK_MAIL[i]
+        if m then return nil, nil, m[1], m[2], m[3], 0, 29, 0, false, false, false, m[10], false end end
       function GetInboxInvoiceInfo(i) local m = MOCK_MAIL[i]
-        if m[4] then return m[4], m[5], nil, m[6], 0, 0, 0, 0, 0, 0, m[7] end end
+        if m and m[4] then return m[4], m[5], 'Buyer', m[6], 0, m[8], m[9], 0, 0, 0, m[7] end end
       C_Item.GetItemInfoInstant = function(name) for id, n in pairs(MOCK_ITEMS) do if n == name then return id end end end
+      UnitGUID = function() return 'Player-1-00000001' end
+      UnitName = function() return 'Me' end
     """)
     B = ns.purchases
-    # a sale the game told us about waits as "in your mail" until its money is taken
+    LG = ns.ledger
+    LG.watch.login()
+    # a sale the game told us about waits as "sold, money waiting" until its money is taken
     B.noteSold("Runed Copper Rod", 1800, 2)
     B.noteSold("Copper Bar", None, None)
-    check(len(DB.soldPending) == 2 and DB.soldPending[1].est == 1800, "two sales waiting in the mail")
+    sl = LG.get()
+    check(len(sl.auctions) == 2 and sl.auctions[1].st == "sold" and sl.auctions[1].est == 1710, f"two sales waiting: {sl.auctions[1].est}")
     B.takeMail(1)
-    check(len(DB.soldPending) == 1 and DB.soldPending[1].name == "Copper Bar", "taking the rod's money settles the rod only")
+    check(sl.auctions[1].done is not None and sl.auctions[2].done is None, "taking the rod's money settles the rod only")
     B.takeMail(1)
     B.takeMail(2)
-    inc = DB.income
+    inc = sl.money
     check(len(inc) == 2, f"two mails, one logged once: {len(inc)}")
-    check(inc[1].kind == "sale" and inc[1].c == 950 and inc[1].q == 2 and inc[1].gross == 1000 and inc[1].id == 6218,
-          "a sale: net, count, what the buyer paid, the item")
-    check(inc[2].kind == "mail" and inc[2].c == 500 and inc[2].name is None, "other gold: the amount, no sender or subject")
-    for k in inc[2].keys():
-        check(k in ("c", "kind", "t", "h", "q"), f"no names kept in a mail entry: {k}")
-    check(P.sum(inc) == 1450, "income sum")
+    check(inc[1].cat == "sale" and inc[1].c == 950 and inc[1].q == 2 and inc[1].gross == 1000 and inc[1].dep == 30 and inc[1].cut == 50,
+          f"a sale: net of the cut and the deposit back, count, what the buyer paid: {inc[1].c}")
+    check(inc[2].cat == "player" and inc[2].c == 500 and inc[2].name is None, "gold from a player: not income, no sender kept")
+    for e in (inc[1], inc[2]):
+        for k in e.keys():
+            check(k not in ("sender", "subject", "buyer"), f"no names in the account file: {k}")
+    check(G.EverlookAuctionsCharDB.buyers[sl.auctions[1].id] == "Buyer", "the buyer is kept per character")
+    sm = LG.summary(sl, None, DB.bought)
+    check(sm.income == 950 and sm.other == 500, f"income is the sale only: {sm.income}, not income {sm.other}")
 
     # the recipes you know, and what crafting one costs now: Runed Copper Rod = Copper Rod 120 + 4 bars 35 + flux (no price)
     lua.execute("""
@@ -3295,8 +3307,11 @@ def purchases():
         B.mode = "income"
         B.render()
         f = G.EverlookAuctionsPurchases
-        check("Last 7 days" in f.sum.text, f"the income view sums the week: {f.sum.text}")
-        check("1 sold, money waiting in your mail" in f.sub.text, f"the waiting sale is counted: {f.sub.text}")
+        check("7 days: income 950c" in f.sum.text, f"the income view sums the week: {f.sum.text}")
+        check("1 sold, money waiting" in f.ledger.note1.text, f"the waiting sale is counted: {f.ledger.note1.text}")
+        rawget = lua.eval("rawget")
+        tags = [f.rows[i].craft.text for i in range(1, len(f.rows) + 1) if rawget(f.rows[i], "entry")]
+        check(tags[:1] == ["Sold, money on its way"] and "AH sale" in tags and "From player" in tags, f"rows tagged: {tags}")
         # For sale: what the auction house showed, sorted by time left; a sale takes its auction off
         owned = lua.eval("""{ { itemID = 6218, name = 'Runed Copper Rod', qty = 2, unit = 900, left = 7200 },
           { itemID = 2840, name = 'Copper Bar', qty = 20, unit = 35, left = 600 }, { itemID = 2840, name = 'Copper Bar', qty = 5, sold = true } }""")
@@ -3309,6 +3324,7 @@ def purchases():
         check(B.leftText(fs.list[2]) in ("10m", "9m"), f"time left: {B.leftText(fs.list[2])}")
         B.noteSold("Runed Copper Rod", 1800, 2)
         check(len(fs.list) == 1 and fs.list[1].name == "Copper Bar", "the sold rod is off sale and waits in the mail")
+        check(LG.openCounts(sl).sold == 2, "the ledger has the rod sold again (the bar still waits too)")
         # Loot: a loot line is parsed, logged with time, and the Looted tab and today's sum show it
         link = "|cff1eff00|Hitem:7909::::::::20:::::|h[Aquamarine]|h|r"
         LC = ns.lootCards
@@ -3347,6 +3363,7 @@ def purchases():
         check("Today: 3 items" in f.sum.text, f"loot sum: {f.sum.text}")
         # an expired auction taken from the mail: logged with where it came from, not counted as loot
         lua.execute("""
+          MOCK_MAIL = {}
           GetInboxHeaderInfo = function(i) return nil, nil, 'Auction House', 'Auction expired: Black Silk Pack' end
         """)
         LC.noteMail(1)
@@ -3358,6 +3375,9 @@ def purchases():
         check(lt[3].got == "mail" and lt[3]["from"] == "Expired auction", "logged as from the mail")
         B.render()
         check("Today: 3 items" in f.sum.text, f"mail items don't count as loot: {f.sum.text}")
+        shownLoot = [rawget(f.rows[i], "entry") for i in range(1, len(f.rows) + 1) if rawget(f.rows[i], "entry")]
+        check(len(shownLoot) == 2 and all(e.got is None for e in shownLoot), f"the Looted list shows loot only: {[(e.name, e.got) for e in shownLoot]}")
+        check(LG.summary(sl, None).loot == 250, f"looted coins are income: {LG.summary(sl, None).loot}")
     except Exception as e:
         failures.append(f"purchases: income view error {e}")
 
@@ -3747,7 +3767,7 @@ def profit_api():
         if not cond:
             failures.append("profit api: " + what)
 
-    check(api.version == 3, "version 3")
+    check(api.version == 4, "version 4")
     ok_add, new = api.addShoppingList("Linen Bags", lua.eval("{ { 2589, 24 }, { 2320, 12 } }"))
     check(ok_add is True and new is True and len(DB.lists) == 1 and DB.lists[1].want['name is "Linen Cloth"'] == 24,
           "addShoppingList saves a list")
@@ -4776,6 +4796,283 @@ def health():
                 "C_AuctionHouse.GetReplicateItemTimeLeft = function() end")
     h = ns.HealthCheck(db, "0.16.2")
     check(h.realm == "empty" and h.item == "none" and h.missing is None, "throwing realm, no item API, nothing missing")
+    return failures
+
+
+def ledger():
+    """The income ledger (MailClassify.lua, Ledger.lua, LedgerWatch.lua): every auction's lifecycle from its post to
+    one outcome, the mail tied to it, money sorted into income / not income / costs, nothing counted twice, the old AH
+    log migrated, and the API door for EverlookDB Mail."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("ledger: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("""
+      MOCK_TIME = 100000; function time(t) if t then return os.time(t) end return MOCK_TIME end
+      date = os.date
+      GetTime = function() return MOCK_TIME end
+      MOCK_MONEY = 100000; GetMoney = function() return MOCK_MONEY end
+      UnitGUID = function() return 'Player-1-0000AAAA' end
+      UnitName = function() return 'Mainchar' end
+      AUCTION_SOLD_MAIL_SUBJECT = 'Auction successful: %s'
+      AUCTION_EXPIRED_MAIL_SUBJECT = 'Auction expired: %s'
+      AUCTION_REMOVED_MAIL_SUBJECT = 'Auction canceled: %s'
+      AUCTION_WON_MAIL_SUBJECT = 'Auction won: %s'
+      AUCTION_OUTBID_MAIL_SUBJECT = 'Outbid on %s'
+      AUCTION_INVOICE_MAIL_SUBJECT = 'Sale Pending: %s'
+      MOCK_ITEMS[4306] = 'Silk Cloth'
+      C_Item.GetItemInfoInstant = function(name) for id, n in pairs(MOCK_ITEMS) do if n == name then return id end end end
+      C_Item.GetItemID = function(loc) return loc.id end
+      C_Item.GetItemLink = function(loc) return '|cffffffff|Hitem:' .. loc.id .. '::::::::|h[' .. MOCK_ITEMS[loc.id] .. ']|h|r' end
+      C_Item.GetItemName = function(loc) return MOCK_ITEMS[loc.id] end
+      C_AuctionHouse = {
+        PostItem = function() return false end, ConfirmPostItem = function() end,
+        PostCommodity = function() return false end, ConfirmPostCommodity = function() end,
+        CancelAuction = function() end,
+        CalculateItemDeposit = function(loc, dur, qty) return 60 * qty end,
+        CalculateCommodityDeposit = function(id, dur, qty) return 3 * qty end,
+      }
+      -- the mailbox: { sender, subject, money, cod, items = { { name, id, count } }, invoice = { ... }, canReply, days }
+      MOCK_MAIL = {}
+      function GetInboxNumItems() return #MOCK_MAIL, #MOCK_MAIL end
+      function GetInboxHeaderInfo(i) local m = MOCK_MAIL[i]; if not m then return nil end
+        return nil, nil, m.sender, m.subject, m.money or 0, m.cod or 0, m.days or 29, m.items and #m.items or 0, false,
+          false, false, m.canReply or false, false end
+      function GetInboxItem(i, a) local m = MOCK_MAIL[i]; local it = m and m.items and m.items[a]
+        if it then return it[1], it[2], 134400, it[3] or 1, 1, true, false end end
+      function GetInboxItemLink() return nil end
+      function GetInboxInvoiceInfo(i) local v = MOCK_MAIL[i] and MOCK_MAIL[i].invoice
+        if v then return v[1], v[2], v[3], v[4], v[5] or 0, v[6] or 0, v[7] or 0, 0, 0, 0, v[8] end end
+    """)
+    ns = lua.table()
+    DB = lua.table()
+    G = lua.globals()
+    G.MOCK_DB = DB
+    ns.db = lua.eval("function() return MOCK_DB end")
+    ns.money = lua.eval("function(c) return tostring(c) .. 'c' end")
+    ns.num = lua.eval("function(n) return tostring(n) end")
+    ns.house = lua.eval("function() return 'Realm-Alliance' end")
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    for name in ["Libs/LibStub/LibStub.lua", "MailClassify.lua", "Ledger.lua", "LedgerWatch.lua", "API.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    fire = lua.eval("function(e, a, b, c) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a, b, c) end end end")
+    L = ns.ledger
+    W = L.watch
+    C = G.LibStub("EverlookMailClassify-1")[0]
+    mail = lua.eval("function(t) MOCK_MAIL = t end")
+
+    # --- the classifier -------------------------------------------------------------------------------------------
+    k, name, n, _ = C.parseSubject("Auction expired: Silk Cloth (20)")
+    check(k == "ah_expired" and name == "Silk Cloth" and n == 20, f"expired subject with a count: {k} {name} {n}")
+    k, name, n, _ = C.parseSubject("Auction canceled: Copper Bar")
+    check(k == "ah_cancelled" and name == "Copper Bar" and n is None, f"the game says canceled: {k}")
+    k, name, n, pend = C.parseSubject("Sale Pending: Copper Bar")
+    check(k == "ah_sold" and pend is True, "sale pending")
+    check(C.parseSubject("Hello there") is None, "a letter isn't an auction mail")
+    # the English fallback when the global is missing
+    G.AUCTION_OUTBID_MAIL_SUBJECT = None
+    check(C.parseSubject("Outbid on Copper Bar")[0] == "ah_outbid", "the fallback string")
+    G.AUCTION_OUTBID_MAIL_SUBJECT = "Outbid on %s"
+    isAlt = lua.eval("function(n) return n == 'Bankalt' end")
+    cases = [
+        ("{ subject = 'x', cod = 500, sender = 'Trader', canReply = true }", "cod"),
+        ("{ subject = 'Auction successful: Copper Bar', invoice = { type = 'seller', item = 'Copper Bar', bid = 100 } }", "ah_sold"),
+        ("{ subject = 'Auction won: Copper Bar', invoice = { type = 'buyer', item = 'Copper Bar', bid = 100 } }", "ah_won"),
+        ("{ subject = 'Outbid on Copper Bar', money = 90 }", "ah_outbid"),
+        ("{ subject = 'Auction expired: Copper Bar' }", "ah_expired"),
+        ("{ subject = 'Auction canceled: Copper Bar' }", "ah_cancelled"),
+        ("{ subject = 'Your reward', sender = 'Innkeeper Allison', canReply = false }", "npc"),
+        ("{ subject = 'gold', sender = 'Bankalt', canReply = true, money = 5 }", "alt"),
+        ("{ subject = 'gold', sender = 'Bankalt-OtherRealm', canReply = true }", "alt"),
+        ("{ subject = 'hi', sender = 'Stranger', canReply = true }", "player"),
+        ("{ subject = 'hi' , canReply = true }", "other"),
+    ]
+    for src, want in cases:
+        m = lua.eval(src)
+        got = C.classify(m, isAlt)
+        check(got == want, f"classify {src}: {got}, want {want}")
+    check(C.key(lua.eval("{ subject = 'a', sender = 'X', cod = 0 }")) == C.key(lua.eval("{ subject = 'a', sender = 'x', cod = 0 }")),
+          "the key doesn't care about the sender's case")
+    mail(lua.eval("""{ { sender = 'Auction House', subject = 'Auction expired: Silk Cloth (20)', items = { { 'Silk Cloth', 4306, 20 } } },
+      { sender = 'Stranger', subject = 'hi', money = 77, canReply = true } }"""))
+    lst = C.scan(isAlt)
+    check(len(lst) == 2 and lst[1].cat == "ah_expired" and lst[1]['items'][1].id == 4306 and lst[1].count == 20 and lst[1].exp == 100000 + 29 * 86400,
+          "a scan reads every mail with its attachments and expiry")
+    tot = C.totals(lst)
+    check(tot.player.money == 77 and tot.ah_expired['items'] == 1, "totals per category")
+    # a throwing API never escapes
+    lua.execute("_G.SAVED_HDR = GetInboxHeaderInfo; GetInboxHeaderInfo = function() error('boom') end")
+    check(C.read(1) is None and len(C.scan()) == 0, "a throwing API: nothing, no error")
+    lua.execute("GetInboxHeaderInfo = _G.SAVED_HDR")
+
+    # --- posting, cancelling, selling -------------------------------------------------------------------------------
+    W.login()
+    s = L.get()
+    check(s is not None and s.alts[C.hash("Mainchar")] is True, "this character's name is kept only as a fingerprint")
+    for k2 in s.alts.keys():
+        check(k2 != "Mainchar", "no plain name in the alt list")
+    AH = G.C_AuctionHouse
+    # an item: 2 auctions of 1 at 900 each, 24 h; the deposit 60 each
+    AH.PostItem(lua.eval("{ id = 6218 }"), 2, 2, None, 900)
+    fire("AUCTION_HOUSE_AUCTION_CREATED", 501)
+    fire("AUCTION_HOUSE_AUCTION_CREATED", 502)
+    fire("AUCTION_HOUSE_AUCTION_CREATED", 503)   # a third event with nothing posted: no record
+    check(len(s.auctions) == 2, f"one record per auction created: {len(s.auctions)}")
+    r1, r2 = s.auctions[1], s.auctions[2]
+    check(r1.aid == 501 and r1.item == 6218 and r1.name == "Runed Copper Rod" and r1.q == 1 and r1.buy == 900 and r1.dep == 60
+          and r1.dur == 2 and r1.ends == 100000 + 24 * 3600 and r1.st == "listed", "posted: item, stack, buyout, deposit, duration, end")
+    # a commodity: 20 Silk Cloth at 50 each, deposit 3 each
+    AH.PostCommodity(lua.eval("{ id = 4306 }"), 1, 20, 50)
+    fire("AUCTION_HOUSE_AUCTION_CREATED", 600)
+    r3 = s.auctions[3]
+    check(r3.q == 20 and r3.unit == 50 and r3.buy == 1000 and r3.dep == 60, f"a commodity auction: {r3.q} {r3.buy} {r3.dep}")
+    # a post the auction house refused: nothing
+    AH.PostCommodity(lua.eval("{ id = 4306 }"), 1, 5, 50)
+    fire("AUCTION_HOUSE_POST_ERROR")
+    fire("AUCTION_HOUSE_AUCTION_CREATED", 601)
+    check(len(s.auctions) == 3, "a refused post makes no record")
+    # cancel the second rod: cancelled, its deposit lost (one cost entry, also when told twice)
+    AH.CancelAuction(502)
+    fire("AUCTION_CANCELED", 0)
+    fire("AUCTION_CANCELED", 502)
+    check(r2.st == "cancelled" and not r2.done, "cancelled, the item on its way back")
+    deps = [e for e in s.money.values() if e.cat == "deposit"]
+    check(len(deps) == 1 and deps[0].c == 60 and deps[0].rec == r2.id, "the lost deposit is a cost, once")
+    # the first rod sells: by name from the chat line, then the notification with its id
+    W.sold("Runed Copper Rod", None, None, None)
+    W.sold("Runed Copper Rod", None, None, 501)
+    check(r1.st == "sold" and r1.est == 855 and not r1.done, f"sold, money waiting (about 900 after the 5% cut): {r1.est}")
+    # the cloth's owned row says sold too
+    W.owned(lua.eval("{ { id = 600, itemID = 4306, name = 'Silk Cloth', qty = 20, unit = 50, sold = true } }"))
+    check(r3.st == "sold", "the owned list marks the cloth sold")
+    # an auction posted elsewhere shows up in the owned list: adopted
+    W.owned(lua.eval("{ { id = 600, itemID = 4306, name = 'Silk Cloth', qty = 20, unit = 50, sold = true }, { id = 700, itemID = 2840, name = 'Copper Bar', qty = 5, unit = 30, left = 3600 } }"))
+    r4 = s.auctions[4]
+    check(r4 and r4.aid == 700 and r4.st == "listed" and r4.why is not None and r4.buy == 150, "adopted from the owned list")
+    # the cancelled rod (502) and the sold rod (501) aren't listed: they keep their outcomes; a listed one gone is "ended"
+    W.owned(lua.eval("{ { id = 600, itemID = 4306, name = 'Silk Cloth', qty = 20, unit = 50, sold = true } }"))
+    check(r4.st == "ended" and r1.st == "sold" and r2.st == "cancelled", f"gone from the list: ended ({r4.st})")
+    c = L.openCounts(s, L.ch())
+    check(c.sold == 2 and c.back == 1 and c.ended == 1 and c.listed == 0, f"open: {c.sold} sold, {c.back} back, {c.ended} ended")
+
+    # --- the mail ---------------------------------------------------------------------------------------------------
+    mail(lua.eval("""{
+      { sender = 'Auction House', subject = 'Auction successful: Runed Copper Rod', money = 915,
+        invoice = { 'seller', 'Runed Copper Rod', 'Buyerguy', 900, 900, 60, 45, 1 } },
+      { sender = 'Auction House', subject = 'Auction canceled: Runed Copper Rod', items = { { 'Runed Copper Rod', 6218, 1 } } },
+      { sender = 'Auction House', subject = 'Auction successful: Silk Cloth (20)', money = 1010,
+        invoice = { 'seller', 'Silk Cloth', nil, 1000, 1000, 60, 50, 20 } },
+      { sender = 'Auction House', subject = 'Auction expired: Copper Bar (5)', items = { { 'Copper Bar', 2840, 5 } } },
+      { sender = 'Auction House', subject = 'Outbid on Copper Bar', money = 400 },
+      { sender = 'Auction House', subject = 'Auction won: Silk Cloth', items = { { 'Silk Cloth', 4306, 10 } },
+        invoice = { 'buyer', 'Silk Cloth', 'Seller', 300, 300, 0, 0, 10 } },
+      { sender = 'Bankalt', subject = 'gold', money = 50000, canReply = true },
+      { sender = 'Stranger', subject = 'for the boots', money = 2000, canReply = true },
+      { sender = 'Innkeeper', subject = 'Your winnings', money = 700, canReply = false },
+      { sender = 'Trader', subject = 'boots', cod = 1500, items = { { 'Copper Bar', 2840, 1 } }, canReply = true },
+    }"""))
+    # Bankalt logs in once on the account: then it is an alt
+    s.alts[C.hash("Bankalt")] = True
+    W.scan()
+    check(r1.mailAt is not None and r1.net == 855 and r1.gross == 900 and r1.cut == 45, f"the sale's mail: net {r1.net}")
+    check(r2.mailAt is not None and r3.mailAt is not None and r4.st == "expired", "every auction mail tied to its record")
+    check(r4.st == "expired" and not r4.depLost, "expired without a known deposit: no cost")
+    before = len(s.money)
+    W.scan()
+    W.scan()
+    check(len(s.money) == before and len(s.auctions) == 4, "scanning again changes nothing")
+    # take everything, as Open All would; then the same takes reported again (another hook, EverlookDB Mail's API)
+    hook_all = W.takeHook("all")
+    for i in range(1, 11):
+        if i != 10:
+            hook_all(i)
+    for i in range(1, 10):
+        hook_all(i)
+        G.EverlookDBAuctionsAPI.mail.taken(C.read(i, L.isAlt), "all")
+    money = {e.cat: e.c for e in s.money.values()}
+    cats = [e.cat for e in s.money.values()]
+    check(cats.count("sale") == 2, f"two sales, each once: {cats}")
+    sales = [e for e in s.money.values() if e.cat == "sale"]
+    check(sales[0].c == 855 and sales[1].c == 950, f"sales net of the cut, the deposit back left out: {[e.c for e in sales]}")
+    check(money.get("refund") == 400 and money.get("alt") == 50000 and money.get("player") == 2000 and money.get("npc") == 700,
+          f"refund, alt, player and NPC money in their places: {money}")
+    check(r1.done and r2.done and r3.done and r4.done, "money taken and items back: every record ticked off")
+    check(len(L.openList(s, L.ch())) == 0, "nothing open")
+    # the C.O.D. mail: paying is a cost
+    W.takeHook("item")(10, 1)
+    W.takeHook("item")(10, 1)
+    cods = [e for e in s.money.values() if e.cat == "cod"]
+    check(len(cods) == 1 and cods[0].c == 1500, "C.O.D. paid once")
+    sm = L.summary(s, None, None)
+    check(sm.income == 855 + 950 + 700 and sm.other == 400 + 50000 + 2000 and sm.cost == 60 + 1500,
+          f"income {sm.income}, not income {sm.other}, costs {sm.cost}")
+    check(sm.net == sm.income - sm.cost and sm.back == 2, f"net and items back: {sm.net} {sm.back}")
+    check(G.EverlookAuctionsCharDB.buyers[r1.id] == "Buyerguy" and r1.buyer is None, "the buyer per character, not in the account file")
+
+    # --- other money ------------------------------------------------------------------------------------------------
+    fire("MERCHANT_SHOW")
+    lua.execute("MOCK_MONEY = MOCK_MONEY + 345")
+    fire("PLAYER_MONEY")
+    lua.execute("MOCK_MONEY = MOCK_MONEY - 100")   # a repair: not income, not counted
+    fire("PLAYER_MONEY")
+    fire("MERCHANT_CLOSED")
+    lua.execute("MOCK_MONEY = MOCK_MONEY + 999")    # no merchant open: not a vendor sale
+    fire("PLAYER_MONEY")
+    fire("QUEST_TURNED_IN", 123, 450, 1200)
+    L.note("loot", 77)
+    sm = L.summary(s, None, None)
+    check(sm.vendor == 345 and sm.quest == 1200 and sm.loot == 77, f"vendor {sm.vendor}, quest {sm.quest}, loot {sm.loot}")
+    # a period: only what is in it
+    lua.execute("MOCK_TIME = MOCK_TIME + 10 * 86400")
+    L.note("vendor", 5)
+    check(L.summary(s, L.since("week"), None).income == 5, "the last 7 days only")
+    check(L.summary(s, L.since("all"), None).income > 5, "all time")
+
+    # --- an unsorted entry is put right by hand ---------------------------------------------------------------------
+    e = L.addMoney(s, "unsorted", 300, lua.eval("{ why = 'test' }"))
+    check(e.cat == "unsorted" and L.summary(s, None, None).unsorted == 300, "unsorted is its own sum")
+    L.setCategory(e, "alt")
+    check(e.cat == "alt" and e.fixed and e.why is None and e.wasWhy == "test", "picked by hand, the reason kept")
+
+    # --- the AH API door ----------------------------------------------------------------------------------------------
+    api = G.EverlookDBAuctionsAPI
+    check(api.version == 4 and api.mail.version == 1 and lua.eval("rawequal")(api.mail.classifier(), C), "API version 4 with mail")
+    check(api.mail.scanned(lua.eval("{ { cat = 'player', subject = 'x', sender = 'y', exp = 1 } }")) is True, "scanned answers")
+    check(api.mail.taken(lua.eval("{ }"), "money") is True, "taken ignores a mail without a category quietly")
+    okW = lua.eval("function(a) return (pcall(function() a.mail.version = 2 end)) end")(api)
+    check(okW is False, "the mail API is read-only")
+    # ledger off: the door says false, nothing written
+    DB.logIncome = False
+    n = len(s.money)
+    check(api.mail.taken(lua.eval("{ cat = 'player', money = 10, subject = 'z', sender = 'q', exp = 5 }"), "money") in (False, True)
+          and len(s.money) == n, "with the ledger off nothing is written")
+    DB.logIncome = None
+
+    # --- migration from the old AH log ------------------------------------------------------------------------------
+    old = lua.eval("""{
+      income = { { t = 50, kind = 'sale', name = 'Copper Bar', q = 5, c = 140, gross = 150, h = 'Realm-Alliance' },
+        { t = 60, kind = 'ah', c = 90 }, { t = 70, kind = 'mail', c = 500 } },
+      soldPending = { { t = 80, name = 'Silk Cloth', q = 20, est = 900 } } }""")
+    G.EverlookAuctionsCharDB.forSale = lua.eval("{ at = 90, list = { { id = 2840, name = 'Copper Bar', q = 5, c = 150, ends = 9999999 } } }")
+    G.MOCK_DB = old
+    s2 = L.get()
+    W.login()
+    cats = [e.cat for e in s2.money.values()]
+    check(cats == ["sale", "refund", "unsorted"], f"old income sorted: {cats}")
+    check(s2.money[1].why is not None and s2.money[3].why is not None and "sender" in s2.money[3].why, "each says why")
+    check(len(s2.auctions) == 2 and s2.auctions[1].st == "sold" and s2.auctions[1].est == 900 and s2.auctions[2].st == "listed",
+          "old waiting sales and for-sale auctions become records")
+    check(len(old.income) == 3 and len(old.soldPending) == 1, "the old tables are kept")
+    check(s2.migrated.income == 3 and s2.migrated.pending == 1, "what was moved is noted")
+    W.login()
+    check(len(s2.money) == 3 and len(s2.auctions) == 2, "migrated once")
+    # the hub's numbers come from the ledger
+    t, w, waiting, est = L.hubNumbers(s2, None, 100)
+    check(t == 140 and waiting == 1 and est == 900, f"hub: today {t}, waiting {waiting} ~{est}")
     return failures
 
 

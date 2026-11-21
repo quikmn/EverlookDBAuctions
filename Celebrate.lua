@@ -205,15 +205,19 @@ end
 -- One sale can reach us more than one way (the auction house's notification, the system chat line, the line drawn in
 -- a chat window): the same item within a moment counts once.
 local lastName, lastAt = nil, 0
-local function sold(name)
+local function sold(name, aid)
   if type(name) ~= "string" or name == "" or (issecretvalue and issecretvalue(name)) then return end
   name = name:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|H.-|h%[?(.-)%]?|h", "%1")
   local now = GetTime()
-  if name == lastName and now - lastAt < 0.5 then return end
+  if name == lastName and now - lastAt < 0.5 then
+    -- the same sale again, now with its auction id: the ledger can tie it to the right auction
+    if aid and ns.purchases and ns.purchases.noteSold then pcall(ns.purchases.noteSold, name ~= "An auction" and name or nil, nil, nil, aid) end
+    return
+  end
   lastName, lastAt = name, now
   local total, count = C.guess(name)
-  -- remembered as sold, waiting in the mail, for the AH log's Income view (/eah income)
-  if ns.purchases and ns.purchases.noteSold and name ~= "An auction" then pcall(ns.purchases.noteSold, name, total, count) end
+  -- the auction's record in the income ledger: sold, money waiting in the mail (/eah income)
+  if ns.purchases and ns.purchases.noteSold then pcall(ns.purchases.noteSold, name ~= "An auction" and name or nil, total, count, aid) end
   C.show(name, total, count)
 end
 C.sold = sold
@@ -234,11 +238,11 @@ for _, e in ipairs({ "CHAT_MSG_SYSTEM", "AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATI
     "PLAYER_LOGIN" }) do
   pcall(ev.RegisterEvent, ev, e)
 end
-ev:SetScript("OnEvent", function(_, e, a1, a2)
+ev:SetScript("OnEvent", function(_, e, a1, a2, a3)
   if e == "CHAT_MSG_SYSTEM" then
     fromText(a1)
   elseif e == "AUCTION_HOUSE_SHOW_FORMATTED_NOTIFICATION" then
-    if a1 == SOLD then sold(a2) end
+    if a1 == SOLD then sold(a2, a3) end
   elseif e == "AUCTION_HOUSE_SHOW_NOTIFICATION" then
     -- no item name with this one: say so without one
     if a1 == SOLD then sold("An auction") end

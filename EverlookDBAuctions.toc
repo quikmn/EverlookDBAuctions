@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: EverlookDB Auctions
-## Notes: Auction house prices, a Selling tab, shopping lists and price tooltips. Saves no player names. /eah
+## Notes: Auction house prices, a Selling tab, shopping lists, price tooltips and an income ledger. Uploads no player names. /eah
 ## Author: quikmn
 ## Version: v0.17.0
 ## SavedVariables: EverlookAuctionsDB
@@ -13,6 +13,7 @@ Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
 Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\EverlookUI\EverlookUI.lua
 Libs\EverlookUI\EverlookTooltip.lua
+MailClassify.lua
 EverlookDBAuctions.lua
 Health.lua
 SharedPrices.lua
@@ -30,6 +31,8 @@ Buy.lua
 RecipeList.lua
 Profit.lua
 PurchaseLog.lua
+Ledger.lua
+LedgerWatch.lua
 Purchases.lua
 Celebrate.lua
 LootCards.lua

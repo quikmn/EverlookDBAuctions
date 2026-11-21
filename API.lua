@@ -24,6 +24,17 @@
 --                                         loaded every item's name yet: call again in a moment) or "not ready" (before
 --                                         the addon has loaded its saved data). Only item names and counts are saved.
 --
+--   api.mail                              (version 4) for EverlookDB Mail, the income ledger's door for the mailbox:
+--     api.mail.scanned(list)              the inbox as a mail addon read it, every mail at once: a list of mails in
+--                                         the shape EverlookMailClassify reads them (MailClassify.lua: sender,
+--                                         subject, money, cod, exp, items, invoice, cat). Auction house mails tie to
+--                                         their auctions: "sold, money waiting", "item back in the mail".
+--     api.mail.taken(mail, part, slot)    something was taken from that mail just now (read before the take):
+--                                         part = "money", "item" (slot = the attachment) or "all". The ledger counts
+--                                         each take once, so a take this addon's own hooks also saw is not doubled.
+--     api.mail.classifier()               the shared classifier (LibStub "EverlookMailClassify-1"), newest copy
+--     All three return quietly (false, never an error) when the ledger is off or not loaded yet.
+--
 -- `item` is an item ID or an item link (a link carries its random-stat version, "of the Bear", so price() then
 -- looks that version up; with an ID, pass the version's suffix ID as the second argument). Prices are for the player's
 -- realm and their own faction's auction house, or the one that is open right now; `side` ("Alliance", "Horde" or
@@ -31,7 +42,7 @@
 -- returned are copies. addShoppingList is the one call that writes: it only adds or replaces a list.
 local _, ns = ...
 
-local api = { version = 3 }
+local api = { version = 4 }
 
 local function idOf(item)
   if type(item) == "number" then return item end
@@ -83,6 +94,19 @@ function api.addShoppingList(name, items)
   if ns.shoppingRefresh then pcall(ns.shoppingRefresh) end
   return true, why and true or false
 end
+
+-- version 4: the mailbox's door into the income ledger (LedgerWatch.lua does the work)
+local function ledgerApi() return ns.ledger and ns.ledger.api end
+api.mail = setmetatable({}, {
+  __index = {
+    version = 1,
+    scanned = function(list) local a = ledgerApi(); return a and a.scanned(list) or false end,
+    taken = function(m, part, slot) local a = ledgerApi(); return a and a.taken(m, part, slot) or false end,
+    classifier = function() return (LibStub and LibStub("EverlookMailClassify-1", true)) end,
+  },
+  __newindex = function() error("EverlookDBAuctionsAPI.mail is read-only", 2) end,
+  __metatable = false,
+})
 
 -- Read-only: writes to the table are refused, so one addon can't break it for another.
 EverlookDBAuctionsAPI = setmetatable({}, {

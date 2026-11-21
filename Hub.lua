@@ -56,6 +56,10 @@ end
 -- Copper taken from the mail today and in the last 7 days (the AH log's Income), and the sales waiting in the mail.
 function H.income(list, pending, now)
   now = now or time()
+  -- the income ledger (Ledger.lua): real gains only, sales waiting from the auctions' records
+  local LG = ns.ledger
+  local s = LG and LG.get and LG.get()
+  if s then return LG.hubNumbers(s, db() and db().bought, now) end
   local since, week = H.dayStart(now), now - 7 * 86400
   local today, sevenDays = 0, 0
   for _, e in ipairs(list or {}) do

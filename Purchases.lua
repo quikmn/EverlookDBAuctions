@@ -204,39 +204,34 @@ ev:SetScript("OnEvent", function(_, e, a1, a2)
 end)
 
 ---------------------------------------------------------------------------------------------------------------------
--- Money from the mail: read the mail as its money is taken (Blizzard's Open All, a click on the coins, or a mail addon),
--- before the server removes it. One mail is logged once even when both calls reach it.
+-- Money from the mail: the income ledger reads the mail as its money or items are taken (LedgerWatch.lua hooks
+-- TakeInboxMoney, TakeInboxItem and AutoLootMailItem: Blizzard's Open All, a click, EverlookDB Mail or any mail
+-- addon). B.takeMail(i) is that hook for one mail's money, kept for the tests and other callers.
+function B.takeMail(i)
+  local W = ns.ledger and ns.ledger.watch
+  if W and W.takeHook then W.takeHook("money")(i) end
+end
 
-local AH_SENDER = BUTTON_LAG_AUCTIONHOUSE or "Auction House"
-local recentMail = {}
-
-local function takeMail(i)
-  if not GetInboxHeaderInfo then return end
-  local okH, _, _, sender, subject, cash, _, daysLeft = pcall(GetInboxHeaderInfo, i)
-  cash = okH and ok(cash)
-  if type(cash) ~= "number" or cash <= 0 then return end
+-- A bid you won arrives by mail: spending, logged with the purchases once (a buyout already logged is only marked
+-- as arrived). m is the mail as EverlookMailClassify read it.
+function B.noteWon(m)
   local d = db()
-  if not d or d.logIncome == false then return end
-  local sig = tostring(subject) .. "|" .. cash .. "|" .. tostring(daysLeft)
-  local now = GetTime and GetTime() or time()
-  if recentMail[sig] and now - recentMail[sig] < 10 then return end
-  recentMail[sig] = now
-  local e = { c = cash, kind = "mail" }
-  local okI, kind, item, _, bid, _, _, _, _, _, _, count = pcall(GetInboxInvoiceInfo or function() end, i)
-  if okI and ok(kind) == "seller" and ok(item) then
-    e.kind, e.name, e.q, e.gross = "sale", ok(item), ok(count) or 1, ok(bid)
-    saleID(e)
-    P.settlePending(B.pending(), e.name)
-  elseif ok(sender) == AH_SENDER then
-    e.kind = "ah"
+  if not d or d.logBuys == false or type(m) ~= "table" then return end
+  local inv = m.invoice
+  local first = m.items and m.items[1]
+  local id = first and first.id
+  local paid = inv and inv.bid or 0
+  if not id or paid <= 0 then return end
+  local now = time()
+  for i = #list(), 1, -1 do
+    local e = list()[i]
+    if (e.t or 0) < now - 31 * 86400 then break end
+    if e.id == id and not e.arrived and math.abs((e.c or 0) - paid) <= 1 then e.arrived = now; return end
   end
-  e.t, e.h = time(), houseKey()
-  if P.addIncome(incomeList(), e) and B.frame and B.frame:IsShown() then B.render() end
+  local e = { id = id, q = (inv and inv.count) or first.count or 1, c = paid, won = true }
+  if first.link and first.link:match("|Hitem:%d+:[^|]*[1-9]") then e.link = first.link end
+  write(e)
 end
-for _, name in ipairs({ "TakeInboxMoney", "AutoLootMailItem" }) do
-  if _G[name] then hooksecurefunc(name, takeMail) end
-end
-B.takeMail = takeMail
 
 -- Your auctions as the auction house last showed them (per character: EverlookAuctionsCharDB.forSale =
 -- { at = when, list = { { id, name, link, q, c = buyout of all of it (nil: bids only), ends = time it runs out } } }).
@@ -262,6 +257,8 @@ function B.noteOwned(owned)
   end
   local fs = B.forSale()
   fs.at, fs.list = now, out
+  local W = ns.ledger and ns.ledger.watch
+  if W then pcall(W.owned, owned) end
   if B.frame and B.frame:IsShown() then B.render() end
 end
 local function offSale(name)
@@ -287,6 +284,8 @@ function B.looted()
 end
 function B.noteLoot(e, link)
   local d = db()
+  -- looted coins are income (the ledger's "Looted money"), whether or not the loot log keeps them
+  if e.copper and not e.got and ns.ledger and ns.ledger.note then pcall(ns.ledger.note, "loot", e.copper) end
   if d and d.logLoot == false then return end
   local zone = GetRealZoneText and okv(GetRealZoneText()) or nil
   local r = { t = time(), zone = zone, loot = true, from = e.from, how = e.how, npc = e.npc, got = e.got }
@@ -311,12 +310,15 @@ function B.pending()
   d.soldPending = d.soldPending or {}
   return d.soldPending
 end
-function B.noteSold(name, est, count)
+-- The income ledger keeps the sale (Ledger.lua: the auction's record is "sold, money waiting"); db.soldPending is the
+-- list from before the ledger, read once by its migration.
+function B.noteSold(name, est, count, aid)
   local d = db()
   if not d or d.logIncome == false then return end
-  offSale(name)
-  local e = { t = time(), name = name, q = count, est = est, h = houseKey(), pending = true }
-  if P.addPending(B.pending(), e, e.t) and B.frame and B.frame:IsShown() then B.render() end
+  if name then offSale(name) end
+  local W = ns.ledger and ns.ledger.watch
+  if W then W.sold(name, est, count, aid) end
+  if B.frame and B.frame:IsShown() then B.render() end
 end
 
 -- Every recipe you know, read when a profession window opens: what it makes and from what.
@@ -440,7 +442,8 @@ local function layoutNow()
   -- came from, and nothing else (how many goes with the name, the total says what it is worth); elsewhere how many,
   -- then each, then the craft cost. The full date last.
   local NAME_MIN = 150
-  local order = mode == "looted" and { "craft" } or (mode == "bought" and { "qty", "each" } or { "qty", "each", "craft" })
+  local order = mode == "looted" and { "craft" } or (mode == "bought" and { "qty", "each" })
+    or (mode == "income" and { "craft", "qty", "each" }) or { "qty", "each", "craft" }
   local widths = { qty = QTY_W, each = EACH_W, craft = L.craftW }
   local room = w - 32 - PAD * 2 - 22 - L.totalW - 60
   for _, c in ipairs(order) do
@@ -515,6 +518,8 @@ local function toggleMark(e)
   B.render()
 end
 
+local ledgerTooltip, openCategories   -- the Income view's (below)
+
 local function paintRow(row)
   local e = row.entry
   if row.hover then
@@ -556,6 +561,10 @@ local function rowTooltip(self)
     end
     GameTooltip:AddLine("As the auction house showed it on your last visit.", 0.6, 0.6, 0.6, true)
     GameTooltip:Show()
+    return
+  end
+  if B.mode == "income" and (e.st or e.cat) then
+    ledgerTooltip(e)
     return
   end
   if B.mode == "income" then
@@ -642,7 +651,11 @@ local function makeRow(parent)
       if link and ChatEdit_InsertLink then ChatEdit_InsertLink(link) end
       return
     end
-    if B.mode ~= "income" then toggleMark(e) end
+    if B.mode == "income" then
+      if e.cat and openCategories then openCategories(self, e) end
+      return
+    end
+    toggleMark(e)
   end)
   row:SetScript("OnEnter", function(self) self.hover = true; paintRow(self); rowTooltip(self) end)
   row:SetScript("OnLeave", function(self) self.hover = nil; paintRow(self); GameTooltip:Hide() end)
@@ -863,6 +876,28 @@ local function makeFrame()
   end, 110)
   f.clear:SetHeight(24)
   f.clear:SetPoint("TOPRIGHT", -20, -69)
+  -- Income: the period, open auctions only, and the summary card
+  f.periods = {}
+  for i, pr in ipairs(B.PERIODS) do
+    local b = chip(f, pr[2], function()
+      B.period, B.offset = pr[1], 0
+      local d = db()
+      if d then d.ledgerPeriod = pr[1] end
+      B.render()
+    end)
+    b:SetWidth(62)
+    b.period = pr[1]
+    f.periods[i] = b
+  end
+  f.openOnly = chip(f, "Open only", function(self)
+    B.openOnly = not B.openOnly
+    self:SetOn(B.openOnly)
+    B.offset = 0
+    B.render()
+  end)
+  f.openOnly:SetWidth(96)
+  f.openOnly:SetOn(false)
+  f.ledger = B.makeLedgerCard(f)
 
   -- the list card: column heads, rows, then the sum and where you are
   f.list = card(f)
@@ -971,7 +1006,10 @@ local function makeFrame()
 
   f:SetScript("OnShow", function() end)
   EUI.CloseOnEscape(f)
-  f:HookScript("OnHide", function() if B.picker then B.picker:Hide() end end)
+  f:HookScript("OnHide", function()
+    if B.picker then B.picker:Hide() end
+    if B.catMenu then B.catMenu:Hide() end
+  end)
 
   local d = db()
   local pos = d and d.boughtPos
@@ -986,10 +1024,383 @@ local function paintAlpha(f)
   local a = alpha()
   f.bgFill:SetVertexColor(T.bg[1], T.bg[2], T.bg[3], a)
   f.bgEdge:SetVertexColor(T.border[1], T.border[2], T.border[3], math.min(1, a + 0.1))
-  for _, c in ipairs({ f.list, f.recipe }) do
+  for _, c in ipairs({ f.list, f.recipe, f.ledger }) do
     c.fill:SetVertexColor(T.card[1], T.card[2], T.card[3], a)
     c.edge:SetVertexColor(T.divider[1], T.divider[2], T.divider[3], a)
   end
+end
+
+---------------------------------------------------------------------------------------------------------------------
+-- Income (the ledger, Ledger.lua): the period's sums by category in a card, then your open auctions with their state
+-- and every money entry, each tagged with its category. A click on a money entry puts it in another category.
+
+local PERIODS = { { "today", "Today" }, { "week", "7 days" }, { "month", "30 days" }, { "all", "All" } }
+B.PERIODS = PERIODS
+local function period()
+  local d = db()
+  return B.period or (d and d.ledgerPeriod) or "week"
+end
+B.periodNow = period
+local function ledger() return ns.ledger and ns.ledger.get and ns.ledger.get() end
+local LG = ns.ledger
+
+-- What you looted since a time on this character: items, their worth today, money (mail, merchant and trade items
+-- aren't loot).
+function B.lootSince(since)
+  local n, worth, coins = 0, 0, 0
+  local list = B.looted()
+  for i = #list, 1, -1 do
+    local e = list[i]
+    if since and (e.t or 0) < since then break end
+    if e.got then
+    elseif e.copper then coins = coins + e.copper
+    else
+      n = n + (e.q or 1)
+      local each = ns.lootCards and ns.lootCards.worth(e.id)
+      if each then worth = worth + each * (e.q or 1) end
+    end
+  end
+  return n, worth, coins
+end
+
+local function catColor(cat)
+  local g = LG and LG.GROUP_OF[cat]
+  if g == "income" then return T.ok end
+  if g == "cost" then return T.danger end
+  if g == "unsorted" then return T.accent end
+  return T.muted
+end
+B.catColor = catColor
+
+local function stateColor(r)
+  if r.st == "sold" then return T.ok end
+  if r.st == "expired" or r.st == "cancelled" then return T.danger end
+  if r.st == "ended" then return T.accent end
+  return T.text
+end
+
+local function ledgerName(e)
+  if e.st then return (e.link and e.link:match("%[(.-)%]")) or e.name or (e.item and itemName(e.item)) or "?" end
+  if e.cat == "sale" or e.cat == "deposit" or ((e.cat == "cod" or e.cat == "unsorted") and e.name) then
+    return (e.link and e.link:match("%[(.-)%]")) or e.name or (e.item and itemName(e.item)) or LG.LABEL[e.cat]
+  end
+  return LG.LABEL[e.cat] or e.cat or "?"
+end
+B.ledgerName = ledgerName
+
+-- the rows of the Income view: open auctions first, then the period's money, newest first
+function B.ledgerRows()
+  local s = ledger()
+  if not s then return {}, 0 end
+  local filter = (B.filter or ""):lower():match("^%s*(.-)%s*$") or ""
+  local function hit(e)
+    if filter == "" then return true end
+    local words = (ledgerName(e) .. " " .. (e.st and LG.stateText(e) or (LG.LABEL[e.cat] or ""))):lower()
+    return words:find(filter, 1, true) ~= nil
+  end
+  local out = {}
+  for _, r in ipairs(LG.openList(s, LG.ch and LG.ch())) do
+    if hit(r) then out[#out + 1] = r end
+  end
+  local nOpen = #out
+  if not B.openOnly then
+    local since = LG.since(period())
+    for i = #s.money, 1, -1 do
+      local e = s.money[i]
+      if since and (e.t or 0) < since then break end
+      if hit(e) then out[#out + 1] = e end
+    end
+  end
+  return out, nOpen
+end
+
+local function paintLedgerRow(row, e, L)
+  local q = math.max(1, tonumber(e.q) or 1)
+  local id = e.item
+  row.check:Hide()
+  local t = e.st and (e.t or e.at) or e.t
+  if t then
+    row.date:SetText(L.fullDate and date("%d %b %H:%M", t) or (date("%d %b", t) == date("%d %b") and date("%H:%M", t) or date("%d %b", t)))
+  else
+    row.date:SetText("")
+  end
+  row.date:SetTextColor(rgba(e.st and T.accent or T.muted))
+  row.icon:SetTexture(id and try(C_Item.GetItemIconByID, id) or (e.st and 134400) or 133784)
+  local name = ledgerName(e)
+  if not L.qty and q > 1 then name = name .. " |cff8a93a0x" .. ns.num(q) .. "|r" end
+  row.name:SetText(name)
+  if id then row.name:SetTextColor(qualityColor(id)) else row.name:SetTextColor(rgba(T.text)) end
+  row.qty:SetText((e.st or e.q) and ns.num(q) or "")
+  if e.st then
+    row.craft:SetText(LG.stateText(e))
+    row.craft:SetTextColor(rgba(stateColor(e)))
+    if e.unit then setMoney(row.each, e.unit, T.muted) else quiet(row.each, "") end
+    if e.st == "sold" then
+      if e.net then setMoney(row.total, e.net, T.ok)
+      elseif e.est then row.total:SetText("~" .. money(e.est)); row.total:SetTextColor(rgba(T.muted))
+      else quiet(row.total, "") end
+    elseif (e.st == "expired" or e.st == "cancelled") and e.dep and e.dep > 0 then
+      setMoney(row.total, -e.dep, T.danger)
+    elseif e.buy then
+      setMoney(row.total, e.buy, T.muted)
+    else
+      quiet(row.total, e.bid and "bids only" or "")
+    end
+  else
+    row.craft:SetText(LG.SHORT[e.cat] or e.cat or "")
+    row.craft:SetTextColor(rgba(catColor(e.cat)))
+    if e.q and e.q > 1 and e.cat == "sale" then setMoney(row.each, math.floor(e.c / q + 0.5)) else quiet(row.each, "") end
+    local g = LG.GROUP_OF[e.cat]
+    setMoney(row.total, g == "cost" and -e.c or e.c, g == "income" and T.ok or (g == "cost" and T.danger) or (g == "unsorted" and T.accent) or T.text)
+  end
+end
+B.paintLedgerRow = paintLedgerRow
+
+local function upper(s) return (s:gsub("^%l", string.upper)) end
+
+function ledgerTooltip(e)
+  if e.st then
+    if e.link then pcall(GameTooltip.SetHyperlink, GameTooltip, e.link)
+    elseif e.item then pcall(GameTooltip.SetItemByID, GameTooltip, e.item)
+    else GameTooltip:SetText(ledgerName(e), 1, 0.82, 0) end
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine(LG.stateText(e), rgba(stateColor(e)))
+    local q = math.max(1, e.q or 1)
+    if e.t then
+      local dur = e.dur and LG.HOURS[e.dur]
+      GameTooltip:AddLine(("Posted %s: %s%s%s"):format(date("%d %b %H:%M", e.t), q > 1 and (ns.num(q) .. " for ") or "",
+        e.buy and money(e.buy) or "bids only", dur and (", " .. dur .. " h") or ""), 1, 1, 1, true)
+    elseif e.why then
+      GameTooltip:AddLine(upper(e.why), 0.6, 0.6, 0.6, true)
+    end
+    if e.bid and e.bid > 0 then GameTooltip:AddDoubleLine("Starting bid", money(e.bid), 0.6, 0.6, 0.6, 1, 1, 1) end
+    if e.dep then GameTooltip:AddDoubleLine((e.st == "expired" or e.st == "cancelled") and "Deposit (lost)" or "Deposit",
+      money(e.dep), 0.6, 0.6, 0.6, 1, 1, 1) end
+    if e.st == "listed" and e.ends then GameTooltip:AddDoubleLine("Time left", B.leftText(e), 0.6, 0.6, 0.6, 1, 1, 1) end
+    if e.st == "sold" then
+      if e.gross then
+        GameTooltip:AddDoubleLine("The buyer paid", money(e.gross), 0.6, 0.6, 0.6, 1, 1, 1)
+        GameTooltip:AddDoubleLine("Auction house cut", "-" .. money(e.cut or 0), 0.6, 0.6, 0.6, 0.94, 0.37, 0.37)
+        GameTooltip:AddDoubleLine("You get", money(e.net or (e.gross - (e.cut or 0))), 0.6, 0.6, 0.6, 0.38, 0.81, 0.53)
+      elseif e.est then
+        GameTooltip:AddDoubleLine("About, after the cut", money(e.est), 0.6, 0.6, 0.6, 1, 1, 1)
+      end
+      local buyer = LG.buyerOf and LG.buyerOf(e)
+      if buyer then GameTooltip:AddDoubleLine("Bought by", buyer, 0.6, 0.6, 0.6, 1, 1, 1) end
+      if e.done then GameTooltip:AddLine(("Money taken %s."):format(date("%d %b %H:%M", e.done)), 0.6, 0.6, 0.6, true)
+      elseif e.mailAt then GameTooltip:AddLine(("The money is in your mail (came %s)."):format(date("%d %b %H:%M", e.mailAt)), 0.6, 0.6, 0.6, true)
+      elseif e.eta then GameTooltip:AddLine(("The money arrives about %s."):format(date("%H:%M", e.eta)), 0.6, 0.6, 0.6, true)
+      else GameTooltip:AddLine("The money comes by mail, about an hour after the sale.", 0.6, 0.6, 0.6, true) end
+    elseif e.st == "expired" or e.st == "cancelled" then
+      GameTooltip:AddLine("The item comes back by mail: not a gain. Taking it from the mail ticks this off.", 0.6, 0.6, 0.6, true)
+    elseif e.st == "ended" then
+      GameTooltip:AddLine("Gone from your auctions; its mail will say whether it sold or expired.", 0.6, 0.6, 0.6, true)
+    end
+    if e.t and e.why then GameTooltip:AddLine(upper(e.why), 0.6, 0.6, 0.6, true) end
+    GameTooltip:Show()
+    return
+  end
+  if e.item then pcall(GameTooltip.SetItemByID, GameTooltip, e.item) else GameTooltip:SetText(ledgerName(e), 1, 0.82, 0) end
+  GameTooltip:AddLine(" ")
+  local g = LG.GROUP_OF[e.cat]
+  local r, gg, b = rgba(catColor(e.cat))
+  GameTooltip:AddDoubleLine(LG.LABEL[e.cat] or e.cat, money(e.c), 1, 0.82, 0, r, gg, b)
+  GameTooltip:AddLine(date("%d %b %Y %H:%M", e.t), 0.6, 0.6, 0.6)
+  if e.cat == "sale" and e.gross then
+    GameTooltip:AddDoubleLine("The buyer paid", money(e.gross), 0.6, 0.6, 0.6, 1, 1, 1)
+    GameTooltip:AddDoubleLine("Auction house cut", "-" .. money(e.cut or 0), 0.6, 0.6, 0.6, 0.94, 0.37, 0.37)
+    if e.dep and e.dep > 0 then
+      GameTooltip:AddLine(("The mail also gave your %s deposit back: not counted as income."):format(money(e.dep)), 0.6, 0.6, 0.6, true)
+    end
+  end
+  if e.cat == "sale" then
+    local cost = craftNow(e.item)
+    if cost then
+      local m = math.floor(e.c / math.max(1, e.q or 1) + 0.5) - cost
+      GameTooltip:AddLine(("Crafting one again costs about %s at today's lowest AH prices: %s %s each."):format(money(cost),
+        m >= 0 and "you made" or "you lost", money(math.abs(m))), m >= 0 and 0.38 or 0.94, m >= 0 and 0.81 or 0.37, m >= 0 and 0.53 or 0.37, true)
+    end
+  end
+  if g == "other" then
+    GameTooltip:AddLine(e.cat == "alt" and "Gold moved between your characters: not income." or
+      (e.cat == "refund" and "Your own bid back: not income.") or "Gold a player mailed you: kept apart from your earnings.", 0.6, 0.6, 0.6, true)
+  end
+  local why = e.why or e.wasWhy
+  if why then
+    if e.cat == "unsorted" then GameTooltip:AddLine(upper(why), 1, 0.82, 0, true) else GameTooltip:AddLine(upper(why), 0.6, 0.6, 0.6, true) end
+  end
+  GameTooltip:AddLine(e.fixed and "Category picked by you. Click to change it." or "Click to put it in another category.", 0.6, 0.6, 0.6, true)
+  GameTooltip:Show()
+end
+B.ledgerTooltip = ledgerTooltip
+
+-- the category picker: a small list under the row
+function openCategories(row, e)
+  local f = B.frame
+  local m = B.catMenu
+  if not m then
+    m = CreateFrame("Frame", nil, f)
+    m:SetFrameLevel(f:GetFrameLevel() + 30)
+    m:EnableMouse(true)
+    m.fill, m.edge = U.RoundBox(m, 6, T.bg, T.border)
+    m.fill:SetVertexColor(T.bg[1], T.bg[2], T.bg[3], 1)
+    m.items = {}
+    B.catMenu = m
+  end
+  if m:IsShown() and m.entry == e then m:Hide(); return end
+  m.entry = e
+  local cats = {}
+  for _, c in ipairs(LG.PICKABLE) do cats[#cats + 1] = c end
+  cats[#cats + 1] = "unsorted"
+  for i, c in ipairs(cats) do
+    local b = m.items[i]
+    if not b then
+      b = CreateFrame("Button", nil, m)
+      b:SetHeight(20)
+      b.hl = U.Round(b, 4, "BACKGROUND")
+      b.hl:SetAllPoints(b)
+      b.hl:SetVertexColor(rgba(T.surfaceHi))
+      b.hl:Hide()
+      b.label = text(b, T.font)
+      b.label:SetPoint("LEFT", 8, 0)
+      b.label:SetPoint("RIGHT", -8, 0)
+      b:SetScript("OnEnter", function(self) self.hl:Show() end)
+      b:SetScript("OnLeave", function(self) self.hl:Hide() end)
+      m.items[i] = b
+    end
+    b:ClearAllPoints()
+    b:SetPoint("TOPLEFT", 6, -6 - (i - 1) * 20)
+    b:SetPoint("RIGHT", -6, 0)
+    b.label:SetText(LG.LABEL[c])
+    b.label:SetTextColor(rgba(c == e.cat and T.accent or catColor(c)))
+    b:SetScript("OnClick", function()
+      LG.setCategory(m.entry, c)
+      m:Hide()
+      B.render()
+    end)
+    b:Show()
+  end
+  m:SetSize(170, 12 + #cats * 20)
+  m:ClearAllPoints()
+  m:SetPoint("TOPRIGHT", row.total, "BOTTOMRIGHT", 6, -2)
+  m:Show()
+end
+B.openCategories = openCategories
+
+-- The summary card: three columns (Income, Not income, Costs) of the period's sums; narrow, one column of totals.
+local SUM_LINE = 16
+function B.makeLedgerCard(f)
+  local c = card(f)
+  c.cols = {}
+  for i = 1, 3 do
+    local col = CreateFrame("Frame", nil, c)
+    col.title = text(col, T.fontSmall, T.gold)
+    col.title:SetPoint("TOPLEFT", 0, 0)
+    col.lines = {}
+    for k = 1, 6 do
+      local ln = CreateFrame("Frame", nil, col)
+      ln:SetHeight(SUM_LINE)
+      ln:SetPoint("TOPLEFT", 0, -14 - (k - 1) * SUM_LINE)
+      ln:SetPoint("RIGHT", 0, 0)
+      ln.label = text(ln, T.font - 1, T.muted)
+      ln.label:SetPoint("LEFT", 0, 0)
+      ln.value = text(ln, T.font - 1, T.text, "RIGHT")
+      ln.value:SetPoint("RIGHT", 0, 0)
+      ln.label:SetPoint("RIGHT", ln.value, "LEFT", -6, 0)
+      col.lines[k] = ln
+    end
+    c.cols[i] = col
+  end
+  c.foot = U.Solid(c, "ARTWORK", rgba(T.divider))
+  c.foot:SetHeight(1)
+  c.note1 = text(c, T.font - 1, T.text)
+  c.note2 = text(c, T.font - 1, T.muted)
+  return c
+end
+
+local function setLine(ln, label, copper, color, bold)
+  ln.label:SetText(label)
+  ln.label:SetTextColor(rgba(bold and T.text or T.muted))
+  if copper == nil then ln.value:SetText("")
+  elseif type(copper) == "string" then ln.value:SetText(copper); ln.value:SetTextColor(rgba(color or T.text))
+  elseif copper == 0 then ln.value:SetText("-"); ln.value:SetTextColor(rgba(T.muted))
+  else setMoney(ln.value, copper, color) end
+  ln:Show()
+end
+
+function B.renderLedgerCard(f, L)
+  local c = f.ledger
+  local s = ledger()
+  local sum = LG.summary(s, LG.since(period()), list())
+  local w = L.w - 32
+  c:SetWidth(w)
+  local one = L.compact
+  local colW = one and (w - PAD * 2) or math.floor((w - PAD * 2 - 2 * 24) / 3)
+  for i, col in ipairs(c.cols) do
+    col:ClearAllPoints()
+    col:SetPoint("TOPLEFT", PAD + (one and 0 or (i - 1) * (colW + 24)), -12)
+    col:SetWidth(colW)
+    col:SetHeight(14 + 6 * SUM_LINE)
+    col:SetShown(not one or i == 1)
+    for _, ln in ipairs(col.lines) do ln:Hide() end
+  end
+  local rows = 0
+  if one then
+    local col = c.cols[1]
+    col.title:SetText("THIS PERIOD")
+    setLine(col.lines[1], "Income", sum.income, T.ok, true)
+    setLine(col.lines[2], "Not income", sum.other, T.text)
+    setLine(col.lines[3], "Costs", sum.cost > 0 and -sum.cost or 0, T.danger)
+    setLine(col.lines[4], "Net", sum.net, sum.net >= 0 and T.ok or T.danger, true)
+    rows = 4
+    if sum.unsorted > 0 then rows = 5; setLine(col.lines[5], ("Unsorted (%d)"):format(sum.n.unsorted), sum.unsorted, T.accent) end
+  else
+    for i, g in ipairs(LG.GROUPS) do
+      local col = c.cols[i]
+      col.title:SetText(g.title:upper())
+      local k = 0
+      for _, cat in ipairs(g.cats) do
+        k = k + 1
+        local v = sum[cat] or 0
+        setLine(col.lines[k], LG.LABEL[cat], g.id == "cost" and v > 0 and -v or v, g.id == "cost" and T.danger or T.text)
+      end
+      if g.id == "income" then
+        k = k + 1; setLine(col.lines[k], "Total income", sum.income, T.ok, true)
+      elseif g.id == "other" then
+        k = k + 1; setLine(col.lines[k], "Items back by mail", sum.back > 0 and tostring(sum.back) or 0, T.text)
+        if sum.unsorted > 0 then k = k + 1; setLine(col.lines[k], ("Unsorted (%d)"):format(sum.n.unsorted), sum.unsorted, T.accent, true) end
+      else
+        k = k + 1; setLine(col.lines[k], "Net", sum.net, sum.net >= 0 and T.ok or T.danger, true)
+      end
+      rows = math.max(rows, k)
+    end
+  end
+  local y = 12 + 14 + rows * SUM_LINE + 8
+  c.foot:ClearAllPoints()
+  c.foot:SetPoint("TOPLEFT", PAD, -y)
+  c.foot:SetPoint("TOPRIGHT", -PAD, -y)
+  -- the open auctions, then the loot's worth (items, not money: not in the sums)
+  local oc = LG.openCounts(s, LG.ch and LG.ch())
+  local parts = {}
+  if oc.listed > 0 then parts[#parts + 1] = ("%d listed"):format(oc.listed) end
+  if oc.sold > 0 then parts[#parts + 1] = ("%d sold, money waiting%s"):format(oc.sold, oc.soldCopper > 0 and (" (~" .. money(oc.soldCopper) .. ")") or "") end
+  if oc.back > 0 then parts[#parts + 1] = ("%d %s back in the mail"):format(oc.back, oc.back == 1 and "item" or "items") end
+  if oc.ended > 0 then parts[#parts + 1] = ("%d ended, mail to come"):format(oc.ended) end
+  if oc.other > 0 then parts[#parts + 1] = ("%d on other characters"):format(oc.other) end
+  c.note1:ClearAllPoints()
+  c.note1:SetPoint("TOPLEFT", PAD, -(y + 8))
+  c.note1:SetPoint("RIGHT", -PAD, 0)
+  c.note1:SetText(#parts > 0 and ("Auctions: " .. table.concat(parts, "  \194\183  ")) or "No auctions open on this character.")
+  local n, worth = B.lootSince(LG.since(period()))
+  c.note2:ClearAllPoints()
+  c.note2:SetPoint("TOPLEFT", PAD, -(y + 8 + SUM_LINE))
+  c.note2:SetPoint("RIGHT", -PAD, 0)
+  c.note2:SetText(n > 0 and ("Looted items on this character: %s, worth about %s today (items, not in the sums)."):format(ns.num(n), money(worth))
+    or "No items looted on this character in this period.")
+  local h = y + 8 + SUM_LINE * 2 + 6
+  c:SetHeight(h)
+  B.ledgerSum = sum
+  return h
 end
 
 local function renderList(f)
@@ -997,17 +1408,24 @@ local function renderList(f)
   local sale = B.mode == "forsale"
   local looted = B.mode == "looted"
   local side = income or sale or looted   -- the layout with the third money column, no marks
-  local all = income and incomeList() or (sale and (B.forSale().list or {})) or (looted and B.looted()) or list()
-  local shown = P.view(all, B.filter, B.markedOnly and not side,
-    looted and function(e) return entryName(e) .. " " .. (e.from or "") .. " " .. (e.how or "") .. " " .. (e.zone or "") end or entryName)
+  local all, shown
+  if income then
+    shown = B.ledgerRows()
+    all = shown
+  else
+    all = (sale and (B.forSale().list or {})) or (looted and B.looted()) or list()
+    shown = P.view(all, B.filter, B.markedOnly and not side,
+      looted and function(e) return entryName(e) .. " " .. (e.from or "") .. " " .. (e.how or "") .. " " .. (e.zone or "") end or entryName)
+  end
+  -- Looted lists loot only: items from the mail, a merchant or a trade are in the income ledger
+  if looted then
+    local only = {}
+    for _, e in ipairs(shown) do if not e.got then only[#only + 1] = e end end
+    shown = only
+  end
   if sale then
     -- what runs out first, first
     table.sort(shown, function(x, y) return (x.ends or math.huge) < (y.ends or math.huge) end)
-  end
-  -- sales waiting in the mail go on top, newest first
-  if income then
-    local waiting = P.view(B.pending(), B.filter, false, entryName)
-    for i = #waiting, 1, -1 do table.insert(shown, 1, waiting[i]) end
   end
   local n = rows()
   addRows(f, n)
@@ -1016,7 +1434,13 @@ local function renderList(f)
   for i, row in ipairs(f.rows) do
     local e = i <= n and shown[i + B.offset] or nil
     row.entry = e
-    if e then
+    if e and income then
+      local L = B.lay or layoutNow()
+      paintLedgerRow(row, e, L)
+      B.placeRow(row, L)
+      paintRow(row)
+      row:Show()
+    elseif e then
       row.check:SetShown(not side and e.m == true)
       local L = B.lay or layoutNow()
       if not L.fullDate then
@@ -1092,7 +1516,8 @@ local function renderList(f)
     f.empty:SetText(B.forSale().at and "Nothing of yours was up for sale on your last visit to the auction house."
       or "Visit the auction house once on this character and your auctions show here, with how long each has left. Sales after that move to Income (in your mail).")
   elseif #all == 0 and income then
-    f.empty:SetText("No money from the mail yet. From now on, gold you take from the mail shows up here: every auction you sold (item, how many, what you got after the cut) and any other gold. A sold item you can craft shows what one costs to craft again at today's prices (open your profession window once so the addon knows your recipes).")
+    f.empty:SetText(B.openOnly and "No auctions open on this character." or
+      "Nothing in this period yet. From now on every auction you post is followed to its end (sold, expired or cancelled), and every gain is sorted: sales after the cut, vendor sales, looted money, quest rewards, gold from players and your alts kept apart, deposits lost as costs.")
   elseif #all == 0 then
     f.empty:SetText("Nothing bought yet. Every buyout from now on shows up here: from our Buy panel, Blizzard's auction house or another addon. Bids aren't logged.")
   elseif B.markedOnly and not side then
@@ -1111,7 +1536,7 @@ local function renderList(f)
   f.pos:SetPoint("TOPRIGHT", -PAD, -(bottom + 10))
   f.list:SetHeight(bottom + 32)
   f.pos:SetText(#shown > n and ("%d-%d of %d, scroll for more"):format(B.offset + 1, math.min(#shown, B.offset + n), #shown)
-    or (#shown > 0 and ("%d %s"):format(#shown, income and "entries" or (sale and "auctions") or (looted and "loots") or "purchases") or ""))
+    or (#shown > 0 and ("%d %s"):format(#shown, income and "rows" or (sale and "auctions") or (looted and "loots") or "purchases") or ""))
   if looted then
     local n, worth, coins = B.lootToday()
     if B.lay and B.lay.mini then
@@ -1132,19 +1557,16 @@ local function renderList(f)
     return
   end
   if income then
-    local since = time() - 7 * 86400
-    local earned, spent = P.sum(all, since), P.sum(list(), since)
-    local net = earned - spent
-    local np, cp = P.pendingTotal(B.pending())
+    local sm = B.ledgerSum or {}
+    local net = sm.net or 0
+    local label
+    for _, pr in ipairs(B.PERIODS) do if pr[1] == B.periodNow() then label = pr[2] end end
+    label = label == "All" and "All time" or label or ""
     if B.lay and B.lay.mini then
-      f.sum:SetText(("7 days: net %s%s"):format(net < 0 and "-" or "", money(math.abs(net))))
+      f.sum:SetText(("%s: net %s%s"):format(label, net < 0 and "-" or "", money(math.abs(net))))
     else
-      f.sum:SetText(("Last 7 days: earned %s, spent %s, net %s%s"):format(money(earned), money(spent),
+      f.sum:SetText(("%s: income %s, costs %s, net %s%s"):format(label, money(sm.income or 0), money(sm.cost or 0),
         net < 0 and "-" or "", money(math.abs(net))))
-    end
-    if np > 0 then
-      f.sub:SetText(("%d sold, money waiting in your mail%s. Below: gold you took from the mail."):format(np,
-        cp > 0 and (" (about " .. money(cp) .. ")") or ""))
     end
     f.sum:SetTextColor(rgba(net >= 0 and T.ok or T.danger))
     return
@@ -1396,7 +1818,7 @@ function renderOnce()
   end
   local fs = B.forSale()
   f.sub:SetText(looted and "Everything you picked up on this character, newest first: where it came from, and what it is worth today."
-    or income and "Gold you took from the mail. Hover a sale for its margin over crafting it again."
+    or income and "Real gains only: sales after the cut, vendor, loot, quests. Items back from the auction house and gold from players or alts are kept apart."
     or sale and (fs.at and ("Your auctions as the auction house showed them on %s. Sales since then move to Income."):format(date("%d %b %H:%M", fs.at))
       or "Your auctions, read on every visit to the auction house.")
     or "Everything you bought at the auction house. Click the purchases you crafted with to mark them.")
@@ -1439,14 +1861,45 @@ function renderOnce()
   f.qtyHead:SetPoint("RIGHT", L.compact and -(TOTAL_W + 8) or (-(TOTAL_W + L.craftW + EACH_W + 24 + gap) + shift), 0)
   for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not side) end
   if L.mini then f.clear:Hide() end
+  -- Income: the period chips at the right of the toolbar, Open only next to the search, the summary card above the list
+  local per = B.periodNow()
+  local chipW = L.mini and 44 or (L.compact and 52 or 62)
+  for i = #f.periods, 1, -1 do
+    local b = f.periods[i]
+    b:SetShown(income)
+    b:SetWidth(chipW)
+    b:ClearAllPoints()
+    if i == #f.periods then b:SetPoint("TOPRIGHT", -20, L.compact and -49 or -69)
+    else b:SetPoint("RIGHT", f.periods[i + 1], "LEFT", -4, 0) end
+    b.label:SetText(L.mini and (b.period == "today" and "Day" or b.period == "week" and "7d" or b.period == "month" and "30d" or "All") or B.PERIODS[i][2])
+    b:SetOn(b.period == per)
+  end
+  f.openOnly:SetShown(income and not L.compact)
+  f.openOnly:ClearAllPoints()
+  f.openOnly:SetPoint("LEFT", f.search, "RIGHT", 8, 0)
+  f.ledger:SetShown(income)
+  if income then
+    f.search:SetWidth(L.mini and (L.w - 40 - 4 * (chipW + 4)) or (L.compact and 150 or 200))
+    f.ledger:ClearAllPoints()
+    f.ledger:SetPoint("TOPLEFT", 16, -L.top)
+    local h = B.renderLedgerCard(f, L)
+    f.list:ClearAllPoints()
+    f.list:SetPoint("TOPLEFT", 16, -(L.top + h + 10))
+    f.list:SetPoint("RIGHT", -16, 0)
+    f.ledgerH = h + 10
+  else
+    f.ledgerH = 0
+    if B.catMenu then B.catMenu:Hide() end
+  end
   B.placeHeads(f, L)
   f.headWhen:SetText(sale and (L.fullDate and "TIME LEFT" or "LEFT") or "WHEN")
-  f.craftHead:SetText(looted and "FROM" or "CRAFT NOW, EACH")
+  f.headItem:SetText(income and "ITEM OR SOURCE" or "ITEM")
+  f.craftHead:SetText(looted and "FROM" or (income and "WHAT") or "CRAFT NOW, EACH")
   renderList(f)
   local listH = f.list:GetHeight() or 0
   if side then
     if B.picker then B.picker:Hide() end
-    f:SetHeight(L.top + listH + 16)
+    f:SetHeight(L.top + (f.ledgerH or 0) + listH + 16)
     f.pos:SetShown(not L.compact)
     return
   end
