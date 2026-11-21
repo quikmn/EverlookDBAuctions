@@ -3995,6 +3995,25 @@ def upgrades():
     check(w.str == 2 and w.crit == 1.5, "level 60: the wowsims bracket")
     st = U.stats("item:3", 3)
     check(U.score(st, w, "finger") == 6 * 2 + 2 * 1.5, f"score of a ring: {U.score(st, w, 'finger')}")
+    # school damage: from the item's own Equip line, and from a stat key we don't name (Mordresh's Lifeless Skull)
+    lua.execute("""
+      SAVED_TIP = C_TooltipInfo
+      C_TooltipInfo = { GetHyperlink = function(link)
+        if link == "item:777" then return { lines = { { leftText = "Mordresh's Lifeless Skull" },
+          { leftText = "Equip: Increases damage done by Shadow spells and effects by up to 16." } } } end
+      end }
+      SAVED_GIS2 = C_Item.GetItemStats
+      C_Item.GetItemStats = function(link)
+        if link == "item:778" then return { ITEM_MOD_SHADOW_DAMAGE_SHORT = 16, ITEM_MOD_SPIRIT_SHORT = 5 } end
+        return SAVED_GIS2(link)
+      end
+    """)
+    skull = U.stats("item:777", 777)
+    check(skull.sp_shadow == 16, f"Shadow damage from the Equip line: {skull.sp_shadow}")
+    skull2 = U.stats("item:778", 778)
+    check(skull2.sp_shadow == 16 and skull2.spi == 5, "Shadow damage from an unnamed stat key")
+    lua.execute("C_TooltipInfo = SAVED_TIP; C_Item.GetItemStats = SAVED_GIS2")
+    check(U.slotText(T({"slotPct": 12803, "delta": 4, "group": "offhand"})) is None, "no absurd % over a worn item that barely scores")
     sword = U.stats("item:8", 8)
     check(U.score(sword, w, "mainhand") == 300 and U.score(sword, w, "offhand") == 150,
           "weapon DPS counts as main hand or off hand")

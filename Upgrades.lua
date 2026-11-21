@@ -701,6 +701,13 @@ function U.stats(link, id, opts)
     for mod, v in pairs(t) do
       local k = U.MODS[mod]
       v = ns.ok and ns.ok(v) or v
+      if not k and type(mod) == "string" and mod:find("DAMAGE", 1, true) then
+        -- school damage ("+16 Shadow Damage"), whatever the game calls the key
+        for word, key in pairs(SCHOOLS) do
+          if mod:find(word:upper(), 1, true) then k = key; break end
+        end
+        if k and type(v) == "number" then st[k] = math.max(st[k] or 0, v); k = nil end
+      end
       if k and type(v) == "number" and v ~= 0 then
         if type(k) == "table" then
           for _, kk in ipairs(k) do st[kk] = math.max(st[kk] or 0, v) end
@@ -715,7 +722,13 @@ function U.stats(link, id, opts)
   local lines = ns.EFFECTLINES or {}
   if type(e) == "number" then U.parseLine(st, lines[e])
   elseif type(e) == "table" then for _, k in ipairs(e) do U.parseLine(st, lines[k]) end end
-  if opts and opts.tooltip then st.tipRead = U.readTooltipLines(st, opts.tooltip) end
+  if opts and opts.tooltip then
+    st.tipRead = U.readTooltipLines(st, opts.tooltip)
+  elseif C_TooltipInfo and C_TooltipInfo.GetHyperlink then
+    -- the item's own Equip lines: school damage ("Increases damage done by Shadow spells...") isn't in the game's
+    -- stat numbers, so without this a +16 Shadow off-hand would count as nothing for a Shadow priest
+    st.tipRead = U.readTooltipLines(st, function() return C_TooltipInfo.GetHyperlink(full) end)
+  end
   statCount = statCount + 1
   if statCount > 8000 then statCache, statCount = {}, 0 end
   statCache[link] = st
@@ -1213,6 +1226,7 @@ U.WORN_WORD = { head = "helm", neck = "necklace", shoulder = "shoulders", back =
 -- The slot-relative change in words: "+136% over your worn helm" (nil for an empty slot).
 function U.slotText(r)
   if not r or not r.slotPct or not r.delta or r.delta <= 0 then return nil end
+  if r.slotPct > 500 then return nil end   -- the worn item barely scores: a percentage of it says nothing
   local word = (r.group == "mainhand" and (r.parts or 0) > 1) and "weapons" or U.WORN_WORD[r.group] or "item"
   return ("%+.0f%% over your worn %s"):format(r.slotPct, word)
 end

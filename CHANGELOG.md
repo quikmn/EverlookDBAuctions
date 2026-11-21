@@ -9,6 +9,7 @@
 - New Merchant's Favor page: your Favor and, with EverlookDB Crafting, the cheapest Waylaid Crates per Favor.
 - New minimap button: click for the main window, right-click for settings. Hide it with `/eah minimap`.
 - Settings pages renamed so they don't clash with the main pages (Logging, Specs and weights, Crafting).
+- Fixed: gear upgrades ignored school damage like "+16 Shadow damage", so a Shadow priest could be told a weaker off-hand was an upgrade.
 
 ## v0.17.0 (2026-11-21)
 - Gear upgrades use our own simulated stat weights for every spec and level; estimates are marked.
