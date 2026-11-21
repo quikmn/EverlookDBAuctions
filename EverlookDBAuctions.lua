@@ -1398,7 +1398,7 @@ local function vendorLine(t, id, tt)
   end
 end
 
--- "More to vendor" or "More to auction": which pays more for this item, the vendor or the auction house after its
+-- "Most profit: Vendor" or "Most profit: Auction": which pays more for this item, the vendor or the auction house after its
 -- cut (5%, or 15% at the neutral houses in Booty Bay, Gadgetzan and Everlook; the deposit is left out: it comes back
 -- when the item sells). Only when both prices are known; an old auction price makes the line grey.
 -- Returns "auction" or "vendor", the difference per item in copper, whether the price is old, and the cut in percent.
@@ -1410,7 +1410,11 @@ function ns.sellVerdict(id)
   if type(ah) ~= "number" or ah <= 0 or type(sell) ~= "number" or sell <= 0 then return nil end
   local cut = tostring(ns.houseOrFaction and ns.houseOrFaction() or ""):match("%-Neutral$") and 15 or 5
   local net = math.floor(ah * (1 - cut / 100))
-  return net > sell and "auction" or "vendor", math.abs(net - sell), time() - (it[4] or 0) >= STALE, cut
+  -- The auction house only wins when it's clearly worth the bother (listing, waiting, the deposit, being undercut):
+  -- at least 20% and 50 copper more than the vendor, after the cut. Anything closer is "vendor": the sure, instant money.
+  -- The difference is how much more the winner pays; 0 when the vendor wins only because the AH isn't worth it.
+  if net >= sell * 1.2 and net - sell >= 50 then return "auction", net - sell, time() - (it[4] or 0) >= STALE, cut end
+  return "vendor", math.max(0, sell - net), time() - (it[4] or 0) >= STALE, cut
 end
 
 local function verdictLine(t, id, tt)
@@ -1421,8 +1425,9 @@ local function verdictLine(t, id, tt)
   -- "Auction beats vendor  after 5% cut   +1s 97c": how much more the better way pays, per item (or stack)
   -- The top line of our block (the owner's ask: "Most Profit: Vendor / Most Profit: Auction, top most, clearly
   -- visible"): "Most profit: Auction  +1s 97c", how much more the better way pays after the AH cut, per item (or stack).
-  if diff <= 0 then
-    t:Line("Most profit: |cffffffffeither|r", "", { stale = stale })
+  if which == "vendor" and diff <= 0 then
+    -- the AH pays a little more, but not enough to be worth listing it
+    t:Line("Most profit: |cffffd100Vendor|r", "", { note = "AH not worth it", stale = stale })
     return
   end
   local word = which == "auction" and "|cff5ce070Auction|r" or "|cffffd100Vendor|r"

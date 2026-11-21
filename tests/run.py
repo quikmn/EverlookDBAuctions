@@ -2278,6 +2278,17 @@ def shared_tooltip():
     ns.houseOrFaction = keep
     which, diff, stale, cut = ns.sellVerdict(2589)
     check(diff == 90 - 13 and cut == 5, f"faction house: 5% cut: {diff} {cut}")
+    # close prices: the vendor wins (sure, instant money); the AH only when clearly worth it (20% and 50c more)
+    keepItem = ns.itemFor
+    for ah, want in ((60, "vendor"), (16, "vendor"), (2000, "auction")):
+        ns.itemFor = lua.eval(f"function() return {{ {ah}, 5, 1, time() }} end")
+        which, diff, stale, cut = ns.sellVerdict(2589)
+        check(which == want, f"AH {ah}c vs vendor 13c... at {ah}: {which} {diff}")
+    ns.itemFor = lua.eval("function() return { 14, 5, 1, time() } end")
+    lines = show(2589)
+    check(any("Most profit: Vendor" in lines[i] and "AH not worth it" in lines[i] for i in range(1, len(lines) + 1)),
+          f"AH a hair above vendor: 'Most profit: Vendor', AH not worth it: {list(lines.values())}")
+    ns.itemFor = keepItem
     return failures
 
 
