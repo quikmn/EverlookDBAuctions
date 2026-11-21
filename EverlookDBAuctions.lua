@@ -1129,17 +1129,19 @@ local function listed(n) return (n and (Tip and Tip.Count(n) or num(n)) or "?") 
 -- for a line without one), whether it is current, and for a line without a price the word on the right.
 -- Every line says how old it is: a price is never shown as if it were live.
 function ns.auctionLine(label, stack, it, row, scanned, now, serverNow)
+  -- shared prices (SharedPrices.lua) say whose scan they are: "other players' scan · 12 min ago"
+  local function src(p) return type(p) == "table" and p.shared and "other players' scan" or nil end
   if row and row.low then
     local at = now - (serverNow - (row.at or serverNow))
-    return label .. stack, join("this version", listed(row.qty), ago(at)), row.low, now - at < STALE, nil
+    return label .. stack, join("this version", src(row), listed(row.qty), ago(at)), row.low, now - at < STALE, nil
   end
   if it and it[1] then
-    return label .. stack, join(row == false and "any version" or nil, listed(it[2]), ago(it[4])), it[1],
+    return label .. stack, join(row == false and "any version" or nil, src(it), listed(it[2]), ago(it[4])), it[1],
       now - (it[4] or 0) < STALE, nil
   end
   if it and (it[2] or 0) > 0 then
     -- the last full scan found some, but only with a bid and no buyout
-    return label, join(listed(it[2]) .. " with bids only", ago(it[4])), nil, false, "no buyout"
+    return label, join(listed(it[2]) .. " with bids only", src(it), ago(it[4])), nil, false, "no buyout"
   end
   if scanned then return label, join("full scan " .. ago(scanned)), nil, false, "none listed" end
 end
@@ -1182,7 +1184,7 @@ local function auctionLines(t, id, tooltip)
   local suffix = stack > 1 and (" x" .. stack) or ""
   local keys = { factionKey() }
   local neutral = (GetRealmName() or "?") .. "-Neutral"
-  if db.houses[neutral] then keys[#keys + 1] = neutral end
+  if db.houses[neutral] or (ns.shared and ns.shared.house(neutral)) then keys[#keys + 1] = neutral end
   -- random-stat gear: the tooltip's own version ("of the Bear") has its own price in the full scan
   local vkey
   if tooltip and tooltip.GetItem then
@@ -1192,19 +1194,20 @@ local function auctionLines(t, id, tooltip)
   end
   for _, key in ipairs(keys) do
     local h = db.houses[key]
-    local it = h and h.items[id]
     local side = key:match("%-(%a+)$")
+    -- our own prices and other players' shared scan, the newer of the two (ns.itemFor)
+    local it = ns.itemFor(id, side)
+    local d = ns.historyDays(id, side)
     local label = side == "Neutral" and "Neutral auction house" or "Auction house"
-    if tipOn("auction") and h then
+    if tipOn("auction") and (h or (ns.shared and ns.shared.house(key))) then
       -- false: a version that isn't in the newest scan, so the line says the price is for any version
       local row = vkey and (ns.scanRowFor(vkey, side) or false) or nil
-      local left, note, price, fresh, word = ns.auctionLine(label, suffix, it, row, h.scanned and h.days[id] and h.scanned,
+      local left, note, price, fresh, word = ns.auctionLine(label, suffix, it, row, d and ns.pricesAt(side),
         time(), GetServerTime and GetServerTime() or time())
       if left then
         t:Line(left, price and Tip.Money(each(price)) or word, { note = note, stale = not fresh })
       end
     end
-    local d = h and h.days[id]
     if d and tipOn("history") then
       local list = {}
       for _, p in pairs(d) do list[#list + 1] = p end
@@ -1598,7 +1601,9 @@ function ns.statusLines()
     out[#out + 1] = ("%s: %s prices, %s"):format(houseName(key), num(ns.countItems(h)),
       h.scanned and ("updated " .. ago(h.scanned)) or "no full update yet")
   end
-  if #keys == 0 then out[#out + 1] = "No prices yet: open the auction house and let it update prices, or just search." end
+  local shared = ns.shared and ns.shared.statusLines() or {}
+  for _, l in ipairs(shared) do out[#out + 1] = l end
+  if #keys == 0 and #shared == 0 then out[#out + 1] = "No prices yet: open the auction house and let it update prices, or just search." end
   local n = unsavedInfo()
   if n > 0 then
     out[#out + 1] = ("%d %s waiting to upload: saved for EverlookDB.com when you log out or reload"):format(n,
@@ -1641,35 +1646,81 @@ end
 -- the open auction house, else your faction's (what tooltips use), for searches away from the auction house
 ns.houseOrFaction = function() return keyFor() end
 
--- The newest full scan's row for "id:suffix": { low, p10, med, qty, n, at } (at is server time), or nil.
+-- Shared prices (SharedPrices.lua): other players' newest scan, from the EverlookDB App. It is never written into
+-- db; each lookup below takes whichever is newer, our own or the shared one, per item and per item version.
+
+-- The newest full scan's row for "id:suffix": { low, p10, med, qty, n, at } (at is server time), or nil. A row from
+-- the shared scan has shared = true.
 function ns.scanRowFor(key, side)
   if not db then return nil end
-  local realm, want = keyFor(side):match("^(.*)%-(%a+)$")
+  local hk = keyFor(side)
+  local realm, want = hk:match("^(.*)%-(%a+)$")
+  local mine, mineAt
   for k = #db.scans, 1, -1 do
     local sc = db.scans[k]
     if sc.realm == realm and sc.side == want then
+      mineAt = sc.at or 0
       local row = sc.rows and sc.rows[key]
-      if not row then return nil end
-      local f = { strsplit(",", row) }
-      return { low = tonumber(f[1]), p10 = tonumber(f[2]), med = tonumber(f[3]), qty = tonumber(f[4]), n = tonumber(f[5]), at = sc.at }
+      if row then
+        local f = { strsplit(",", row) }
+        mine = { low = tonumber(f[1]), p10 = tonumber(f[2]), med = tonumber(f[3]), qty = tonumber(f[4]), n = tonumber(f[5]), at = sc.at }
+      end
+      break
     end
   end
+  local sh = ns.shared and ns.shared.house(hk)
+  if sh and (not mineAt or sh.at > mineAt) then
+    -- the newer full scan is the shared one: what it doesn't list wasn't up
+    return ns.shared.row(hk, key) or nil
+  end
+  return mine
+end
+
+-- Lowest price per day for an item over the last 30 days, ours and the shared scans' together (the lower of the
+-- two each day): { [day number] = copper } or nil.
+function ns.historyDays(id, side)
+  local hk = keyFor(side)
+  local h = db and db.houses[hk]
+  local mine = h and h.days[id]
+  local theirs = ns.shared and ns.shared.days(hk, id)
+  if not theirs then return mine end
+  local oldest = today() - HISTORY_DAYS
+  local out = {}
+  for day, p in pairs(theirs) do if day >= oldest then out[day] = p end end
+  for day, p in pairs(mine or {}) do if not out[day] or p < out[day] then out[day] = p end end
+  return next(out) and out or mine
 end
 
 -- Lowest price per day for an item (last 30 days), oldest first: { { day, price }, ... }.
 function ns.historyFor(id, side)
   local out = {}
-  local h = db and db.houses[keyFor(side)]
-  local d = h and h.days[id]
+  local d = db and ns.historyDays(id, side)
   if d then for day, p in pairs(d) do out[#out + 1] = { day, p } end end
   table.sort(out, function(a, b) return a[1] < b[1] end)
   return out
 end
 
--- The saved price for an item: { lowest unit buyout, quantity, auctions, time } or nil.
+-- The price for an item: { lowest unit buyout, quantity, auctions, time } or nil: our own saved one, or the shared
+-- scan's (with shared = true) when that is newer. Callers only read it.
 function ns.itemFor(id, side)
-  local h = db and db.houses[keyFor(side)]
-  return h and h.items[id]
+  local hk = keyFor(side)
+  local h = db and db.houses[hk]
+  local mine = h and h.items[id]
+  local theirs = ns.shared and ns.shared.item(hk, id)
+  if theirs and (not mine or theirs[4] > (mine[4] or 0)) then return theirs end
+  return mine
+end
+
+-- How old a house's prices are and whose they are: the newer of our last full scan and the shared scan (local
+-- time), and true when it is the shared one. nil when there is neither.
+function ns.pricesAt(side)
+  local hk = keyFor(side)
+  local h = db and db.houses[hk]
+  local mine = h and h.scanned
+  local sh = ns.shared and ns.shared.house(hk)
+  local theirs = sh and ns.shared.localAt(sh)
+  if theirs and (not mine or theirs > mine) then return theirs, true end
+  return mine, false
 end
 
 -- What disenchanting an item is worth: the sum over its materials of chance x average count x the material's

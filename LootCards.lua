@@ -71,7 +71,7 @@ L.parseMoney = parseMoney
 -- Roughly what one is worth: the lowest auction from the last scan, else the vendor price.
 function L.worth(id)
   local it = ns.itemFor and ns.itemFor(id)
-  if it and it[1] and it[1] > 0 then return it[1], "ah" end
+  if it and it[1] and it[1] > 0 then return it[1], it.shared and "shared" or "ah" end
   local ok, _, _, _, _, _, _, _, _, _, _, sell = pcall(C_Item.GetItemInfo, id)
   if ok and type(sell) == "number" and sell > 0 then return sell, "vendor" end
 end
@@ -223,7 +223,7 @@ local function fill(card)
   if each then
     local total = each * e.count
     card.sub:SetText((e.count > 1 and ("%s (%s each)"):format(money(total), money(each)) or money(total))
-      .. (src == "vendor" and "  at a vendor" or "  at the auction house"))
+      .. (src == "vendor" and "  at a vendor" or src == "shared" and "  at the AH (other players' scan)" or "  at the auction house"))
   else
     card.sub:SetText("")
   end

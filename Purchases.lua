@@ -1196,7 +1196,9 @@ local function renderRecipe(f)
     if each then
       local makes = r.makes or 1
       local value = math.floor(each * makes)
-      lines[#lines + 1] = { makes > 1 and ("Sells for (makes %s)"):format(makes) or "Sells for", value,
+      local it = ns.itemFor and ns.itemFor(r.out)
+      local sells = it and it.shared and "Sells for (other players' scan)" or "Sells for"
+      lines[#lines + 1] = { makes > 1 and ("%s (makes %s)"):format(sells, makes) or sells, value,
         (at and time() - at >= STALE) and T.muted or nil }
       if c.unpriced == 0 then
         local cut = ns.ahCut and ns.ahCut() or 0.05

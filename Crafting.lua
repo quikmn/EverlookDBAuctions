@@ -315,7 +315,8 @@ local function render()
 
   -- how old the prices are: the oldest one used (a price over a day old is grey)
   if w.oldest and ns.ago then
-    f.sub:SetText("AH prices, oldest " .. ns.ago(w.oldest))
+    local _, shared = ns.pricesAt and ns.pricesAt()
+    f.sub:SetText("AH prices, oldest " .. ns.ago(w.oldest) .. (shared and " · other players' scan" or ""))
     f.sub:SetTextColor(unpack(stale(w.oldest) and BAD or QUIET))
   else
     f.sub:SetText("lowest AH price")

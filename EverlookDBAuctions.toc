@@ -5,6 +5,7 @@
 ## Version: v0.14.1
 ## SavedVariables: EverlookAuctionsDB
 ## SavedVariablesPerCharacter: EverlookAuctionsCharDB
+## OptionalDeps: EverlookDBAuctions_Shared
 ## IconTexture: Interface\AddOns\EverlookDBAuctions\Media\icon
 
 Libs\LibStub\LibStub.lua
@@ -13,6 +14,7 @@ Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
 Libs\EverlookUI\EverlookUI.lua
 Libs\EverlookUI\EverlookTooltip.lua
 EverlookDBAuctions.lua
+SharedPrices.lua
 Skin.lua
 Data.lua
 Disenchant.lua

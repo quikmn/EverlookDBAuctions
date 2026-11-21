@@ -125,6 +125,7 @@ def main() -> int:
     failures += item_cache()
     failures += full_scan()
     failures += profit()
+    failures += shared_prices()
 
     if failures:
         for f in failures:
@@ -2263,6 +2264,142 @@ def shared_tooltip():
     return failures
 
 
+SHARED_SETUP = """
+SHIFT = false
+function IsShiftKeyDown() return SHIFT end
+ERRORS = {}
+function geterrorhandler() return function(e) ERRORS[#ERRORS + 1] = e end end
+Enum = { TooltipDataType = { Item = 0, Unit = 2 } }
+HOOKS = {}
+TooltipDataProcessor = { AddTooltipPostCall = function(t, fn) HOOKS[t] = fn end }
+C_Item.GetItemInfo = function(id) if id == 2589 then return "Linen Cloth", nil, 1, 5, 1, "Trade Goods", "", 200, "", 0, 13 end end
+C_Item.GetItemMaxStackSizeByID = function() return 20 end
+local h = EverlookAuctionsDB.houses["Test-Alliance"]
+h.items[2589] = { 95, 3365, 40, MOCK_TIME - 76 * 60 }
+h.days[2589] = { [99] = 93, [98] = 95, [97] = 120 }
+h.scanned = MOCK_TIME - 76 * 60
+EverlookAuctionsDB.scans = { { realm = "Test", side = "Alliance", at = MOCK_TIME - 76 * 60,
+  rows = { ["2589:0"] = "95,96,99,3365,40,0,0,0,0,0,40," , ["4000:7"] = "500,500,500,1,1,0,0,0,0,0,1,,of the Owl" } } }
+EverlookDBAuctionsShared = { version = 1, written = MOCK_TIME, houses = {
+  ["EU-4-Alliance"] = { region = "EU", realm = "Test", realmID = 4, side = "Alliance", at = MOCK_TIME - 12 * 60,
+    auctions = 500, firstDay = 95,
+    rows = {
+      ["2589:0"] = "90,91,94,4000,50,0,0,0,0,0,50,",
+      ["2589:5"] = "80,80,80,2,2,0,0,0,0,0,2,,of the Bear",
+      ["777:0"] = { "not", "text" },
+      ["778:0"] = "lots,of,words",
+      ["oops"] = "1,1,1,1,1",
+      ["779:0"] = "-5,1,1,1,1",
+    },
+    lows = { [2589] = "200,,88,,", [778] = { 1 }, [779] = "x,y" },
+  },
+  ["EU-4-Horde"] = { realm = "Test", side = "Horde", at = "soon", rows = {} },
+  ["junk"] = "nope",
+} }
+"""
+
+
+def shared_prices():
+    """Shared prices (SharedPrices.lua, from the EverlookDB App's data addon): the newer of our own scan and other
+    players' wins per item and version, says whose it is, merges the daily lows, never writes into our saved data,
+    can be ignored, and a missing or broken file changes nothing."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("shared prices: " + what)
+
+    def start(extra=""):
+        lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+        lua.execute(source_of("tests/mock.lua"))
+        run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+        lua.execute(CORE_SETUP)
+        lua.execute(SHARED_SETUP)
+        lua.execute(extra)
+        for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookTooltip.lua"):
+            run(source_of(lib), lib)
+        ns = lua.table()
+        for name in ("EverlookDBAuctions.lua", "SharedPrices.lua", "API.lua"):
+            run(source_of(name), name, "EverlookDBAuctions", ns)
+        fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+        fire("ADDON_LOADED", "EverlookDBAuctions")
+        show = lua.eval("""function(id)
+          local tip = { lines = {} }
+          function tip:GetOwner() return nil end
+          function tip:AddLine(l) self.lines[#self.lines + 1] = (l:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+          function tip:AddDoubleLine(l, r)
+            local function s(x) return (x:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T[^|]-UI%-(%a)%a+Icon[^|]*|t",function(c) return c:lower() end)) end
+            self.lines[#self.lines + 1] = s(l) .. " = " .. s(r)
+          end
+          HOOKS[0](tip, { id = id })
+          local out = {}
+          for _, l in ipairs(tip.lines) do out[#out + 1] = l end
+          return table.concat(out, " ;; ")
+        end""")
+        return lua, ns, show
+
+    lua, ns, show = start()
+    G = lua.globals()
+    it = ns.itemFor(2589)
+    check(it is not None and it[1] == 80 and it.shared and it[2] == 4002 and it[3] == 52,
+          f"the newer shared scan wins, all versions together: {it and (it[1], it[2], it[3])}")
+    own = G.EverlookAuctionsDB.houses["Test-Alliance"]["items"][2589]
+    check(own[1] == 95 and own.shared is None, "our own saved price is untouched")
+    check(G.EverlookAuctionsDB.shared is None and G.EverlookAuctionsDB.houses["EU-4-Alliance"] is None,
+          "nothing shared goes into the saved variables")
+    tip = show(2589)
+    check("Auction house  other players' scan · 4,002 listed · 12 min ago = 80c" in tip, f"the tooltip says whose and how old: {tip}")
+    check("30-day low / median = 88c / 93c" in tip, f"the 30-day line uses the shared daily lows too: {tip}")
+    row = ns.scanRowFor("2589:0")
+    check(row is not None and row.low == 90 and row.shared and row.at == G.MOCK_TIME - 720, "a version's row from the shared scan")
+    check(ns.scanRowFor("4000:7") is None, "a version the newer (shared) scan doesn't list isn't up")
+    check(ns.scanRowFor("777:0") is None and ns.scanRowFor("778:0") is None and ns.scanRowFor("779:0") is None,
+          "rows that aren't plain numbers are skipped")
+    hist = ns.historyFor(2589)
+    check([(hist[i][1], hist[i][2]) for i in range(1, len(hist) + 1)] == [(95, 200), (97, 88), (98, 95), (99, 93)],
+          f"daily lows merged, the lower each day: {[(hist[i][1], hist[i][2]) for i in range(1, len(hist) + 1)]}")
+    api = G.EverlookDBAuctionsAPI
+    low, age, qty, n, src = api.price(2589)
+    check(low == 80 and age == 720 and src == "shared", f"the API gives the shared price and says so: {low} {age} {src}")
+    low, age, qty, n, src = api.price(2589, 5)
+    check(low == 80 and src == "shared", "the API: a version from the shared scan")
+    which, diff, stale, cut = ns.sellVerdict(2589)
+    check(which == "auction" and diff == 76 - 13, f"More to auction uses the newer price: {which} {diff}")
+    at, shared = ns.pricesAt()
+    check(at == G.MOCK_TIME - 720 and shared is True, "how old the prices are: the shared scan")
+    check(any("Shared prices, Test-Alliance" in l for l in ns.statusLines().values()), "/eah status lists the shared house")
+    check(len(G.ERRORS) == 0, f"no errors: {list(G.ERRORS.values())}")
+
+    # the setting: only our own scans
+    G.EverlookAuctionsDB.ignoreShared = True
+    it = ns.itemFor(2589)
+    check(it[1] == 95 and it.shared is None, "ignored: our own price")
+    check("other players" not in show(2589), "ignored: the tooltip doesn't mention it")
+    check(api.price(2589)[0] == 95 and api.price(2589)[4] == "own", "ignored: the API gives our own")
+    G.EverlookAuctionsDB.ignoreShared = None
+
+    # our own newer scan wins over an older shared one
+    lua, ns, show = start("EverlookDBAuctionsShared.houses['EU-4-Alliance'].at = MOCK_TIME - 3 * 3600")
+    it = ns.itemFor(2589)
+    check(it[1] == 95 and it.shared is None, "an older shared scan loses to our own")
+    row = ns.scanRowFor("4000:7")
+    check(row is not None and row.low == 500 and not row.shared, "our newer scan's version rows")
+    check("this version" not in show(2589) and "other players" not in show(2589), "the tooltip shows our own")
+
+    # a missing or broken file is the same as none
+    for broken in ("EverlookDBAuctionsShared = nil", "EverlookDBAuctionsShared = 'x'",
+                   "EverlookDBAuctionsShared = { version = 2, houses = {} }",
+                   "EverlookDBAuctionsShared = { version = 1, houses = 5 }",
+                   "EverlookDBAuctionsShared.houses['EU-4-Alliance'].rows = 'x'",
+                   "EverlookDBAuctionsShared.houses['EU-4-Alliance'].at = 0/0"):
+        lua, ns, show = start(broken)
+        it = ns.itemFor(2589)
+        check(it is not None and it[1] == 95 and not it.shared, f"{broken}: our own price")
+        check("Auction house" in show(2589), f"{broken}: the tooltip still works")
+        check(len(lua.globals().ERRORS) == 0, f"{broken}: no errors")
+    return failures
+
+
 def reload_logged():
     """An update cut off by a reload or logout shows in /eah status's update log once, as the bar already says."""
     failures = []
@@ -3254,7 +3391,7 @@ def profit_api():
         if not cond:
             failures.append("profit api: " + what)
 
-    check(api.version == 2, "version 2")
+    check(api.version == 3, "version 3")
     ok_add, new = api.addShoppingList("Linen Bags", lua.eval("{ { 2589, 24 }, { 2320, 12 } }"))
     check(ok_add is True and new is True and len(DB.lists) == 1 and DB.lists[1].want['name is "Linen Cloth"'] == 24,
           "addShoppingList saves a list")

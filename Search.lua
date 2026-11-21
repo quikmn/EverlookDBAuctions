@@ -891,15 +891,24 @@ local function sourceText(bits)
   return sourceCache[bits]
 end
 
-local function dataset()
-  local db, house = ns.db(), ns.house() or (ns.houseOrFaction and ns.houseOrFaction())
-  if not db or not house then return nil end
+-- The newest full scan of a house ("Realm-Side"): our own, or other players' shared one (SharedPrices.lua, the same
+-- row form, shared = true) when that is newer. nil when there is neither.
+local function newestScan(db, house)
   local side, realm = house:match("%-(%a+)$"), GetRealmName()
   local scanned
   for k = #db.scans, 1, -1 do
     local sc = db.scans[k]
     if sc.realm == realm and sc.side == side then scanned = sc; break end
   end
+  local shared = ns.shared and ns.shared.scan(house)
+  if shared and (not scanned or shared.at > (scanned.at or 0)) then return shared end
+  return scanned
+end
+
+local function dataset()
+  local db, house = ns.db(), ns.house() or (ns.houseOrFaction and ns.houseOrFaction())
+  if not db or not house then return nil end
+  local scanned = newestScan(db, house)
   if not scanned then return nil end
   if Q.cacheFor == scanned then return Q.cache, scanned, Q.missing end
   local rows, missing = {}, 0
@@ -1012,7 +1021,7 @@ local function run(text)
   end
   local head = counted and ("%s matching item versions"):format(ns.num(counted))
     or ("%s results"):format(ns.num(#out))
-  head = head .. (" in the full scan %s"):format(ns.ago(scanned.at))
+  head = head .. (scanned.shared and " in other players' scan %s" or " in the full scan %s"):format(ns.ago(scanned.at))
   Q.deals = deals
   Q.ordered = ordered
   -- tooltips the game is still loading count as items still to learn: the search runs again as they arrive
@@ -1717,12 +1726,8 @@ local function unsaved()
   local db, house = ns.db(), ns.house()
   if not db or not house then return {} end
   store()
-  local side, realm = house:match("%-(%a+)$"), GetRealmName()
-  local rows
-  for k = #db.scans, 1, -1 do
-    local sc = db.scans[k]
-    if sc.realm == realm and sc.side == side then rows = sc.rows; break end
-  end
+  local sc = newestScan(db, house)
+  local rows = sc and sc.rows
   local ids, seen = {}, {}
   for key in pairs(rows or {}) do
     local id = tonumber(key:match("^(%d+)"))

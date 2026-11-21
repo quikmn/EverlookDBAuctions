@@ -384,6 +384,7 @@ local function collect()
               key = key, id = info.itemID, link = info.hyperlink, icon = info.iconFileID, quality = info.quality,
               name = info.hyperlink and info.hyperlink:match("%[(.-)%]") or ("item " .. info.itemID),
               count = 0, slots = {}, scan = row and (row.med or row.low), scanAt = row and row.at, scanN = row and row.n,
+              scanShared = row and row.shared,
             }
             byKey[key] = g
             groups[#groups + 1] = g
@@ -831,10 +832,12 @@ local function suggest()
   if mem and mem.p then return mem.p, lead .. "Your last price (" .. ns.ago(mem.at) .. ")." .. tail end
   if g.scan and scanTrusted(g.scanN, g.scanAt) then
     local when = g.scanAt and (", " .. ns.ago(g.scanAt)) or ""
-    return roundPrice(g.scan), lead .. "Usual price at the last full scan" .. when .. "." .. tail
+    return roundPrice(g.scan), lead .. (g.scanShared and "Usual price in other players' scan" or "Usual price at the last full scan")
+      .. when .. "." .. tail
   end
   if g.scan then
-    return nil, lead .. ("The last full scan saw only %d at %s, %s: too few to go by. Set a price."):format(
+    return nil, lead .. ((g.scanShared and "Other players' scan saw only %d at %s, %s: too few to go by. Set a price."
+      or "The last full scan saw only %d at %s, %s: too few to go by. Set a price.")):format(
       g.scanN or 0, money(g.scan), g.scanAt and ns.ago(g.scanAt) or "a while ago") .. tail
   end
   if e then return nil, "Nobody is selling this." .. age .. " Set a price." end

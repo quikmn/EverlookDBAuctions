@@ -378,16 +378,22 @@ function W.render(keep)
   local h = d.houses and d.houses[houseKey()]
   local nPrices = 0
   if h and h.items then for _ in pairs(h.items) do nPrices = nPrices + 1 end end
+  -- other players' scan (shared prices) counts too, and says so when it is the newer one
+  local sh = ns.shared and ns.shared.house(houseKey())
+  if sh then for _ in pairs(sh.items) do nPrices = nPrices + 1 end end
+  local pricesAt, shared = nil, false
+  if ns.pricesAt then pricesAt, shared = ns.pricesAt(houseKey():match("%-(%a+)$")) end
   local realm, side = houseKey():match("^(.*)%-(%a+)$")
   local where = side and (side .. " auction house") or "your auction house"
   if nPrices == 0 then
     f.sub:SetText(("From the %d recipes you know. No prices yet for the %s."):format(counts.known, where))
     f.sub:SetTextColor(rgba(T.danger))
   else
-    local when = h.scanned and ("full update " .. ns.ago(h.scanned)) or "no full update yet"
+    local when = shared and ("other players' scan " .. ns.ago(pricesAt))
+      or (h and h.scanned) and ("full update " .. ns.ago(h.scanned)) or "no full update yet"
     f.sub:SetText(("From the %d recipes you know, at the %s's prices (%s), after its %d%% cut."):format(counts.known, where,
       when, math.floor((ns.ahCut and ns.ahCut() or 0.05) * 100 + 0.5)))
-    f.sub:SetTextColor(rgba((not h.scanned or time() - h.scanned >= Pr.STALE) and T.danger or T.muted))
+    f.sub:SetTextColor(rgba((not pricesAt or time() - pricesAt >= Pr.STALE) and T.danger or T.muted))
   end
 
   local maxOff = math.max(0, #rows - ROWS)

@@ -103,6 +103,13 @@ local function build()
     end,
   })
   app:Setting({
+    key = "shared", type = "bool", label = "Use other players' prices (shared prices from the EverlookDB App)",
+    chatLabel = "Shared prices", keywords = { "shared", "other players", "app", "everlookdb app", "server", "website", "prices", "ignore", "scan" },
+    desc = "The EverlookDB App puts the newest scan anyone uploaded for your auction houses into the game; it's read at login or /reload. Where it is newer than your own scan, prices come from it and say \"other players' scan\". Your own saved scans are never changed. Off: only your own scans.",
+    get = function() return not db().ignoreShared end,
+    set = function(v) db().ignoreShared = (not v) or nil end,
+  })
+  app:Setting({
     key = "skin", type = "bool", label = "EverlookDB look for Blizzard's auction house (after /reload)", keywords = { "skin", "theme", "style" },
     get = function() return db().skin ~= false end,
     set = function(v) db().skin = v end,
@@ -278,6 +285,7 @@ local function build()
     UI.Header(stack, "General")
     app:Widget(stack, "openon")
     app:Widget(stack, "auto")
+    app:Widget(stack, "shared")
     app:Widget(stack, "skin")
     app:Widget(stack, "crafting")
     UI.Header(stack, "Chat commands")

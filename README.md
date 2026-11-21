@@ -19,9 +19,20 @@ Auction house prices, selling and shopping lists for WoW Forever, from the maker
 - **Loot cards and Hurray!:** a short card at the top of the screen for each loot, with roughly what it's worth, and a card with fireworks when one of your auctions sells. Both can be turned off.
 - **Everlook Bar:** a Loot plugin for Everlook Bar (or any data-broker bar) shows today's loot.
 - **Options:** type `/eah` for the settings window (it is also in the game's Settings under AddOns). Every setting is a command too: `/eah get` lists them, `/eah duration 24` changes one.
+- **Shared prices:** with the [EverlookDB App](https://github.com/quikmn/everlookdb-uploader) running, the newest scan anyone uploaded to EverlookDB.com for your auction houses is in the game at your next `/reload` or login, so prices are fresh even when you haven't been to the auction house for days. See below.
 - Prices are kept per realm and per auction house (Alliance, Horde, and the neutral houses in Booty Bay, Gadgetzan and Everlook).
 
 Sellers, bidders and other players are never saved. Nothing is ever posted, bought or cancelled without your click.
+
+## Shared prices
+
+Players' scans are uploaded to EverlookDB.com by the [EverlookDB App](https://github.com/quikmn/everlookdb-uploader). The app also goes the other way: every 15 minutes, and right after each of your uploads, it fetches the newest scan of each auction house you play on (your realms and factions, and the realm's neutral house) and writes it into the game as a small data addon, `EverlookDBAuctions_Shared`. The game only reads addon files at login and `/reload`, so that is when new shared prices arrive. Without the app (or with its Shared prices switch off) nothing changes.
+
+- For each item and random-stat version, whichever is newer is used: your own scan or the shared one. A shared price always says so ("other players' scan · 12 min ago").
+- The 30-day low and median combine your daily lows with everyone's (the lower of the two each day).
+- Your own saved scans and prices are never overwritten; the shared file is kept apart and only combined when a price is read. A missing, old or broken shared file is simply ignored.
+- The shared data has no player names, like everything else here.
+- Turn it off on the General page of `/eah` ("Use other players' prices") or with `/eah shared off`.
 
 ## For addon authors: EverlookDBAuctionsAPI
 
@@ -31,6 +42,9 @@ A small API, read-only apart from adding shopping lists, so other addons can use
 local api = EverlookDBAuctionsAPI
 if api and api.version >= 1 then
   local low, age, qty, auctions = api.price(itemID)
+end
+if api and api.version >= 3 then
+  local low, age, qty, auctions, source = api.price(itemID)   -- source: "own" or "shared"
 end
 if api and api.version >= 2 then
   local ok, isNew = api.addShoppingList("Mageweave Bag", { { 4338, 8 }, { 2321, 2 } })
@@ -43,7 +57,8 @@ end
   - how old that price is, in seconds
   - how many are up
   - how many auctions (`nil` when only a normal search saw it)
-- `api.history(item[, side])`: the lowest price per day for the last 30 days, oldest first: `{ { day = <unix time at the start of the day, UTC>, low = <copper> }, ... }`. It's an empty table when there is none.
+  - (version 3) where it is from: `"own"` (this player's scans and searches) or `"shared"` (other players' newest scan, from the EverlookDB App; see Shared prices). Whichever is newer is returned.
+- `api.history(item[, side])`: the lowest price per day for the last 30 days, oldest first: `{ { day = <unix time at the start of the day, UTC>, low = <copper> }, ... }`, own and shared scans together. It's an empty table when there is none.
 - `api.disenchant(item)` returns, or `nil` when the item can't be disenchanted or a material has no price yet:
   - the estimated auction house value of disenchanting it, in copper
   - the age in seconds of the oldest material price it used

@@ -6,10 +6,13 @@
 --   end
 --
 --   api.version                           number: goes up by one whenever something is added; nothing is ever removed
---   api.price(item[, suffix[, side]])     lowest buyout per unit in copper, its age in seconds, how many are up, and
---                                         how many auctions (nil when only a search saw it); nil when there is no price
+--   api.price(item[, suffix[, side]])     lowest buyout per unit in copper, its age in seconds, how many are up, how
+--                                         many auctions (nil when only a search saw it), and (version 3) where it is
+--                                         from: "own" (this player's scans and searches) or "shared" (other players'
+--                                         newest scan, from the EverlookDB App); nil when there is no price
 --   api.history(item[, side])             the lowest price per day for the last 30 days, oldest first:
 --                                         { { day = unix time at the start of that day (UTC), low = copper }, ... }
+--                                         (own and shared scans together: the lower of the two each day)
 --   api.disenchant(item)                  what disenchanting the item is worth on the auction house, in copper, an
 --                                         estimate from the drop chances in classic-db and today's material prices,
 --                                         and how old the oldest material price is; nil when it can't be disenchanted
@@ -28,7 +31,7 @@
 -- returned are copies. addShoppingList is the one call that writes: it only adds or replaces a list.
 local _, ns = ...
 
-local api = { version = 2 }
+local api = { version = 3 }
 
 local function idOf(item)
   if type(item) == "number" then return item end
@@ -45,11 +48,11 @@ function api.price(item, suffix, side)
   if suffix and suffix ~= 0 then
     local row = ns.scanRowFor(id .. ":" .. suffix, side)
     if not row or not row.low then return nil end
-    return row.low, math.max(0, GetServerTime() - row.at), row.qty, row.n
+    return row.low, math.max(0, GetServerTime() - row.at), row.qty, row.n, row.shared and "shared" or "own"
   end
   local it = ns.itemFor(id, side)
   if not it or not it[1] then return nil end
-  return it[1], math.max(0, time() - (it[4] or 0)), it[2], it[3]
+  return it[1], math.max(0, time() - (it[4] or 0)), it[2], it[3], it.shared and "shared" or "own"
 end
 
 function api.history(item, side)
