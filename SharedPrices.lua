@@ -167,7 +167,7 @@ end
 
 -- The house to show when none is given (the settings page): this realm's, your faction's first.
 local function here()
-  local realm = GetRealmName and GetRealmName()
+  local realm = ns.realmName and ns.realmName()
   if not realm then return nil end
   local all = load()
   for _, side in ipairs({ UnitFactionGroup and UnitFactionGroup("player") or "?", "Neutral" }) do
@@ -228,7 +228,7 @@ if CreateFrame and C_Timer and C_Timer.After then
   f:RegisterEvent("PLAYER_LOGIN")
   f:SetScript("OnEvent", function()
     C_Timer.After(5, function()
-      local realm = GetRealmName and GetRealmName()
+      local realm = ns.realmName and ns.realmName()
       if not realm then return end
       for _, side in ipairs({ UnitFactionGroup and UnitFactionGroup("player") or "?", "Neutral" }) do
         pcall(S.house, realm .. "-" .. side)

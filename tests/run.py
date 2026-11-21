@@ -124,6 +124,7 @@ def main() -> int:
     failures += buy_sort()
     failures += item_cache()
     failures += full_scan()
+    failures += realm_repair()
     failures += profit()
     failures += shared_prices()
     failures += upgrades()
@@ -2699,14 +2700,16 @@ C_AuctionHouse = {
 """
 
 
-def scan_lua():
+def scan_lua(extra=""):
     """The core with a fake replicate list, timers that run when ADVANCE says and a stand-in skin; the auction house
-    is open."""
+    is open. `extra` is Lua run before the addon loads (a different realm, saved data)."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     lua.execute(source_of("tests/mock.lua"))
     lua.execute(CORE_SETUP)
     lua.execute(SCAN_SETUP)
-    lua.execute("EverlookAuctionsDB.houses['Test-Alliance'].items[99] = { 5, 1, 1, 1 }")
+    if extra:
+        lua.execute(extra)
+    lua.execute("local h = EverlookAuctionsDB.houses['Test-Alliance']; if h then h.items[99] = { 5, 1, 1, 1 } end")
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     ns = lua.table()
     run(source_of("EverlookDBAuctions.lua"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
@@ -2729,6 +2732,132 @@ def scan_lua():
 def printed(lua):
     P = lua.globals().PRINTED
     return "\n".join(P[i] for i in range(1, len(P) + 1))
+
+
+def realm_repair():
+    """The realm at scan time: an empty, missing or secret GetRealmName() and a GetRealmID() of 0 (a fresh install,
+    report K46304) never save a scan with an empty realm when anything else names it (the character's GUID, the realm
+    remembered from an earlier session); with nothing at all the scan is marked and put right at the next login, as
+    are scans older versions saved with realm "" and ID 0, but only when the account names no other realm."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("realm: " + what)
+
+    def scan_now(lua, fire):
+        G = lua.globals()
+        G.LOADS_AFTER = 1
+        G.ADVANCE(1)
+        G.SlashCmdList.EVERLOOKAUCTIONS("scan")
+        fire("REPLICATE_ITEM_LIST_UPDATE")
+        G.ADVANCE(30)
+        db = G.EverlookAuctionsDB
+        return db, db.scans[len(db.scans)]
+
+    def status(ns):
+        lines = ns.statusLines()
+        return [lines[i] for i in range(1, len(lines) + 1)]
+
+    KNOWN = 'function GetRealmName() return "Test" end; function GetRealmID() return 6946 end'
+
+    def login_with(saved_lua, setup):
+        """A new session over saved data (Lua source of EverlookAuctionsDB), the realm as `setup` says."""
+        lua, ns, fire = scan_lua(setup + "\nEverlookAuctionsDB = " + saved_lua)
+        fire("PLAYER_LOGIN")
+        fire("PLAYER_ENTERING_WORLD")
+        return lua, ns, lua.globals().EverlookAuctionsDB
+
+    # the game knows its realm: name and ID as it says
+    lua, ns, fire = scan_lua(KNOWN)
+    db, sc = scan_now(lua, fire)
+    check(sc.realm == "Test" and sc.realmID == 6946 and sc.needsRealm is None, f"a known realm is saved: {sc.realm} {sc.realmID}")
+    check(db.realms[6946].name == "Test", "the realm is remembered for the account")
+
+    # realm ID 0, the GUID names it
+    lua, ns, fire = scan_lua('function GetRealmName() return "Test" end; function GetRealmID() return 0 end;'
+                             'function UnitGUID() return "Player-6946-07376D91" end')
+    db, sc = scan_now(lua, fire)
+    check(sc.realm == "Test" and sc.realmID == 6946 and sc.needsRealm is None, f"ID 0: taken from the GUID ({sc.realmID})")
+
+    # empty name and ID 0 (what K46304 saved), but an earlier session remembered this realm: named from that
+    lua, ns, fire = scan_lua('function GetRealmName() return "" end; function GetRealmID() return 0 end;'
+                             'function UnitGUID() return "Player-6946-07376D91" end;'
+                             'EverlookAuctionsDB.realms = { [6946] = { name = "Test", norm = "Test" } }')
+    db, sc = scan_now(lua, fire)
+    check(sc.realm == "Test" and sc.realmID == 6946 and sc.needsRealm is None, f"empty name: the remembered one ({sc.realm})")
+    check(db.houses["Test-Alliance"].scanned is not None and db.houses["-Alliance"] is None, "prices go to the realm's house")
+
+    # a secret name, ID 0, nothing else: no empty realm saved, the scan is marked; the house is "?-Alliance"
+    NOTHING = ('SECRET = newproxy and newproxy() or {}; function issecretvalue(v) return v == SECRET end;'
+               'function GetRealmName() return SECRET end; function GetRealmID() return 0 end')
+    lua, ns, fire = scan_lua(NOTHING)
+    db, sc = scan_now(lua, fire)
+    check(sc.realm is None and sc.realmID is None and sc.needsRealm is True, f"secret name: marked ({sc.realm} {sc.realmID})")
+    check(db.houses["?-Alliance"] is not None and db.houses["?-Alliance"].scanned is not None, "prices kept under ?-Alliance")
+    check(any("without the realm" in l for l in status(ns)), f"/eah status says a scan waits for its realm: {status(ns)}")
+
+    # nil name too
+    lua, ns, fire = scan_lua('function GetRealmName() return nil end; function GetRealmID() return 0 end')
+    db, sc = scan_now(lua, fire)
+    check(sc.realm is None and sc.needsRealm is True, "nil name: marked")
+
+    # the next login knows the realm: the scan K46304 saved (realm "", ID 0) and its house are put right
+    OLD = """{ version = 2, houses = {
+        ["-Alliance"] = { items = { [5] = { 100, 1, 1, 8639000 } }, days = { [2590] = { [5] = 100 } }, scanned = 8639000 } },
+      scans = { { region = "EU", realm = "", realmID = 0, side = "Alliance", at = 8639000, auctions = 10, rows = {} } } }"""
+    lua, ns, db = login_with(OLD, KNOWN)
+    sc = db.scans[1]
+    check(sc.realm == "Test" and sc.realmID == 6946 and sc.realmFixed is True, f"old scan repaired: {sc.realm} {sc.realmID}")
+    check(db.houses["-Alliance"] is None and db.houses["Test-Alliance"] is not None
+          and db.houses["Test-Alliance"]["items"][5] is not None, "its house moves to Test-Alliance with its prices")
+    check(not any("without the realm" in l for l in status(ns)), "nothing left for /eah status")
+
+    # a marked scan of this version, and a house already there: merged, the newer price wins
+    MARKED = """{ version = 2, houses = {
+        ["?-Alliance"] = { items = { [5] = { 90, 1, 1, 8639500 }, [6] = { 7, 1, 1, 8639500 } }, days = {}, scanned = 8639500 },
+        ["Test-Alliance"] = { items = { [5] = { 100, 1, 1, 8639000 } }, days = {}, scanned = 8639000 } },
+      scans = { { region = "EU", side = "Alliance", needsRealm = true, at = 8639500, auctions = 10, rows = {} } } }"""
+    lua, ns, db = login_with(MARKED, KNOWN)
+    h = db.houses["Test-Alliance"]
+    check(db.scans[1].realm == "Test" and db.scans[1].needsRealm is None, "marked scan repaired")
+    check(db.houses["?-Alliance"] is None and h["items"][5][1] == 90 and h["items"][6] is not None and h.scanned == 8639500,
+          "houses merged, newer prices kept")
+
+    # the realm still unknown at login: left as it is
+    lua, ns, db = login_with(OLD, 'function GetRealmName() return "" end; function GetRealmID() return 0 end')
+    check(db.scans[1].realmFixed is None and db.houses["-Alliance"] is not None, "realm unknown at login: nothing changed")
+
+    # the name still unknown at login, but the character's GUID gives the ID: the scan gets the ID (the site names the
+    # realm from it), the house keeps its key until a login knows the name
+    lua, ns, db = login_with(OLD, 'function GetRealmName() return "" end; function GetRealmID() return 0 end;'
+                             'function UnitGUID() return "Player-6946-07376D91" end')
+    check(db.scans[1].realmID == 6946 and db.scans[1].realmFixed is True and db.houses["-Alliance"] is not None,
+          f"ID from the GUID at login: {db.scans[1].realmID}")
+    check(not any("without the realm" in l for l in status(ns)), "a scan with its ID isn't listed as unplaceable")
+
+    # ambiguous: the account has played on another realm too: left alone, /eah status says so
+    OTHER = """{ version = 2, houses = { ["Other-Alliance"] = { items = {}, days = {} },
+        ["-Alliance"] = { items = {}, days = {} } },
+      scans = { { region = "EU", realm = "", realmID = 0, side = "Alliance", at = 8639000, auctions = 10, rows = {} } } }"""
+    lua, ns, db = login_with(OTHER, KNOWN)
+    check(db.scans[1].realmFixed is None and db.scans[1].realm == "" and db.houses["-Alliance"] is not None,
+          "another realm known: the scan is left alone")
+    check(any("other realms" in l for l in status(ns)), f"/eah status says it can't be told which realm: {status(ns)}")
+
+    # the other side's scan: left for a character of that side
+    HORDE = OLD.replace('side = "Alliance"', 'side = "Horde"')
+    lua, ns, db = login_with(HORDE, KNOWN)
+    check(db.scans[1].realmFixed is None, "a Horde scan isn't given to an Alliance character's login")
+
+    # a scan that names its realm ID: named when it is this realm's (other realms or not), left when it isn't
+    BYID = OTHER.replace('realm = "", realmID = 0', 'realm = "", realmID = 6946')
+    lua, ns, db = login_with(BYID, KNOWN)
+    check(db.scans[1].realm == "Test" and db.scans[1].realmFixed is True, "its ID is this realm's: named")
+    BYID2 = OLD.replace('realmID = 0', 'realmID = 77')
+    lua, ns, db = login_with(BYID2, KNOWN)
+    check(db.scans[1].realmFixed is None and db.scans[1].realmID == 77, "another realm's ID: left for the site")
+    return failures
 
 
 def full_scan():

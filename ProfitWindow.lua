@@ -54,7 +54,7 @@ local function priceOf(id)
 end
 local function stale(at) return at ~= nil and time() - at >= Pr.STALE end
 local function houseKey()
-  return (ns.house and ns.house()) or ((GetRealmName() or "?") .. "-" .. (UnitFactionGroup("player") or "?"))
+  return (ns.house and ns.house()) or (((ns.realmName and ns.realmName()) or "?") .. "-" .. (UnitFactionGroup("player") or "?"))
 end
 
 -- The rows, worked out again from the saved recipes and prices.

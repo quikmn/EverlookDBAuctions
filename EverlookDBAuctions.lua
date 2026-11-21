@@ -78,6 +78,58 @@ local function ok(v)
   return v
 end
 
+---------------------------------------------------------------------------------------------------------------------
+-- The realm. GetRealmName() and GetRealmID() can come back empty ("" and 0) while the client doesn't know its realm
+-- (seen on a fresh install: a scan saved with no realm name and realm ID 0, which EverlookDB.com can't place). So
+-- the realm is read from every source there is, kept for the session once known, and remembered per account
+-- (db.realms[id] = { name, norm }) so a later session where the game says nothing can still name it:
+--   name  GetRealmName(), else the remembered name for this realm ID or normalized name
+--   id    GetRealmID(), else the realm in the character's GUID ("Player-6946-..."), else the remembered ID
+--   norm  GetNormalizedRealmName(), else UnitFullName("player")'s realm
+local realmNow = {}   -- { name, id, norm } as far as known this session
+local realmUnfixed = 0  -- saved scans that name no realm at all (/eah status); counted at login and per scan
+
+local function textOnly(v) v = ok(v); return type(v) == "string" and v ~= "" and v or nil end
+local function idOnly(v) v = ok(v); return type(v) == "number" and v > 0 and v or nil end
+local function squash(s) return s and (s:gsub("[%s%-']", ""):lower()) or nil end
+
+local function readRealm()
+  if realmNow.name and realmNow.id then return realmNow.name, realmNow.id, realmNow.norm end
+  local name = textOnly(GetRealmName and GetRealmName())
+  local id = idOnly(GetRealmID and GetRealmID())
+  if not id and UnitGUID then
+    local guid = textOnly(UnitGUID("player"))
+    id = guid and idOnly(tonumber(guid:match("^Player%-(%d+)%-")))
+  end
+  local norm = textOnly(GetNormalizedRealmName and GetNormalizedRealmName())
+  if not norm and UnitFullName then norm = textOnly(select(2, UnitFullName("player"))) end
+  -- known earlier this session
+  name, id, norm = name or realmNow.name, id or realmNow.id, norm or realmNow.norm
+  -- remembered from an earlier session
+  local known = db and type(db.realms) == "table" and db.realms or {}
+  if id and not name and type(known[id]) == "table" then name = known[id].name end
+  if not id then
+    for kid, r in pairs(known) do
+      if type(r) == "table" and ((name and r.name == name) or (not name and norm and squash(r.norm or r.name) == squash(norm))) then
+        id, name = kid, name or r.name
+        break
+      end
+    end
+  end
+  if not norm and name then norm = (name:gsub("[%s%-]", "")) end
+  realmNow.name, realmNow.id, realmNow.norm = name, id, norm
+  if db and name and id then
+    db.realms = known
+    known[id] = { name = name, norm = norm }
+  end
+  return name, id, norm
+end
+
+-- The realm's name, or nil while nothing says it.
+local function realmName() return (readRealm()) end
+-- The realm part of a house key: the name, or "?" while it isn't known (put right at the next login, below).
+local function realmKey() return realmName() or "?" end
+
 local function say(msg) print("|cffffd100EverlookDB Auctions|r: " .. msg) end -- the prefix every EverlookDB addon uses
 
 -- Text the player typed or named (a command, a list name), safe to print: a lone | starts a WoW escape code and
@@ -130,13 +182,13 @@ local function zoneMapID()
 end
 
 local function factionKey()
-  return (GetRealmName() or "?") .. "-" .. (UnitFactionGroup("player") or "?")
+  return realmKey() .. "-" .. (UnitFactionGroup("player") or "?")
 end
 
 local function currentHouseKey()
   local side = UnitFactionGroup("player") or "?"
   if NEUTRAL_ZONES[zoneMapID() or 0] then side = "Neutral" end
-  return (GetRealmName() or "?") .. "-" .. side, side
+  return realmKey() .. "-" .. side, side
 end
 
 local function getHouse(key)
@@ -775,12 +827,15 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
     logScan(h, scan.aborted and "done (AH closed; item details skipped)" or "done")
     pruneDays(h)
     local build = select(2, GetBuildInfo())
+    -- never an empty realm when any source names it; when none does, the scan is marked and put right at a login
+    local realm, realmID, realmNorm = readRealm()
     local sc = {
-      region = ok(GetCurrentRegionName and GetCurrentRegionName()),
+      region = textOnly(GetCurrentRegionName and GetCurrentRegionName()),
       regionID = ok(GetCurrentRegion and GetCurrentRegion()),
-      realm = ok(GetRealmName()),
-      realmID = ok(GetRealmID and GetRealmID()),
-      realmNormalized = ok(GetNormalizedRealmName and GetNormalizedRealmName()),
+      realm = realm,
+      realmID = realmID,
+      realmNormalized = realmNorm,
+      needsRealm = (not realm or not realmID) or nil,
       side = scan.side,
       at = scan.at,                       -- server time the scan was requested (same clock for every player)
       took = GetServerTime() - scan.at,   -- seconds until the list was read
@@ -796,6 +851,7 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       badRows = badRows > 0 and badRows or nil, -- auctions or items skipped because they couldn't be read
     }
     table.insert(db.scans, sc)
+    if not realm and not realmID then realmUnfixed = realmUnfixed + 1 end
     -- packs the house's previous scan, drops what is past keeping; drops for room are noted for /eah status
     local _, forRoom = trimScans(db.scans, GetServerTime())
     ns.noteDropped(forRoom, GetServerTime())
@@ -1206,7 +1262,7 @@ local function auctionLines(t, id, tooltip)
   local function each(p) return stack > 1 and (p * stack) or p end
   local suffix = stack > 1 and (" x" .. stack) or ""
   local keys = { factionKey() }
-  local neutral = (GetRealmName() or "?") .. "-Neutral"
+  local neutral = realmKey() .. "-Neutral"
   if db.houses[neutral] or (ns.shared and ns.shared.house(neutral)) then keys[#keys + 1] = neutral end
   -- random-stat gear: the tooltip's own version ("of the Bear") has its own price in the full scan
   local vkey
@@ -1404,7 +1460,106 @@ local function maxStackOf(id)
   return nil
 end
 
+-- Scans and houses saved while the game didn't say the realm (v0.16.0 and older saved realm "" and realm ID 0, and the
+-- house "-Alliance"; this version saves "?" and marks the scan needsRealm). At each login, once the realm is known,
+-- they get this realm, but only when that is certain:
+--   - the scan names its realm in part (its ID, name or normalized name) and that part is this realm's, or
+--   - nothing in it names a realm, it is of this character's side (or Neutral), and the account's saved data names
+--     no other realm (houses, scans, realms seen).
+-- Everything else stays as it is and /eah status says so. The scan's file changes, so the app sends it again.
+local function noRealm(s) return s == nil or s == "" or s == "?" end
+local function noRealmID(n) return type(n) ~= "number" or n <= 0 end
+
+local function otherRealmKnown(name, id)
+  for key in pairs(db.houses) do
+    local r = tostring(key):match("^(.*)%-%a+$")
+    if r and not noRealm(r) and r ~= name then return true end
+  end
+  for _, sc in ipairs(db.scans) do
+    if not noRealm(sc.realm) and sc.realm ~= name then return true end
+    if not noRealmID(sc.realmID) and sc.realmID ~= id then return true end
+  end
+  for kid in pairs(type(db.realms) == "table" and db.realms or {}) do if kid ~= id then return true end end
+  return false
+end
+
+local function mergeHouse(from, to)
+  to.items, to.days = to.items or {}, to.days or {}
+  for id, v in pairs(from.items or {}) do
+    local w = to.items[id]
+    if type(v) == "table" and (type(w) ~= "table" or (v[4] or 0) > (w[4] or 0)) then to.items[id] = v end
+  end
+  for id, d in pairs(from.days or {}) do
+    if type(d) == "table" then
+      local t = to.days[id] or {}
+      to.days[id] = t
+      for day, low in pairs(d) do if not t[day] or low < t[day] then t[day] = low end end
+    end
+  end
+  if (from.scanned or 0) > (to.scanned or 0) then to.scanned, to.took = from.scanned, from.took end
+  for k, v in pairs(from) do if to[k] == nil then to[k] = v end end
+end
+
+local function repairRealms()
+  if not db then return end
+  local name, id, norm = readRealm()
+  local pending = {}
+  for _, sc in ipairs(db.scans) do
+    if type(sc) == "table" and (noRealm(sc.realm) or noRealmID(sc.realmID) or sc.needsRealm) then pending[#pending + 1] = sc end
+  end
+  local houseKeys = {}
+  for key in pairs(db.houses) do
+    local r, side = tostring(key):match("^(.*)%-(%a+)$")
+    if r and noRealm(r) then houseKeys[#houseKeys + 1] = { key = key, side = side } end
+  end
+  -- /eah status counts the scans that name no realm at all (one with its name or ID the site places by itself)
+  local function count()
+    realmUnfixed = 0
+    for _, sc in ipairs(pending) do
+      if noRealm(sc.realm) and noRealmID(sc.realmID) then realmUnfixed = realmUnfixed + 1 end
+    end
+  end
+  count()
+  -- the ID is enough for a scan (the site names the realm from its ID); a house key needs the name
+  if not id or (#pending == 0 and #houseKeys == 0) then return end
+  local faction = ok(UnitFactionGroup and UnitFactionGroup("player"))
+  local others = otherRealmKnown(name, id)
+  local function mySide(side) return side == "Neutral" or (faction ~= nil and side == faction) end
+  local region = textOnly(GetCurrentRegionName and GetCurrentRegionName())
+  for _, sc in ipairs(pending) do
+    local same
+    if not noRealmID(sc.realmID) then same = sc.realmID == id
+    elseif not noRealm(sc.realm) then same = name ~= nil and sc.realm == name
+    elseif textOnly(sc.realmNormalized) then same = norm ~= nil and squash(sc.realmNormalized) == squash(norm)
+    else same = not others and mySide(sc.side) end
+    if same and ((noRealm(sc.realm) and name) or noRealmID(sc.realmID)) then
+      if noRealm(sc.realm) then sc.realm = name end
+      if noRealmID(sc.realmID) then sc.realmID = id end
+      sc.realmNormalized = textOnly(sc.realmNormalized) or norm
+      sc.region = textOnly(sc.region) or region
+      sc.realmFixed = true
+    end
+    if not noRealm(sc.realm) and not noRealmID(sc.realmID) then sc.needsRealm = nil end
+  end
+  count()
+  if others or not name then return end
+  for _, k in ipairs(houseKeys) do
+    if mySide(k.side) then
+      local from, to = db.houses[k.key], name .. "-" .. k.side
+      db.houses[k.key] = nil
+      if type(from) == "table" then
+        if type(db.houses[to]) == "table" then mergeHouse(from, db.houses[to]) else db.houses[to] = from end
+      end
+    end
+  end
+end
+ns.repairRealms = repairRealms
+
 local events = {}
+
+-- the realm is surely known by the time the character is in the world: put old scans right then
+function events.PLAYER_LOGIN() repairRealms() end
+function events.PLAYER_ENTERING_WORLD() repairRealms() end
 
 function events.ADDON_LOADED(name)
   if name ~= ADDON then return end
@@ -1448,6 +1603,7 @@ function events.ADDON_LOADED(name)
     end
   end
   db.fixedLiveUnit2 = true
+  repairRealms()
   hookTooltips()
 end
 
@@ -1613,7 +1769,7 @@ end
 local function houseName(key)
   local realm, side = key:match("^(.*)%-(%a+)$")
   if not realm then return key end
-  return realm == GetRealmName() and side or (side .. " (" .. realm .. ")")
+  return realm == realmName() and side or (side .. " (" .. realm .. ")")
 end
 
 function ns.statusLines()
@@ -1638,6 +1794,12 @@ function ns.statusLines()
     local dropped = ns.droppedText()
     if dropped then out[#out + 1] = dropped end
   end
+  if realmUnfixed > 0 then
+    out[#out + 1] = ("%d %s saved without the realm it is from, so EverlookDB.com can't take %s yet. %s put right when"
+      .. " you log in on that realm, unless this account has played on other realms too: then it can't be told which.")
+      :format(realmUnfixed, realmUnfixed == 1 and "scan was" or "scans were", realmUnfixed == 1 and "it" or "them",
+        realmUnfixed == 1 and "It is" or "They are")
+  end
   return out
 end
 
@@ -1661,11 +1823,12 @@ ns.db = function() return db end
 ns.house = function() return house end
 ns.money, ns.num, ns.ago, ns.say, ns.variantOf, ns.ahFrame, ns.ok = money, num, ago, say, variantOf, ahFrame, ok
 ns.plain = plain
+ns.realmName = realmName   -- the realm's name, or nil while nothing says it
 
 -- Which saved auction house to read: the one given ("Alliance", "Horde" or "Neutral" on this realm), else the one
 -- that is open, else the player's own faction's.
 local function keyFor(side)
-  if side then return (GetRealmName() or "?") .. "-" .. side end
+  if side then return realmKey() .. "-" .. side end
   return house or factionKey()
 end
 -- the open auction house, else your faction's (what tooltips use), for searches away from the auction house
