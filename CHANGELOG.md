@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.16.0 (2026-11-21)
 - Price Feed: the shared prices from the EverlookDB App have a name now, and their own small addon, "EverlookDB Auctions: Price Feed", listed under EverlookDB Auctions in the addon list (also on CurseForge, for the app to fill). The bar at the bottom of the auction house has a second line that says how it is: "Price Feed: Alliance · other players' scan, 12 min old", or "no data yet", or "off" with where to get it; the General page of /eah shows the same. The first time you open the auction house without it, one chat line says where it comes from, once per account. /eah feed says how it is and /eah feed off turns it off (/eah shared still works). Prices from it still say "other players' scan · 12 min ago".
 - Gear upgrades: a new Upgrades tab at the bottom of the auction house shows, for every slot, the best upgrade for your spec in the last price update (yours, or other players' shared one), within your max price. Click a slot for all its upgrades; right-click an item to find it in Buy, Shift-click to link it. "Make shopping list" puts the best of every slot in a Shopping list. /eah up opens it anywhere, away from the auction house too.
 - Gear upgrades: the first time you open the auction house you're asked which spec (or specs) you gear for; "Not now" counts them all. Change it any time on the new Gear upgrades page of /eah or with /eah up spec.
