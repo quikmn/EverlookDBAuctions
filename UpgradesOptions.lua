@@ -397,7 +397,7 @@ function ns.upgradesSettings(app, UI)
     UI.Note(stack, table.concat(lines, "\n"))
     UI.Header(stack, "Where the numbers come from")
     UI.Note(stack, "Stat weights at level 60, talent effects, item procs and rating conversions: wowsims/forever (github.com/wowsims/forever), MIT license. "
-      .. "Weights below level 60, and for specs wowsims has none for (Holy paladin, Restoration shaman and druid): the per-level model of Forever Leveling BiS v0.12.0-beta, MIT license, Copyright (c) 2026 Thunder, met to wowsims' numbers at 60. "
+      .. "Weights below level 60, and for specs wowsims has none for (Holy and Protection paladin, Restoration shaman and druid): the per-level model of Forever Leveling BiS v0.12.0-beta, MIT license, Copyright (c) 2026 Thunder, met to wowsims' numbers at 60. "
       .. "Those are estimates. Item names and prices: EverlookDB and your own scans.")
   end, { icon = "sword" })
 
