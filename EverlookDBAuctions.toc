@@ -16,6 +16,7 @@ Libs\EverlookUI\EverlookTooltip.lua
 EverlookDBAuctions.lua
 SharedPrices.lua
 Skin.lua
+ItemTip.lua
 Data.lua
 Disenchant.lua
 Vendor.lua

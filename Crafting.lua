@@ -216,9 +216,7 @@ local function makeRow(f)
   hl:SetColorTexture(1, 1, 1, 0.06)
   row:SetScript("OnEnter", function(self)
     if not self.id then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    pcall(GameTooltip.SetItemByID, GameTooltip, self.id)
-    GameTooltip:Show()
+    ns.itemTooltip(self, self.id)
   end)
   row:SetScript("OnLeave", function() GameTooltip:Hide() end)
   return row
@@ -455,9 +453,7 @@ local function makeListRow(L)
   row:EnableMouse(true)
   row:SetScript("OnEnter", function(self)
     if not self.data then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    pcall(GameTooltip.SetItemByID, GameTooltip, self.data.id)
-    GameTooltip:Show()
+    ns.itemTooltip(self, self.data.id)
   end)
   row:SetScript("OnLeave", function() GameTooltip:Hide() end)
   return row

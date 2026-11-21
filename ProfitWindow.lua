@@ -81,7 +81,7 @@ end
 local function rowTooltip(self)
   local r = self.data
   if not r then return end
-  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  ns.itemTipOwner(self)   -- next to the mouse; "Equipped" only with Shift (ItemTip.lua)
   if not pcall(GameTooltip.SetItemByID, GameTooltip, r.id) then GameTooltip:SetText(r.name or "?", 1, 1, 1) end
   GameTooltip:AddLine(" ")
   GameTooltip:AddLine(r.makes ~= 1 and ("One craft makes %s. Materials for one craft:"):format(r.makes) or "Materials for one craft:", 1, 0.82, 0)

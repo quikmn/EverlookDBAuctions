@@ -1451,7 +1451,7 @@ local function makeRow(f, k)
   b.name:SetPoint("RIGHT", f, "RIGHT", NAME_RIGHT, 0)
   b:SetScript("OnEnter", function(self)
     if not self.row or self.row.header then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    ns.itemTipOwner(self)   -- next to the mouse; "Equipped" only with Shift (ItemTip.lua)
     local link = "item:" .. self.row.id .. (self.row.suffix ~= 0 and ("::::::::::::1:" .. self.row.suffix) or "")
     pcall(GameTooltip.SetHyperlink, GameTooltip, link)
     local r = self.row

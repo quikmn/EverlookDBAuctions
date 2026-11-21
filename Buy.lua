@@ -391,7 +391,7 @@ local function buildRow(L)
   b:SetScript("OnEnter", function(self)
     local r = self.item
     if not r then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    ns.itemTipOwner(self)   -- next to the mouse; "Equipped" only with Shift (ItemTip.lua)
     if r.link then pcall(GameTooltip.SetHyperlink, GameTooltip, r.link) else pcall(GameTooltip.SetItemByID, GameTooltip, B.id) end
     local p = not r.mine and ns.vendor and r.unit and ns.vendor.flip(B.id, r.unit)
     if p then

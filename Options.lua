@@ -2,7 +2,8 @@
 -- EverlookDB addons), with its entry in the game's Settings under AddOns.
 --   Selling   undercut, default duration
 --   Tooltips  auction price, 30-day low and median, disenchant value, vendor price, full-stack price with Shift, the hovered stack's with Ctrl
---   General   automatic price updates, the EverlookDB look for Blizzard's auction house, crafting cost
+--   General   automatic price updates, the EverlookDB look for Blizzard's auction house, crafting cost, compare with
+--             what you wear only while holding Shift
 -- Every setting is also a command: /eah <setting> <value> sets it, says so in chat and updates the open window;
 -- /eah get lists them. The core (EverlookDBAuctions.lua) routes /eah to this app, which follows the chat-command
 -- pattern every EverlookDB addon shares (EverlookUI): help, get/set, search, status, version, suggestions.
@@ -113,6 +114,14 @@ local function build()
     key = "skin", type = "bool", label = "EverlookDB look for Blizzard's auction house (after /reload)", keywords = { "skin", "theme", "style" },
     get = function() return db().skin ~= false end,
     set = function(v) db().skin = v end,
+  })
+  app:Setting({
+    key = "compareshift", type = "bool", label = "Compare with what I wear: only while holding Shift",
+    chatLabel = "Compare with equipped only with Shift",
+    keywords = { "compare", "comparison", "equipped", "wear", "worn", "shift", "tooltip", "gear", "side by side" },
+    desc = "In our lists (Buy, Advanced search, Crafting, Profit, AH log) the hovered item's tooltip shows on its own; hold Shift to see what you wear beside it. Off: the game decides, as in its own windows.",
+    get = function() return db().compareShift ~= false end,
+    set = function(v) db().compareShift = v end,
   })
   -- the AH log (Purchases.lua)
   local function logRefresh() if ns.purchases and ns.purchases.refresh then ns.purchases.refresh() end end
@@ -299,6 +308,7 @@ local function build()
     UI.Note(stack, function() return ns.shared and ns.shared.feedLine() or "" end)
     app:Widget(stack, "skin")
     app:Widget(stack, "crafting")
+    app:Widget(stack, "compareshift")
     UI.Header(stack, "Chat commands")
     UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah feed  the Price Feed (/eah feed off turns it off)\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah prices  search the last price update, anywhere\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah forsale  your auctions up for sale, with time left\n/eah income  what you sold (from the mail), with what crafting it again costs\n/eah loot  everything you looted\n/eah profit  recipes that sell for more than their materials\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\n/eah up  gear upgrades (/eah up help for its commands)")
   end)

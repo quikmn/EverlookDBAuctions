@@ -520,7 +520,7 @@ end
 local function rowTooltip(self)
   local e = self.entry
   if not e then return end
-  GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+  ns.itemTipOwner(self)   -- next to the mouse; "Equipped" only with Shift (ItemTip.lua)
   if B.mode == "looted" then
     if e.copper then
       GameTooltip:SetText(money(e.copper), 1, 0.82, 0)
@@ -659,9 +659,7 @@ local function makeMatRow(parent)
   row.name:SetPoint("RIGHT", row.src, "LEFT", -8, 0)
   row:SetScript("OnEnter", function(self)
     if not self.id then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    pcall(GameTooltip.SetItemByID, GameTooltip, self.id)
-    GameTooltip:Show()
+    ns.itemTooltip(self, self.id)
   end)
   row:SetScript("OnLeave", function() GameTooltip:Hide() end)
   return row
