@@ -8,6 +8,7 @@
 - AH log, Income: money the auction house sends back (an outbid refund) is "Auction house refund", short enough to read in full.
 - Advanced search: "live prices checked" is set apart from the result count with a dot, so the two don't run together.
 - Settings, General: the list of chat commands includes /eah prices, /eah loot and /eah profit.
+- AH log and Crafting profit close with Escape, like the Prices window.
 
 ## v0.14.1 (2026-11-20)
 - Tooltips: "More to vendor" or "More to auction" says where an item earns more, and by how much: the vendor's price against the last scan's lowest price after the auction house's 5% cut. Grey when that price is over a day old. Shift and Ctrl work on it like the other prices. A setting turns it off.

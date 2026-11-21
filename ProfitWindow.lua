@@ -225,6 +225,7 @@ local function makeFrame()
   end)
   EUI.WindowChrome(f, T)
   EUI.CloseButton(f, T)
+  if UISpecialFrames then tinsert(UISpecialFrames, "EverlookAuctionsProfit") end   -- Escape closes it, like the Prices window
 
   f.icon = f:CreateTexture(nil, "ARTWORK")
   f.icon:SetSize(18, 18)

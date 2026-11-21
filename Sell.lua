@@ -296,13 +296,16 @@ local function hookSellFrames()
   S.hooked = true
   local items, goods = ah.ItemSellFrame, ah.CommoditiesSellFrame
 
+  -- (a price the game hides, or a row without one, leaves Blizzard's own price alone)
   hooksecurefunc(items, "OnSearchResultSelected", function(self, r)
-    if not r or not r.buyoutAmount or r.containsOwnerItem or r == self.noneAvailableEntry then return end
-    self.PriceInput:SetAmount(undercutPrice(r.buyoutAmount))
+    local p = type(r) == "table" and okv(r.buyoutAmount)
+    if type(p) ~= "number" or r.containsOwnerItem or r == self.noneAvailableEntry then return end
+    pcall(function() self.PriceInput:SetAmount(undercutPrice(p)) end)
   end)
   hooksecurefunc(goods, "OnAuctionSelected", function(self, r)
-    if not r or not r.unitPrice or r.containsOwnerItem then return end
-    self.PriceInput:SetAmount(undercutPrice(r.unitPrice))
+    local p = type(r) == "table" and okv(r.unitPrice)
+    if type(p) ~= "number" or r.containsOwnerItem then return end
+    pcall(function() self.PriceInput:SetAmount(undercutPrice(p)) end)
   end)
   hooksecurefunc(items, "UpdatePriceSelection", function(self) pcall(fallback, self, false) end)
   hooksecurefunc(goods, "UpdatePriceSelection", function(self) pcall(fallback, self, true) end)
