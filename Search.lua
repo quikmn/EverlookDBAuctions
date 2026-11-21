@@ -1784,9 +1784,9 @@ local function liveHead()
   local tail
   if total == 0 or Q.away then tail = ""
   elseif done >= total and missed > 0 then
-    tail = ("  " .. C_MUTE .. "live prices checked, %d without an answer (asked again in a minute)|r"):format(missed)
-  elseif done >= total then tail = "  " .. C_GOOD .. "live prices checked|r"
-  else tail = ("  " .. C_INFO .. "checking live prices %d/%d...|r"):format(done, total) end
+    tail = (" \194\183 " .. C_MUTE .. "live prices checked, %d without an answer (asked again in a minute)|r"):format(missed)
+  elseif done >= total then tail = " \194\183 " .. C_GOOD .. "live prices checked|r"
+  else tail = (" \194\183 " .. C_INFO .. "checking live prices %d/%d...|r"):format(done, total) end
   Q.frame.head:SetText(Q.headBase .. tail)
 end
 

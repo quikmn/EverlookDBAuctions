@@ -2221,6 +2221,14 @@ def shared_tooltip():
     lines = show(lua.eval("{ secret = true }"))
     check(len(lines) == 0, "a secret item id adds no lines")
     check(len(G.ERRORS) == 0, f"no errors: {list(G.ERRORS.values()) if G.ERRORS else ''}")
+    # at a neutral auction house (Booty Bay, Gadgetzan, Everlook) the cut is 15%
+    keep = ns.houseOrFaction
+    ns.houseOrFaction = lua.eval("function() return 'Test-Neutral' end")
+    which, diff, stale, cut = ns.sellVerdict(2589)
+    check(which == "auction" and diff == 80 - 13 and cut == 15, f"neutral house: 15% cut: {which} {diff} {cut}")
+    ns.houseOrFaction = keep
+    which, diff, stale, cut = ns.sellVerdict(2589)
+    check(diff == 90 - 13 and cut == 5, f"faction house: 5% cut: {diff} {cut}")
     return failures
 
 

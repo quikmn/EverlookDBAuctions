@@ -68,7 +68,7 @@ local function entryName(e)
   if e.kind == "mail" then return "Gold from mail" end
   if e.loot then return e.copper and "Money" or (e.link and e.link:match("%[(.-)%]")) or e.name or "?" end
   if e.pending or e.sale then return (e.link and e.link:match("%[(.-)%]")) or e.name or "?" end
-  if e.kind == "ah" then return "Auction house (refund or other)" end
+  if e.kind == "ah" then return "Auction house refund" end
   return (e.link and e.link:match("%[(.-)%]")) or e.name or (e.id and itemName(e.id)) or "?"
 end
 local function qualityColor(id)

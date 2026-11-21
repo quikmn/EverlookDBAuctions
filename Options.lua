@@ -19,7 +19,7 @@ local TIP_LINES = {
   { "tipdisenchant", "disenchant", "What disenchanting it is worth (an estimate from material prices)" },
   { "tipcraft", "craft", "What crafting one costs, for items you can craft (materials at the latest AH prices)" },
   { "tipvendor", "vendor", "Vendor price, where the game doesn’t show one (quest rewards, loot, links)" },
-  { "tipverdict", "verdict", "More to vendor or More to auction: which pays more, after the auction house's 5% cut" },
+  { "tipverdict", "verdict", "More to vendor or More to auction: which pays more, after the auction house's cut (5%, 15% at a neutral one)" },
   { "tipstack", "stack", "Hold Shift for the price of a full stack, Ctrl for the stack under the mouse" },
 }
 
@@ -281,7 +281,7 @@ local function build()
     app:Widget(stack, "skin")
     app:Widget(stack, "crafting")
     UI.Header(stack, "Chat commands")
-    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah forsale  your auctions up for sale, with time left\n/eah income  what you sold (from the mail), with what crafting it again costs\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting")
+    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah prices  search the last price update, anywhere\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah forsale  your auctions up for sale, with time left\n/eah income  what you sold (from the mail), with what crafting it again costs\n/eah loot  everything you looted\n/eah profit  recipes that sell for more than their materials\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting")
   end)
 end
 
