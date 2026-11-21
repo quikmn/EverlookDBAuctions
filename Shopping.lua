@@ -495,6 +495,7 @@ local function openShopping()
   if not f then return end
   if ns.closeSearch then ns.closeSearch() end
   if ns.closeSelling then ns.closeSelling() end
+  if ns.closeOthers then ns.closeOthers("shopping") end   -- the Upgrades tab (UpgradesTab.lua)
   if ns.blizzardTabs then ns.blizzardTabs(false) end
   if SH.tab then pcall(PanelTemplates_SelectTab, SH.tab) end
   if ns.raise then ns.raise(f) end

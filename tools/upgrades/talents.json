@@ -1,0 +1,881 @@
+{
+ "source": "wowsims/forever d0ba78b81e1e302392cacf5c7d5e7eecb05cf6a0",
+ "notes": {
+  "positions": "tab = 1-based index of the tree in ui/sim/talents/trees/<class>.json. gen_protos.go transformRawTalentsToTab sorts tabs by name, which for all nine classes equals the in-game order (Arms/Fury/Protection, Holy/Protection/Retribution, ...). row = location.rowIdx + 1, column = location.colIdx + 1. These are NOT a Talent.db2 TierID/ColumnIndex: WoW Forever ships talents as a trait tree, and tools/database/tables.go LoadTraitTalents (~1500-1830) snaps each TraitNode PosX/PosY onto a grid (row = (PosY - minY) / pitch, col = (PosX - tabOrigin) / pitch, tabs split by X gaps). wowsims validates the result against tier rules (5 points per row) and the game prereq arrows, so it is very likely the in-game layout, but it is not verified here against GetTalentInfo(tab, index) tier/column. GetTalentInfo index order is not given by wowsims; match by name or by tier+column.",
+  "pctByRank": "pctByRank is the game-file curve (spells_auto_gen.go generatedCurves) the sim reads per rank; pctPerRank is the rank 1 value. Where linear is false use pctByRank.",
+  "statNames": "stat / from / to use proto/common.proto Stat names; Health, Mana, BonusArmor are proto stats too. SpiritRegenWhileCasting is a pseudo-stat (PseudoStats.SpiritRegenRateCasting), not a proto Stat.",
+  "noEntries": "warrior and rogue have no talent in this data that multiplies or converts a primary/secondary stat (warrior Shield Specialization is block chance, Anticipation is defense skill, rogue Weapon Expertise is expertise).",
+  "excluded": "conditional or flat effects left out: priest Spirit Tap (+100% Spirit for 15s after a kill, 20..100% chance), hunter Resourcefulness buff, shaman Ancestral Healing (Ancestral Fortitude +8% armor after a crit heal), druid Predatory Strikes (flat level-based AP in forms), warlock Demonic Knowledge (flat level-based spell damage while a demon is out), shaman Improved Reincarnation.",
+  "otherTalentChecks": "Other getTalents() uses in ui/specs that are NOT EP-preset switches: warrior dps presets.ts:24-28 (mortalStrike/bloodthirst pick Arms vs Fury rotation, spec.ts:131/152), paladin retribution spec.ts:18 and inputs.ts:72-116 (rotation and seal inputs), priest dps inputs.ts:15 (shadowform), warlock dps inputs.ts:23-83 (demonicSacrifice/demonicPact), shaman elemental spec.ts:24 (stormstrike warning). Every other spec has a fixed or user-picked EP preset."
+ },
+ "talents": [
+  {
+   "class": "druid",
+   "talent": "Heart of the Wild",
+   "field": "heartOfTheWild",
+   "tab": 3,
+   "tabName": "Restoration",
+   "row": 1,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 17003,
+   "effects": [
+    {
+     "stat": "Intellect",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:14123"
+    },
+    {
+     "stat": "Stamina",
+     "pctPerRank": 4.0,
+     "pctByRank": [
+      4.0,
+      8.0,
+      12.0,
+      16.0,
+      20.0
+     ],
+     "condition": "Bear / Dire Bear Form only",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:14124"
+    },
+    {
+     "stat": "Strength",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "condition": "Cat Form only",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:14125"
+    }
+   ],
+   "source": "sim/druid/talents_restoration.go:40-58",
+   "treeSource": "ui/sim/talents/trees/druid.json:454"
+  },
+  {
+   "class": "druid",
+   "talent": "Living Spirit",
+   "field": "livingSpirit",
+   "tab": 3,
+   "tabName": "Restoration",
+   "row": 5,
+   "column": 2,
+   "maxRank": 3,
+   "spellId": 1309631,
+   "effects": [
+    {
+     "stat": "Spirit",
+     "pctPerRank": 5.0,
+     "pctByRank": [
+      5.0,
+      10.0,
+      15.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:37954"
+    }
+   ],
+   "source": "sim/druid/talents_restoration.go:72-74",
+   "treeSource": "ui/sim/talents/trees/druid.json:579"
+  },
+  {
+   "class": "druid",
+   "talent": "Natural Instinct",
+   "field": "naturalInstinct",
+   "tab": 2,
+   "tabName": "Feral Combat",
+   "row": 5,
+   "column": 4,
+   "maxRank": 2,
+   "spellId": 1223242,
+   "effects": [
+    {
+     "from": "Intellect",
+     "to": "HealingPower",
+     "pctPerRank": 12.0,
+     "pctByRank": [
+      12.0,
+      25.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:32364",
+     "linear": false
+    }
+   ],
+   "source": "sim/druid/talents_feral_combat.go:118-120",
+   "treeSource": "ui/sim/talents/trees/druid.json:370"
+  },
+  {
+   "class": "druid",
+   "talent": "Reflection",
+   "field": "reflection",
+   "tab": 3,
+   "tabName": "Restoration",
+   "row": 2,
+   "column": 2,
+   "maxRank": 3,
+   "spellId": 17106,
+   "effects": [
+    {
+     "from": "Spirit",
+     "to": "SpiritRegenWhileCasting",
+     "pctPerRank": 17.0,
+     "pctByRank": [
+      17.0,
+      33.0,
+      50.0
+     ],
+     "note": "share of Spirit-based mana regen that continues while casting (A_MOD_MANA_REGEN_INTERRUPT); not a stat conversion, it raises the value of Spirit for casters",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:14202",
+     "linear": false
+    }
+   ],
+   "source": "sim/druid/talents_restoration.go:85-87",
+   "treeSource": "ui/sim/talents/trees/druid.json:476"
+  },
+  {
+   "class": "druid",
+   "talent": "Thick Hide",
+   "field": "thickHide",
+   "tab": 2,
+   "tabName": "Feral Combat",
+   "row": 2,
+   "column": 4,
+   "maxRank": 3,
+   "spellId": 16929,
+   "effects": [
+    {
+     "from": "DefenseRating",
+     "to": "Armor",
+     "ratioByRank": [
+      0.67,
+      1.33,
+      2.0
+     ],
+     "note": "armor per point of Defense above 5x level, only in Cat/Bear/Dire Bear/Moonkin form; in bear forms and Moonkin multiplied again by the form armor multiplier. Also flat armor = level x 1/2/3 by rank (effect 2). Not a percent.",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:14056"
+    }
+   ],
+   "source": "sim/druid/talents_feral_combat.go:59-84",
+   "treeSource": "ui/sim/talents/trees/druid.json:252"
+  },
+  {
+   "class": "hunter",
+   "talent": "Bestial Discipline",
+   "field": "bestialDiscipline",
+   "tab": 1,
+   "tabName": "Beast Mastery",
+   "row": 5,
+   "column": 4,
+   "maxRank": 2,
+   "spellId": 19590,
+   "effects": [
+    {
+     "from": "Spirit",
+     "to": "SpiritRegenWhileCasting",
+     "pctPerRank": 25.0,
+     "pctByRank": [
+      25.0,
+      50.0
+     ],
+     "note": "share of Spirit-based mana regen that continues while casting (A_MOD_MANA_REGEN_INTERRUPT); not a stat conversion, it raises the value of Spirit for casters; effect 1 is pet focus regen",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:16850"
+    }
+   ],
+   "source": "sim/hunter/talents_beast_mastery.go:174-182",
+   "treeSource": "ui/sim/talents/trees/hunter.json:154"
+  },
+  {
+   "class": "hunter",
+   "talent": "Careful Aim",
+   "field": "carefulAim",
+   "tab": 2,
+   "tabName": "Marksmanship",
+   "row": 2,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 1223984,
+   "effects": [
+    {
+     "from": "Intellect",
+     "to": "RangedAttackPower",
+     "pctPerRank": 20.0,
+     "pctByRank": [
+      20.0,
+      40.0,
+      60.0,
+      80.0,
+      100.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:32394"
+    },
+    {
+     "from": "Intellect",
+     "to": "AttackPower",
+     "pctPerRank": 20.0,
+     "pctByRank": [
+      20.0,
+      40.0,
+      60.0,
+      80.0,
+      100.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:32395"
+    }
+   ],
+   "source": "sim/hunter/talents_marksmanship.go:74-83",
+   "treeSource": "ui/sim/talents/trees/hunter.json:256"
+  },
+  {
+   "class": "hunter",
+   "talent": "Survivalist",
+   "field": "survivalist",
+   "tab": 3,
+   "tabName": "Survival",
+   "row": 2,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 19255,
+   "effects": [
+    {
+     "stat": "Health",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:16451"
+    }
+   ],
+   "source": "sim/hunter/talents_survival.go:84-90",
+   "treeSource": "ui/sim/talents/trees/hunter.json:439"
+  },
+  {
+   "class": "hunter",
+   "talent": "Lightning Reflexes",
+   "field": "lightningReflexes",
+   "tab": 3,
+   "tabName": "Survival",
+   "row": 6,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 19168,
+   "effects": [
+    {
+     "stat": "Agility",
+     "pctPerRank": 3.0,
+     "pctByRank": [
+      3.0,
+      6.0,
+      9.0,
+      12.0,
+      15.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:16370"
+    }
+   ],
+   "source": "sim/hunter/talents_survival.go:169-175",
+   "treeSource": "ui/sim/talents/trees/hunter.json:575"
+  },
+  {
+   "class": "mage",
+   "talent": "Arcane Meditation",
+   "field": "arcaneMeditation",
+   "tab": 1,
+   "tabName": "Arcane",
+   "row": 4,
+   "column": 3,
+   "maxRank": 3,
+   "spellId": 18462,
+   "effects": [
+    {
+     "from": "Spirit",
+     "to": "SpiritRegenWhileCasting",
+     "pctPerRank": 17.0,
+     "pctByRank": [
+      17.0,
+      33.0,
+      50.0
+     ],
+     "note": "share of Spirit-based mana regen that continues while casting (A_MOD_MANA_REGEN_INTERRUPT); not a stat conversion, it raises the value of Spirit for casters",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:15907",
+     "linear": false
+    }
+   ],
+   "source": "sim/mage/talents_arcane.go:242-248",
+   "treeSource": "ui/sim/talents/trees/mage.json:139"
+  },
+  {
+   "class": "mage",
+   "talent": "Arcane Mind",
+   "field": "arcaneMind",
+   "tab": 1,
+   "tabName": "Arcane",
+   "row": 5,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 11232,
+   "effects": [
+    {
+     "stat": "Intellect",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "note": "WoW Forever data: total Intellect %, not max mana %",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:8173"
+    }
+   ],
+   "source": "sim/mage/talents_arcane.go:323-329",
+   "treeSource": "ui/sim/talents/trees/mage.json:180"
+  },
+  {
+   "class": "paladin",
+   "talent": "Divine Strength",
+   "field": "divineStrength",
+   "tab": 1,
+   "tabName": "Holy",
+   "row": 1,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 20262,
+   "effects": [
+    {
+     "stat": "Strength",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:17564"
+    }
+   ],
+   "source": "sim/paladin/talents_holy.go:43-50",
+   "treeSource": "ui/sim/talents/trees/paladin.json:18"
+  },
+  {
+   "class": "paladin",
+   "talent": "Reverence",
+   "field": "reverence",
+   "tab": 1,
+   "tabName": "Holy",
+   "row": 2,
+   "column": 2,
+   "maxRank": 2,
+   "spellId": 1310899,
+   "effects": [
+    {
+     "from": "Spirit",
+     "to": "SpiritRegenWhileCasting",
+     "pctPerRank": 15.0,
+     "pctByRank": [
+      15.0,
+      30.0
+     ],
+     "note": "share of Spirit-based mana regen that continues while casting (A_MOD_MANA_REGEN_INTERRUPT); not a stat conversion, it raises the value of Spirit for casters",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:38205"
+    }
+   ],
+   "source": "sim/paladin/talents_holy.go:89-95",
+   "treeSource": "ui/sim/talents/trees/paladin.json:40"
+  },
+  {
+   "class": "paladin",
+   "talent": "Divine Intellect",
+   "field": "divineIntellect",
+   "tab": 2,
+   "tabName": "Protection",
+   "row": 1,
+   "column": 2,
+   "maxRank": 5,
+   "spellId": 20257,
+   "effects": [
+    {
+     "stat": "Intellect",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:17560"
+    }
+   ],
+   "source": "sim/paladin/talents_protection.go:44-50",
+   "treeSource": "ui/sim/talents/trees/paladin.json:212"
+  },
+  {
+   "class": "paladin",
+   "talent": "Toughness",
+   "field": "toughness",
+   "tab": 2,
+   "tabName": "Protection",
+   "row": 3,
+   "column": 4,
+   "maxRank": 5,
+   "spellId": 20143,
+   "effects": [
+    {
+     "stat": "Armor",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "scope": "armor from items: base armor of items (A_MOD_BASE_RESISTANCE_PCT)",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:17375"
+    },
+    {
+     "stat": "BonusArmor",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "scope": "bonus armor on items, the green +N Armor (A_MOD_BONUS_ARMOR_PCT)",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:17376"
+    }
+   ],
+   "source": "sim/paladin/talents_protection.go:53-59",
+   "treeSource": "ui/sim/talents/trees/paladin.json:304"
+  },
+  {
+   "class": "paladin",
+   "talent": "Shield Specialization",
+   "field": "shieldSpecialization",
+   "tab": 2,
+   "tabName": "Protection",
+   "row": 3,
+   "column": 3,
+   "maxRank": 2,
+   "spellId": 20150,
+   "effects": [
+    {
+     "stat": "BlockValue",
+     "pctPerRank": 15.0,
+     "pctByRank": [
+      15.0,
+      30.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:17380"
+    }
+   ],
+   "source": "sim/paladin/talents_protection.go:138-147",
+   "treeSource": "ui/sim/talents/trees/paladin.json:289"
+  },
+  {
+   "class": "paladin",
+   "talent": "Champion of the Light",
+   "field": "championOfTheLight",
+   "tab": 3,
+   "tabName": "Retribution",
+   "row": 6,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 1311084,
+   "effects": [
+    {
+     "from": "Intellect",
+     "to": "SpellDamage",
+     "pctPerRank": 12.0,
+     "pctByRank": [
+      12.0,
+      24.0,
+      36.0,
+      48.0,
+      60.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:38268"
+    }
+   ],
+   "source": "sim/paladin/talents_retribution.go:287-295",
+   "treeSource": "ui/sim/talents/trees/paladin.json:586"
+  },
+  {
+   "class": "priest",
+   "talent": "Mental Strength",
+   "field": "mentalStrength",
+   "tab": 1,
+   "tabName": "Discipline",
+   "row": 2,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 18551,
+   "effects": [
+    {
+     "stat": "Intellect",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "note": "code comment says +3%/rank but the curve the sim reads is 2/4/6/8/10",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:15962"
+    }
+   ],
+   "source": "sim/priest/talents_discipline.go:211-219",
+   "treeSource": "ui/sim/talents/trees/priest.json:62"
+  },
+  {
+   "class": "priest",
+   "talent": "Meditation",
+   "field": "meditation",
+   "tab": 1,
+   "tabName": "Discipline",
+   "row": 3,
+   "column": 4,
+   "maxRank": 3,
+   "spellId": 14521,
+   "effects": [
+    {
+     "from": "Spirit",
+     "to": "SpiritRegenWhileCasting",
+     "pctPerRank": 17.0,
+     "pctByRank": [
+      17.0,
+      33.0,
+      50.0
+     ],
+     "note": "share of Spirit-based mana regen that continues while casting (A_MOD_MANA_REGEN_INTERRUPT); not a stat conversion, it raises the value of Spirit for casters",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:11401",
+     "linear": false
+    }
+   ],
+   "source": "sim/priest/talents_discipline.go:192-198",
+   "treeSource": "ui/sim/talents/trees/priest.json:117"
+  },
+  {
+   "class": "priest",
+   "talent": "Spiritual Guidance",
+   "field": "spiritualGuidance",
+   "tab": 2,
+   "tabName": "Holy",
+   "row": 5,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 14901,
+   "effects": [
+    {
+     "from": "Spirit",
+     "to": "SpellDamage",
+     "pctPerRank": 1.0,
+     "pctByRank": [
+      1.0,
+      3.0,
+      5.0,
+      6.0,
+      8.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:12311",
+     "linear": false
+    },
+    {
+     "from": "Spirit",
+     "to": "HealingPower",
+     "pctPerRank": 5.0,
+     "pctByRank": [
+      5.0,
+      10.0,
+      15.0,
+      20.0,
+      25.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:12312"
+    }
+   ],
+   "source": "sim/priest/talents_holy.go:255-267",
+   "treeSource": "ui/sim/talents/trees/priest.json:381"
+  },
+  {
+   "class": "shaman",
+   "talent": "Ancestral Knowledge",
+   "field": "ancestralKnowledge",
+   "tab": 2,
+   "tabName": "Enhancement",
+   "row": 1,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 17485,
+   "effects": [
+    {
+     "stat": "Intellect",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "note": "WoW Forever data: total Intellect %, not max mana %",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:14593"
+    }
+   ],
+   "source": "sim/shaman/talents_enhancement.go:52-57",
+   "treeSource": "ui/sim/talents/trees/shaman.json:223"
+  },
+  {
+   "class": "shaman",
+   "talent": "Mental Dexterity",
+   "field": "mentalDexterity",
+   "tab": 2,
+   "tabName": "Enhancement",
+   "row": 2,
+   "column": 2,
+   "maxRank": 3,
+   "spellId": 415140,
+   "effects": [
+    {
+     "from": "Intellect",
+     "to": "AttackPower",
+     "pctPerRank": 33.0,
+     "pctByRank": [
+      33.0,
+      66.0,
+      100.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:25787",
+     "linear": false
+    }
+   ],
+   "source": "sim/shaman/talents_enhancement.go:59-68",
+   "treeSource": "ui/sim/talents/trees/shaman.json:245"
+  },
+  {
+   "class": "shaman",
+   "talent": "Toughness",
+   "field": "toughness",
+   "tab": 2,
+   "tabName": "Enhancement",
+   "row": 4,
+   "column": 1,
+   "maxRank": 5,
+   "spellId": 16252,
+   "effects": [
+    {
+     "stat": "Stamina",
+     "pctPerRank": 2.0,
+     "pctByRank": [
+      2.0,
+      4.0,
+      6.0,
+      8.0,
+      10.0
+     ],
+     "note": "WoW Forever data: total Stamina %, not armor",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:13387"
+    }
+   ],
+   "source": "sim/shaman/talents_enhancement.go:108-113",
+   "treeSource": "ui/sim/talents/trees/shaman.json:300"
+  },
+  {
+   "class": "shaman",
+   "talent": "Mental Quickness",
+   "field": "mentalQuickness",
+   "tab": 2,
+   "tabName": "Enhancement",
+   "row": 5,
+   "column": 2,
+   "maxRank": 2,
+   "spellId": 30812,
+   "effects": [
+    {
+     "from": "Intellect",
+     "to": "HealingPower",
+     "pctPerRank": 15.0,
+     "pctByRank": [
+      15.0,
+      30.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:23511"
+    },
+    {
+     "from": "Intellect",
+     "to": "SpellDamage",
+     "pctPerRank": 15.0,
+     "pctByRank": [
+      15.0,
+      30.0
+     ],
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:23512"
+    }
+   ],
+   "source": "sim/shaman/talents_enhancement.go:192-197",
+   "treeSource": "ui/sim/talents/trees/shaman.json:359"
+  },
+  {
+   "class": "shaman",
+   "talent": "Mindfulness",
+   "field": "mindfulness",
+   "tab": 3,
+   "tabName": "Restoration",
+   "row": 2,
+   "column": 1,
+   "maxRank": 3,
+   "spellId": 1223033,
+   "effects": [
+    {
+     "from": "Spirit",
+     "to": "SpiritRegenWhileCasting",
+     "pctPerRank": 17.0,
+     "pctByRank": [
+      17.0,
+      33.0,
+      50.0
+     ],
+     "note": "share of Spirit-based mana regen that continues while casting (A_MOD_MANA_REGEN_INTERRUPT); not a stat conversion, it raises the value of Spirit for casters",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:32344",
+     "linear": false
+    }
+   ],
+   "source": "sim/shaman/talents_restoration.go:60-65",
+   "treeSource": "ui/sim/talents/trees/shaman.json:439"
+  },
+  {
+   "class": "warlock",
+   "talent": "Demonic Embrace",
+   "field": "demonicEmbrace",
+   "tab": 2,
+   "tabName": "Demonology",
+   "row": 1,
+   "column": 3,
+   "maxRank": 5,
+   "spellId": 18697,
+   "effects": [
+    {
+     "stat": "Stamina",
+     "pctPerRank": 3.0,
+     "pctByRank": [
+      3.0,
+      6.0,
+      9.0,
+      12.0,
+      15.0
+     ],
+     "note": "single effect in this data, no Spirit penalty",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:16046"
+    }
+   ],
+   "source": "sim/warlock/talents_demonology.go:66-73",
+   "treeSource": "ui/sim/talents/trees/warlock.json:230"
+  },
+  {
+   "class": "warlock",
+   "talent": "Fel Vitality",
+   "field": "felVitality",
+   "tab": 2,
+   "tabName": "Demonology",
+   "row": 2,
+   "column": 3,
+   "maxRank": 3,
+   "spellId": 18731,
+   "effects": [
+    {
+     "stat": "Mana",
+     "pctPerRank": 5.0,
+     "pctByRank": [
+      5.0,
+      10.0,
+      15.0
+     ],
+     "note": "warlock max mana; effect 1 also raises demon health and mana by the same %",
+     "spellDataRef": "sim/core/spelldata/spells_auto_gen.go:16072"
+    }
+   ],
+   "source": "sim/warlock/talents_demonology.go:98-113",
+   "treeSource": "ui/sim/talents/trees/warlock.json:274"
+  }
+ ],
+ "presetSwitches": [
+  {
+   "class": "paladin",
+   "spec": "retribution",
+   "talent": "Holy Shock",
+   "field": "holyShock",
+   "tab": 1,
+   "row": 5,
+   "column": 2,
+   "maxRank": 1,
+   "treeSource": "ui/sim/talents/trees/paladin.json:154",
+   "source": "ui/specs/paladin/retribution/spec.ts:181-183",
+   "rule": "getTalents().holyShock ? HolyShockEpWeights : UnsealedWrathEpWeights (reforge.getEPDefaults)",
+   "ifTalented": {
+    "preset": "Holy Shock",
+    "source": "ui/specs/paladin/retribution/presets.ts:36-59",
+    "weights": {
+     "Strength": 2.5,
+     "Agility": 3.11,
+     "Intellect": 4.53,
+     "SpellDamage": 5.78,
+     "HolyDamage": 4.98,
+     "SpellPiercing": 0.01,
+     "AttackPower": 1,
+     "HitRating": 10.25,
+     "CritRating": 4.66,
+     "HasteRating": 4.06,
+     "ArmorPenetration": 0.26,
+     "ExpertiseRating": 6.2,
+     "MP5": 0.01
+    },
+    "pseudoWeights": {
+     "MainHandDps": 13.04,
+     "SchoolHitPercentHoly": 23.2
+    }
+   },
+   "otherwise": {
+    "preset": "Unsealed Wrath",
+    "source": "ui/specs/paladin/retribution/presets.ts:61-84",
+    "weights": {
+     "Strength": 2.4,
+     "Agility": 2.23,
+     "Intellect": 2.06,
+     "SpellDamage": 2.36,
+     "HolyDamage": 1.95,
+     "SpellPiercing": 0.01,
+     "AttackPower": 1,
+     "HitRating": 6.83,
+     "CritRating": 3.08,
+     "HasteRating": 22.87,
+     "ArmorPenetration": 0.24,
+     "ExpertiseRating": 5.1,
+     "MP5": 0.23
+    },
+    "pseudoWeights": {
+     "MainHandDps": 13.85,
+     "SchoolHitPercentHoly": 6.0
+    }
+   },
+   "note": "SchoolHitPercentHoly is 2.32 / 0.6 x HIT_RATING_PER_HIT_PERCENT (10, ui/sim/constants/mechanics.ts:14). EP per point, AttackPower = 1."
+  }
+ ]
+}

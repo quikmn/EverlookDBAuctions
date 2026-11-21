@@ -5,7 +5,7 @@
 ## Version: v0.15.0
 ## SavedVariables: EverlookAuctionsDB
 ## SavedVariablesPerCharacter: EverlookAuctionsCharDB
-## OptionalDeps: EverlookDBAuctions_Shared
+## OptionalDeps: EverlookDBAuctions_Shared, Bagnon, Pawn
 ## IconTexture: Interface\AddOns\EverlookDBAuctions\Media\icon
 
 Libs\LibStub\LibStub.lua
@@ -32,6 +32,11 @@ Purchases.lua
 Celebrate.lua
 LootCards.lua
 Crafting.lua
+UpgradesData.lua
+Upgrades.lua
+UpgradesTab.lua
+UpgradesExtras.lua
+UpgradesOptions.lua
 Options.lua
 ProfitWindow.lua
 API.lua

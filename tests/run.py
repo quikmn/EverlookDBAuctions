@@ -126,6 +126,7 @@ def main() -> int:
     failures += full_scan()
     failures += profit()
     failures += shared_prices()
+    failures += upgrades()
 
     if failures:
         for f in failures:
@@ -3477,6 +3478,328 @@ def profit_window():
     f.min.scripts.OnTextChanged(f.min, True)
     check(shown_names() == ["Linen Bag"], f"profit at least 3 silver: {shown_names()}")
     check(DB.profit.min == 300, "the minimum is kept in copper")
+    return failures
+
+
+UPGRADES_SETUP = r"""
+-- a warrior at level 60 with a few worn items; gear and stats by item ID
+MOCK_CLASS, MOCK_LEVEL = "WARRIOR", 60
+function UnitClass() return "Warrior", MOCK_CLASS, 1 end
+function UnitLevel() return MOCK_LEVEL end
+function InCombatLockdown() return false end
+function GetTime() return 1000 end
+function debugprofilestop() return 0 end
+function strsplit(sep, s)
+  local out = {}
+  for part in (s .. sep):gmatch("(.-)" .. sep) do out[#out + 1] = part end
+  return unpack(out)
+end
+-- id -> { equipLoc, classID, subID, stats, name, quality, req, sell }
+MOCK_GEAR = {}
+C_Item.GetItemInfoInstant = function(id)
+  local g = MOCK_GEAR[tonumber(id)]
+  if not g then return nil end
+  return id, "", "", g[1], 134400, g[2], g[3]
+end
+C_Item.GetItemStats = function(link)
+  local id = tonumber(tostring(link):match("item:(%d+)"))
+  local suffix = tonumber(tostring(link):match("::::::::::::1:(%d+)"))
+  local g = MOCK_GEAR[id]
+  local st = {}
+  for k, v in pairs(g and g[4] or {}) do st[k] = v end
+  if suffix == 5 then st.ITEM_MOD_STRENGTH_SHORT = (st.ITEM_MOD_STRENGTH_SHORT or 0) + 10 end
+  return st
+end
+C_Item.IsItemDataCachedByID = function() return true end
+C_Item.GetItemInfo = function(id)
+  local n = tonumber(tostring(id):match("(%d+)"))
+  local g = MOCK_GEAR[n]
+  if not g then return nil end
+  return g[5], "item:" .. n, g[6] or 2, 30, g[7] or 1, "", "", 1, g[1], 134400, g[8] or 0
+end
+UPDATA = {
+  ratings = { hit = 10, crit = 14 },
+  classes = {
+    WARRIOR = { specs = {
+      { key = "fury", name = "Fury", role = "melee", brackets = {
+        { upTo = 29, src = "model", w = { str = 1, ap = 1 } },
+        { upTo = 60, src = "wowsims", w = { str = 2, ap = 1, crit = 1.5, sta = 0.5, mhdps = 10, ohdps = 5 } } } },
+      { key = "protection", name = "Protection", role = "tank", brackets = {
+        { upTo = 60, src = "wowsims", w = { sta = 2, def = 3, str = 1, ap = 0.5 } } } },
+    }, talents = { { tab = 2, tier = 1, col = 1, pct = 2, name = "Cruelty", stat = "crit" } } },
+  },
+  procs = { [900] = { { k = "stat", s = { str = 100 }, d = 10, t = "melee", ppm = 1 } } },
+}
+"""
+
+UPGRADES_NS = r"""
+local ns = ...
+DB = { scans = {} }
+ns.db = function() return DB end
+ns.ok = function(v) return v end
+ns.money = function(c) return tostring(c) .. "c" end
+ns.num = function(n) return tostring(n) end
+SAID = {}
+ns.say = function(m) SAID[#SAID + 1] = m end
+ns.variantOf = function(id, link)
+  local s = tostring(link):match("::::::::::::1:(%d+)")
+  return id .. ":" .. (s or 0)
+end
+ns.houseOrFaction = function() return "Test-Alliance" end
+ns.itemInfo = function(id)
+  local g = MOCK_GEAR[id]
+  if not g then return nil end
+  return { g[5], g[6] or 2, 30, g[7] or 1, "", "", g[1], 134400, g[8] or 0, 1 }
+end
+ns.itemFor = function(id) local p = MOCK_PRICES[id]; return p and { p } end
+ns.UI = { hex = function() return "|cff00ff00" end }
+ns.T = { good = { 0, 1, 0 }, dim = { 1, 1, 1 }, mute = { 1, 1, 1 }, places = { upgrades = { 1, 1, 1 } } }
+ns.UP_DATA = UPDATA
+"""
+
+
+def upgrades():
+    """Gear upgrades (Upgrades.lua, UpgradesExtras.lua, UpgradesOptions.lua): item scores, the slot comparison (rings,
+    trinkets, an off-hand against a two-hander, an empty slot), the armor-type rule, rich mode against most upgrade
+    per gold, the max price and smallest-upgrade filters over a scan, level brackets and talents, Pawn import, the
+    best quest reward, grey items only at vendors, and the generated data."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("upgrades: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute(UPGRADES_SETUP)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    ns = lua.table()
+    run(UPGRADES_NS, "ns", ns)
+    for name in ("Upgrades.lua", "UpgradesExtras.lua", "UpgradesOptions.lua"):
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    G = lua.globals()
+    U, X, O = ns.up, ns.upExtras, ns.upOptions
+    gear = lua.eval("""function(id, loc, cls, sub, stats, name, quality, req, sell)
+      MOCK_GEAR[id] = { loc, cls, sub, stats, name or ("Item " .. id), quality, req, sell }
+    end""")
+    T = lua.table_from
+    gear(1, "INVTYPE_FINGER", 4, 0, T({"ITEM_MOD_STRENGTH_SHORT": 5}), "Ring A")        # score 10
+    gear(2, "INVTYPE_FINGER", 4, 0, T({"ITEM_MOD_STRENGTH_SHORT": 10}), "Ring B")       # score 20
+    gear(3, "INVTYPE_FINGER", 4, 0, T({"ITEM_MOD_STRENGTH_SHORT": 6, "ITEM_MOD_CRIT_RATING_SHORT": 2}), "Ring C")  # 15
+    gear(4, "INVTYPE_TRINKET", 4, 0, T({"ITEM_MOD_ATTACK_POWER_SHORT": 20}), "Trinket A")
+    gear(5, "INVTYPE_TRINKET", 4, 0, T({"ITEM_MOD_ATTACK_POWER_SHORT": 40}), "Trinket B")
+    gear(6, "INVTYPE_TRINKET", 4, 0, T({"ITEM_MOD_ATTACK_POWER_SHORT": 30}), "Trinket C")
+    gear(7, "INVTYPE_2HWEAPON", 2, 1, T({"ITEM_MOD_DAMAGE_PER_SECOND_SHORT": 40, "ITEM_MOD_STRENGTH_SHORT": 10}), "Big Axe")
+    gear(8, "INVTYPE_WEAPON", 2, 7, T({"ITEM_MOD_DAMAGE_PER_SECOND_SHORT": 30}), "Sword")
+    gear(9, "INVTYPE_HEAD", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 10}), "Plate Helm")
+    gear(10, "INVTYPE_CHEST", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 10}), "Plate Chest")       # worn, 20
+    gear(11, "INVTYPE_CHEST", 4, 2, T({"ITEM_MOD_STRENGTH_SHORT": 30}), "Leather Chest")
+    gear(12, "INVTYPE_CHEST", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 12}), "Cheap Chest")      # +4 = +20%
+    gear(13, "INVTYPE_CHEST", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 30}), "Dear Chest")       # +40 = +200%
+    gear(14, "INVTYPE_CHEST", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 10, "ITEM_MOD_STAMINA_SHORT": 1}), "Tiny Chest")  # +2.5%
+    gear(16, "INVTYPE_SHIELD", 4, 6, T({"ITEM_MOD_STAMINA_SHORT": 10}), "Shield")
+    gear(17, "INVTYPE_CHEST", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 50}), "Future Chest", 4, 63)
+    gear(18, "INVTYPE_RANGEDRIGHT", 2, 19, T({}), "Wand")
+    gear(20, "INVTYPE_LEGS", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 8}), "Legs of Might")
+    gear(900, "INVTYPE_WEAPON", 2, 7, T({"ITEM_MOD_DAMAGE_PER_SECOND_SHORT": 30}), "Proc Sword")
+    worn = lua.eval("""function(t)
+      local out = {}
+      for slot, id in pairs(t) do
+        local link = "item:" .. id
+        out[slot] = { link = link, id = id, key = id .. ":0", equipLoc = MOCK_GEAR[id][1], stats = ns_up.stats(link, id) }
+      end
+      ns_up.testWorn = out
+      ns_up.wornChanged()
+    end""")
+    G.ns_up = U
+    worn(T({11: 1, 12: 2, 13: 4, 14: 5, 16: 7, 5: 10}))
+
+    # scores
+    fury = U.spec("fury")
+    w = U.weights(fury)[0]
+    check(w.str == 2 and w.crit == 1.5, "level 60: the wowsims bracket")
+    st = U.stats("item:3", 3)
+    check(U.score(st, w, "finger") == 6 * 2 + 2 * 1.5, f"score of a ring: {U.score(st, w, 'finger')}")
+    sword = U.stats("item:8", 8)
+    check(U.score(sword, w, "mainhand") == 300 and U.score(sword, w, "offhand") == 150,
+          "weapon DPS counts as main hand or off hand")
+    suffixed = U.stats(U.linkOf(20, 5), 20)
+    check(suffixed.str == 18 and U.stats("item:20", 20).str == 8, "a random suffix is scored on its own")
+    procs_on = U.score(U.stats("item:900", 900), w, "mainhand", 900, "melee")
+    U.set("procs", False)
+    procs_off = U.score(U.stats("item:900", 900), w, "mainhand", 900, "melee")
+    U.set("procs", True)
+    check(procs_off == 300 and procs_on > 320, f"procs count their average value when on: {procs_on} / {procs_off}")
+
+    # rings and trinkets against the weaker one
+    r = U.compare(st, 3, "INVTYPE_FINGER", fury)
+    check(r.vs.id == 1 and abs(r.pct - 50) < 0.01, f"a ring beats the weaker worn ring: {r.vs.id} {r.pct}")
+    r = U.compare(U.stats("item:6", 6), 6, "INVTYPE_TRINKET", fury)
+    check(r.vs.id == 4 and abs(r.pct - 50) < 0.01, "a trinket against the weaker trinket")
+    check(U.worthText(r) == "worth about +5.0 Strength", f"worth text: {U.worthText(r)}")
+    # an off-hand while a two-hander is worn
+    r = U.compare(U.stats("item:16", 16), 16, "INVTYPE_SHIELD", fury)
+    check(r.note == "twohand" and not U.isUpgrade(r, 0), "an off-hand against a worn two-hander")
+    # a one-hander against the worn two-hander
+    r = U.compare(U.stats("item:8", 8), 8, "INVTYPE_WEAPON", fury)
+    check(r.vs.id == 7 and r.delta < 0, "a one-hander against a two-hander (main hand)")
+    # an empty slot
+    r = U.compare(U.stats("item:9", 9), 9, "INVTYPE_HEAD", fury)
+    check(r.note == "empty" and U.isUpgrade(r, 0) and U.pctText(r) == "fills an empty slot", "an empty slot is filled")
+
+    # the armor-type rule and class rules
+    ok_, why = U.usable(11, fury, ns.itemInfo(11))[:2]
+    check(ok_ is False and why == "armor", f"leather isn't a level-60 warrior's armor type: {why}")
+    U.set("armor", False)
+    check(U.usable(11, fury, ns.itemInfo(11))[0] is True, "with the rule off, leather is suggested")
+    U.set("armor", True)
+    ok_, why = U.usable(18, fury, ns.itemInfo(18))[:2]
+    check(ok_ is False and why == "class", "a warrior can't use a wand")
+    check(U.armorOK("PRIEST", 60, "healer", 4, 2, "INVTYPE_CHEST", True) and U.armorOK("DRUID", 60, "caster", 4, 1, "INVTYPE_CHEST", True),
+          "casters and healers see every armor type they wear")
+    check(U.armorOK("WARRIOR", 30, "melee", 4, 3, "INVTYPE_CHEST", True) and not U.armorOK("WARRIOR", 30, "melee", 4, 2, "INVTYPE_CHEST", True),
+          "a level 30 warrior: mail, not leather")
+    ok_, why, needs = U.usable(17, fury, ns.itemInfo(17))[:3]
+    check(ok_ is False and why == "level" and needs == 63, "an item above your level: next upgrade needs level N")
+
+    # brackets and talents
+    G.MOCK_LEVEL = 25
+    U.changed()
+    w = U.weights(fury)[0]
+    br = U.bracket(fury)[1]
+    check(w.str == 1 and w.crit is None and U.bracketText(fury, br) == "1-29", "level 25: the 1-29 bracket")
+    G.MOCK_LEVEL = 60
+    U.testTalents = T({"name:Cruelty": 5})
+    U.changed()
+    w, why = U.weights(fury)[:2]
+    check(abs(w.crit - 1.5 * 1.1) < 1e-9 and why.crit == "Cruelty", f"a talent raises a weight and marks it: {w.crit}")
+    check("Crit Rating 1.65*" in O.weightsText(fury), f"* beside a talent's weight: {O.weightsText(fury)}")
+    U.testTalents = None
+    U.changed()
+
+    # rich vs per gold, max and min, over a scan
+    lua.execute("""
+      DB.scans = { { realm = "Test", side = "Alliance", at = 1699990000, rows = {
+        ["12:0"] = "1000,1000,1000,1,1,,,,,,,",
+        ["13:0"] = "100000,100000,100000,1,1,,,,,,,",
+        ["14:0"] = "500,500,500,1,1,,,,,,,",
+        ["11:0"] = "10,10,10,1,1,,,,,,,",
+        ["17:0"] = "10,10,10,1,1,,,,,,,",
+        ["3:0"] = "500,500,500,1,1,,,,,,,",
+        ["20:5"] = "700,700,700,1,1,,,,,,,,Legs of Might of Strength",
+        ["16:0"] = "50,50,50,1,1,,,,,,,",
+      } } }
+    """)
+    res = U.collect(fury, None, True)
+    chest = res.slots.chest
+    check(chest.best and chest.best.id == 12, f"most upgrade per gold first: {chest.best and chest.best.id}")
+    check(chest.nextLevel == 63, "the chest above your level is the next upgrade")
+    check(res.slots.legs.best and res.slots.legs.best.name == "Legs of Might of Strength", "a suffixed row is named by its suffix")
+    check(res.slots.offhand.twohand, "the off-hand slot says you wear a two-hander")
+    check(res.slots.head.best is None and res.slots.head.usable == 0, "nothing for the head on the AH")
+    total = sum(res.slots[g].best.price for g in U.ORDER.values() if res.slots[g].best)
+    check(res.count >= 3 and res.total == total, "the summary counts the best of each slot")
+    U.set("rich", True)
+    res = U.collect(fury, None, True)
+    check(res.slots.chest.best.id == 13, "rich mode: the biggest upgrade first")
+    U.set("max", 5000)
+    res = U.collect(fury, None, True)
+    check(res.slots.chest.best.id == 12 and res.slots.chest.overMax == 1, "the max price is a ceiling in rich mode too")
+    U.set("max", None)
+    U.set("rich", False)
+    U.set("min", 10)
+    res = U.collect(fury, None, True)
+    ids = [res.slots.chest.list[i].id for i in range(1, len(res.slots.chest.list) + 1)]
+    check(14 not in ids and 12 in ids, f"the smallest upgrade filter: {ids}")
+    U.set("min", 0)
+    check(U.parseMoney("25g") == 250000 and U.parseMoney("1g 50s") == 15000 and U.parseMoney("5s") == 500
+          and U.parseMoney("abc") is None and U.moneyShort(15000) == "1g 50s", "money as typed")
+    O.slash("max 1g 50s")
+    check(U.get("max") == 15000, "/eah up max 1g 50s")
+    O.slash("max off")
+    check(U.get("max") is None, "/eah up max off")
+    O.slash("rich on")
+    check(U.get("rich") is True, "/eah up rich on")
+    O.slash("rich off")
+    O.slash("min 5")
+    check(U.get("min") == 5, "/eah up min 5")
+    O.slash("min 0")
+
+    # Pawn import, our export round trip, profiles
+    imp = lua.eval("function(s) local p, why = ns_up.import(s); return { p = p, why = why } end")
+    res_ = imp('( Pawn: v1: "Warrior Fury": Strength=2.2, HitRating=1.5, Dps=3, Unknown=4 )')
+    p, why = res_.p, res_.why
+    check(p is not None and p.name == "Warrior Fury" and p.w.str == 2.2 and p.w.hit == 1.5 and p.w.mhdps == 3
+          and p.w.ohdps == 3, f"a Pawn scale: {why}")
+    s = U.export(lua.eval("{ str = 2.2, crit = 1.25 }"), "fury", "Mine")
+    q = imp(s).p
+    check(q.w.str == 2.2 and q.w.crit == 1.25 and q.spec == "fury" and q["class"] == "WARRIOR", f"our string round trip: {s}")
+    check(imp("nonsense").p is None and imp("nonsense").why, "not a weights string")
+    O.slash("import " + s)
+    w, _, src, label = U.weights(fury)
+    check(src == "profile" and w.str == 2.2, "an import becomes the profile in use")
+    O.slash("set crit 0")
+    check(U.weights(fury)[0].crit is None, "0 removes a stat")
+    O.slash("reset")
+    check(U.weights(fury)[2] == "built-in", "/eah up reset")
+    check(U.stepProfile("fury", 1) == "Mine", "next profile")
+    check(U.deleteProfile("fury")[0] is True and U.deleteProfile("fury") is False, "delete a profile; not the built-in")
+
+    # specs
+    O.slash("spec protection")
+    ticked = U.ticked()
+    check(len(ticked) == 1 and ticked[1].key == "protection", "/eah up spec protection")
+    O.slash("spec all")
+    check(len(U.ticked()) == 2, "/eah up spec all")
+    O.slash("spec fury")
+
+    # quest rewards
+    choices = lua.eval("""{ { link = "item:12", id = 12 }, { link = "item:13", id = 13 }, { link = "item:11", id = 11 } }""")
+    marks, best, lines = X.questPick(choices)
+    check(best == 2 and marks[2].text == "+200%" and marks[1].text == "+20%", f"the best quest reward gets the star: {best}")
+    check(lines[1].startswith("Best quest reward for Fury: item:13 +200% vs item:10"), f"chat line: {lines[1]}")
+    G.MOCK_PRICES = T({14: 5000})
+    gear(14, "INVTYPE_CHEST", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 1}), "Tiny Chest", 2, 1, 300)
+    U.forgetStats()
+    marks, best, lines = X.questPick(lua.eval("""{ { link = "item:14", id = 14 }, { link = "item:11", id = 11 } }"""))
+    check(best is None and lines[1].startswith("No quest reward is an upgrade for Fury. item:14 sells for the most (4750c on the AH)"),
+          f"none is an upgrade: {lines[1]}")
+
+    # grey items only
+    items = lua.eval("""{ { quality = 0, sell = 5 }, { quality = 1, sell = 50 }, { quality = 0, sell = 0 },
+      { quality = 0, sell = 3, noValue = true }, { quality = 4, sell = 999 }, { quality = 0, sell = 7, locked = true }, { quality = 0, sell = 9 } }""")
+    junk = X.junkList(items)
+    check(len(junk) == 2 and junk[1].sell == 5 and junk[2].sell == 9, "only grey items worth something are sold")
+
+    # tooltip lines
+    lines = X.tipLines("item:13", 13)
+    check(lines and lines[1].right == "+200%" and lines[1].left == "Upgrade for Fury", "tooltip: the upgrade for the spec")
+    lines = X.tipLines("item:11", 11)
+    check(lines and lines[1].right == "Not your armor type", "tooltip: not your armor type")
+    lines = X.tipLines("item:18", 18)
+    check(lines and lines[1].right == "Your class can't use this", "tooltip: the class can't use it")
+    check(X.tipLines("item:10", 10) is None, "tooltip: nothing on a worn item")
+
+    # new upgrades in the bags
+    new = X.newLinks(lua.eval('{ a = "item:1", b = "item:2" }'), lua.eval('{ c = "item:1", d = "item:2", e = "item:13" }'))
+    check(len(new) == 1 and new[1] == "item:13", "only gear that wasn't there is new")
+    line = X.newUpgradeLine("item:13", 13)
+    check(line == "New upgrade in your bags for Fury: item:13 +200% vs item:10", f"new upgrade chat: {line}")
+
+    # the generated data
+    lua2 = lua51.LuaRuntime(unpack_returned_tuples=True)
+    ns2 = lua2.table()
+    lua2.eval("function(src, ...) return assert(loadstring(src, 'UpgradesData.lua'))(...) end")(source_of("UpgradesData.lua"), "x", ns2)
+    d = ns2.UP_DATA
+    classes = sorted(d.classes.keys())
+    check(classes == ["DRUID", "HUNTER", "MAGE", "PALADIN", "PRIEST", "ROGUE", "SHAMAN", "WARLOCK", "WARRIOR"], f"every class: {classes}")
+    for c in classes:
+        for i in range(1, len(d.classes[c].specs) + 1):
+            sp = d.classes[c].specs[i]
+            last = sp.brackets[len(sp.brackets)]
+            check(last.upTo == 60 and len(sp.brackets) >= 10 and sp.brackets[1].upTo < 20, f"{c} {sp.key}: level brackets up to 60")
+            bad = [k for b in sp.brackets.values() for k, v in b.w.items() if v < 0]
+            check(not bad, f"{c} {sp.key}: no negative weights {bad}")
     return failures
 
 

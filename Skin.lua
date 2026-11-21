@@ -48,6 +48,7 @@ T.places = {
   sell     = { 0.325, 0.776, 0.573, 1 },     -- #53c692  Quick sell: green
   shopping = { 0.765, 0.651, 1, 1 },         -- #c3a6ff  Shopping: violet
   prices   = { 0.561, 0.663, 0.710, 1 },     -- #8fa9b5  price updates (the bar along the bottom): cyan-grey
+  upgrades = { 1, 0.565, 0.388, 1 },         -- #ff9063  Gear upgrades: coral
 }
 ns.T = T
 
