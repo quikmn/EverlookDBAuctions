@@ -3766,7 +3766,7 @@ UPDATA = {
     WARRIOR = { specs = {
       { key = "fury", name = "Fury", role = "melee", brackets = {
         { upTo = 29, src = "estimate", w = { str = 1, ap = 1 } },
-        { upTo = 60, src = "wowsims", w = { str = 2, ap = 1, crit = 1.5, sta = 0.5, mhdps = 10, ohdps = 5 } } } },
+        { upTo = 60, src = "wowsims", fb = true, w = { str = 2, ap = 1, crit = 1.5, sta = 0.5, mhdps = 10, ohdps = 5 } } } },
       { key = "protection", name = "Protection", role = "tank", brackets = {
         { upTo = 60, src = "wowsims", w = { sta = 2, def = 3, str = 1, ap = 0.5 } } } },
     }, talents = { { tab = 2, tier = 1, col = 1, pct = 2, name = "Cruelty", stat = "crit" } } },
@@ -4281,7 +4281,25 @@ def upgrades_ours():
     _, _, _, _, meta = U.weights(prot)
     check(meta.src == "estimate" and "survival" in (meta.why or "") and meta.tps, f"tank below 60: estimated survival, our dungeon threat: {meta.why}")
 
-    # 6. Holy Shock Retribution: our level-60 sim of it, per play setting
+    # 6. talents: simulated weights already include the build's talents; only fallback brackets are adjusted
+    as_char("WARRIOR", 40, "fury")
+    U.set("talents", True)
+    U.testTalents = T({"name:Cruelty": 5})
+    U.changed()
+    w, why = U.weights(fury)[:2]
+    check(abs(w.str - want_str) <= max(want_se, 0.005) and not why.crit, f"Fury 40 solo: talents don't move simulated weights (str {w.str})")
+    check("already include your build's talents" in O.weightsText(fury), "the weights text says so")
+    as_char("HUNTER", 30, "marksmanship")
+    U.testTalents = T({"name:Lightning Reflexes": 5})
+    U.set("talents", False)
+    w0 = dict(U.weights(U.spec("marksmanship"))[0])
+    U.set("talents", True)
+    w1, why = U.weights(U.spec("marksmanship"))[:2]
+    check(abs((w1.agi or 0) - w0.get("agi", 0) * 1.15) < 1e-6 and why.agi == "Lightning Reflexes", f"a fallback bracket still changes with talents: agi {w0.get('agi')} -> {w1.agi}")
+    U.testTalents = None
+    U.set("talents", False)
+
+    # 7. Holy Shock Retribution: our level-60 sim of it, per play setting
     as_char("PALADIN", 60, "retribution")
     U.set("talents", True)
     U.testTalents = T({"name:Holy Shock": 1})

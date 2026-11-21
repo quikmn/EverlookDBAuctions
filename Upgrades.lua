@@ -325,7 +325,7 @@ function U.bracketMeta(br, level)
   local d = ns.UP_DATA
   local why = type(br.why) == "number" and d and d.why and d.why[br.why] or br.why
   local m = { src = br.src == "estimate" and "estimate" or "simulated", se = br.se, est = br.est, scenario = br.scenario,
-    why = why, mana = br.mana, metric = br.metric, tps = br.tps, tpsSe = br.tpsSe }
+    why = why, mana = br.mana, metric = br.metric, tps = br.tps, tpsSe = br.tpsSe, fb = br.fb }
   if br.lo and (level or U.level()) < br.lo then
     m.src = "estimate"
     m.why = (d and d.belowLo) or ("no simulation below level " .. br.lo)
@@ -363,7 +363,8 @@ function U.adjusted(spec, classData, rankOf, level)
       break
     end
   end
-  for _, t in ipairs(classData and classData.talents or {}) do
+  -- talent effects only on the fallback model's brackets (fb): simulated weights already include the build's talents
+  for _, t in ipairs((br and br.fb) and classData and classData.talents or {}) do
     local r = rankOf(t.tab, t.tier, t.col, t.name) or 0
     if r > 0 then
       local share = (t.pcts and (t.pcts[r] or t.pcts[#t.pcts]) or t.pct * r) / 100

@@ -557,6 +557,8 @@ def main():
             parts.append(f'src = "{b["src"]}"')
         if b.get("scenario"):
             parts.append(f'scenario = "{b["scenario"]}"')
+        if not b.get("ours"):
+            parts.append("fb = true")   # the fallback model: talents adjust it (a sim already has its build's talents)
         if b.get("lo"):
             parts.append(f'lo = {b["lo"]}')
         if b.get("metric") in ("tmi", "tps"):

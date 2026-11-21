@@ -45,6 +45,7 @@ function O.weightsText(spec)
     for k in pairs(meta.mana or {}) do if w[k] then mana[#mana + 1] = U.NAME[k] or k end end
     table.sort(mana)
     if #mana > 0 then notes = notes .. "\nDepends on your mana: " .. table.concat(mana, ", ") .. " (the fight ends before you run out; never counted against an item)." end
+    if not meta.fb then notes = notes .. "\nSimulated weights already include your build's talents." end
     if spec.role == "tank" then notes = notes .. "\nTanks: the weights are for survival; threat is shown beside it in tooltips." end
   end
   return head .. "\n" .. (#parts > 0 and table.concat(parts, ", ") or "no stats") .. tail .. notes
@@ -287,7 +288,7 @@ local SETTINGS = {
   { "junk", "Sell grey items at vendors", "When a vendor opens, sell every grey (poor quality) item in your bags. Only greys, never anything else. /eah up junk does it once.", { "junk", "grey", "gray", "vendor", "sell", "trash" } },
   { "procs", "Count the average value of procs and Use: effects", "Weapon and trinket procs and Use: effects count as their average stats or damage over a fight (from wowsims' item data).", { "proc", "use", "trinket", "effect", "chance" } },
   { "armor", "Only suggest the best armor type for my class", "For example only plate for a warrior from level 40, mail for a hunter. Casters and healers see every armor type they can wear.", { "armor", "plate", "mail", "leather", "cloth" } },
-  { "talents", "Adjust weights to my talents", "Talents that raise a stat (or turn one stat into another) change its weight; the changed weights get a *.", { "talent", "weights", "star" } },
+  { "talents", "Adjust weights to my talents", "Talents that raise a stat (or turn one stat into another) change the estimated weights; the changed weights get a *. Simulated weights already include your build's talents.", { "talent", "weights", "star" } },
   { "pawn", "Use Pawn's scale for my spec", "When Pawn is installed: its scale named like your spec instead of the built-in weights. A profile of your own comes first.", { "pawn", "scale", "weights" } },
   { "rich", "Rich mode", "On: the biggest upgrade within your max price. Off: the most upgrade per gold. /eah up rich on|off.", { "rich", "gold", "biggest", "cheap", "per gold" } },
 }
