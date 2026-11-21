@@ -5,3 +5,4 @@ ignore:
   - .github
   - tools
   - tests
+  - curseforge

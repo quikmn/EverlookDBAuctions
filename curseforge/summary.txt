@@ -1,0 +1,1 @@
+Auction house prices everywhere: tooltips, quick selling with smart undercuts, shopping lists, crafting profit, a loot log and an AH log of what you bought and sold. Saves no player names.
