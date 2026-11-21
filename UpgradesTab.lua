@@ -633,22 +633,26 @@ local tab, win
 local function closeTab()
   if not F or not F:IsShown() or F:GetParent() ~= _G.AuctionHouseFrame then return end
   F:Hide()
+  V.inAH = nil
   if tab then pcall(PanelTemplates_DeselectTab, tab) end
   if ns.blizzardTabs then ns.blizzardTabs(true) end
   if ns.ahTitle then ns.ahTitle(nil) end
 end
 V.closeTab = closeTab
 
-local function place(parent, inAH)
+-- top: how far below the parent's top the view starts away from the auction house (its own window has a title bar)
+local function place(parent, inAH, top)
   local f = make(parent)
   f:SetParent(parent)
   f:ClearAllPoints()
+  f:SetFrameStrata(parent:GetFrameStrata())
   if inAH then
     f:SetFrameLevel(parent:GetFrameLevel() + 150)
     f:SetPoint("TOPLEFT", parent, "TOPLEFT", 2, -24)
     f:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -2, (ns.BAR_H or 0) + 2)   -- the price bar and tabs stay visible
   else
-    f:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -26)
+    f:SetFrameLevel(parent:GetFrameLevel() + 2)
+    f:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -(top or 26))
     f:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
   end
   return f
@@ -659,6 +663,7 @@ function V.openTab()
   if not ah then return end
   if win then win:Hide() end
   local f = place(ah, true)
+  V.inAH, V.inHub = true, nil
   if ns.closeSearch then ns.closeSearch() end
   if ns.closeSelling then ns.closeSelling() end
   if ns.closeOthers then ns.closeOthers("upgrades") end
@@ -698,7 +703,8 @@ local function makeWindow()
   local close = UI.button(w, "Close", 60, 18, "small")
   close:SetPoint("TOPRIGHT", -6, -4)
   close:SetScript("OnClick", function() w:Hide() end)
-  if UISpecialFrames then tinsert(UISpecialFrames, "EverlookAuctionsUpgradesWindow") end
+  local EUI = LibStub and LibStub("EverlookUI-1", true)
+  if EUI and EUI.CloseOnEscape then EUI.CloseOnEscape(w) end   -- Escape closes it (never UISpecialFrames)
   local d = U.db()
   if d and type(d.winPos) == "table" then
     w:ClearAllPoints()
@@ -709,7 +715,23 @@ local function makeWindow()
   return w
 end
 
+-- The Gear upgrades page of the main window (Hub.lua): the same view, in the page; the auction house's Upgrades
+-- tab takes it back while it is open there.
+function V.dock(area)
+  if V.inAH and F and F:IsShown() then closeTab() end   -- the auction house's tab had it: it moves here
+  V.inHub = area
+  local f = place(area, false, 0)
+  if win then win:Hide() end
+  f:Show()
+  V.refresh()
+  if ns.upAsk then ns.upAsk() end
+end
+function V.undock(area)
+  if V.inHub == area and F and F:GetParent() == area then F:Hide() end
+end
+
 function V.openWindow()
+  if ns.hub and ns.hub.open("gear") then return end
   local w = makeWindow()
   local f = place(w, false)
   w:Show()

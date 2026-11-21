@@ -417,12 +417,18 @@ local function setting(key, default)
   return v
 end
 local MIN_ROWS, MAX_ROWS = 3, 40
-local function rows() return math.max(MIN_ROWS, math.min(MAX_ROWS, math.floor(tonumber(setting("logRows", 12)) or 12))) end
+local function rows()
+  if B.docked and B.dockRows then return B.dockRows end   -- in the main window: as many as its page has room for
+  return math.max(MIN_ROWS, math.min(MAX_ROWS, math.floor(tonumber(setting("logRows", 12)) or 12)))
+end
 
 -- The window's width (drag its corner): narrow is the essentials (time, item, how many, total), normal adds each and
 -- the third column, wide gives names and sources more room.
 local MIN_W, MAX_W, MINI_W, COMPACT_W, WIDE_W = 340, 1200, 480, 620, 860
-local function width() return math.max(MIN_W, math.min(MAX_W, math.floor(tonumber(setting("logW", W)) or W))) end
+local function width()
+  if B.docked and B.dockW then return math.max(MIN_W, math.min(MAX_W, B.dockW)) end   -- the main window's page width
+  return math.max(MIN_W, math.min(MAX_W, math.floor(tonumber(setting("logW", W)) or W)))
+end
 local function layoutNow()
   local w = width()
   local compact, wide = w < COMPACT_W, w >= WIDE_W
@@ -449,7 +455,10 @@ local function layoutNow()
   return L
 end
 B.layoutNow = layoutNow
-local function alpha() return math.max(0.3, math.min(1, tonumber(setting("logAlpha", 0.97)) or 0.97)) end
+local function alpha()
+  if B.docked then return 1 end
+  return math.max(0.3, math.min(1, tonumber(setting("logAlpha", 0.97)) or 0.97))
+end
 
 local function text(parent, size, color, justify)
   local fs = EUI.Text(parent, size or T.font, color or T.text)
@@ -769,8 +778,7 @@ local function makeFrame()
     B.render()
   end)
   EUI.WindowChrome(f, T)
-  EUI.CloseButton(f, T)
-  if UISpecialFrames then tinsert(UISpecialFrames, "EverlookAuctionsPurchases") end   -- Escape closes it, like the Prices window
+  f.closeButton = EUI.CloseButton(f, T)
 
   -- header: icon, title, the two views, the settings
   f.icon = f:CreateTexture(nil, "ARTWORK")
@@ -815,7 +823,7 @@ local function makeFrame()
   f.gear.icon:SetPoint("CENTER")
   EUI.SetIcon(f.gear.icon, "gear")
   f.gear.icon:SetVertexColor(rgba(T.muted))
-  f.gear:SetScript("OnClick", function() if ns.app then ns.app:Open("ahlog") end end)
+  f.gear:SetScript("OnClick", function() if ns.app then ns.app:Open("ahlog") end end)   -- Settings, Logging
   f.gear:SetScript("OnEnter", function(self)
     self.icon:SetVertexColor(rgba(T.text))
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
@@ -1350,7 +1358,27 @@ local brokerEv = CreateFrame("Frame")
 brokerEv:RegisterEvent("PLAYER_LOGIN")
 brokerEv:SetScript("OnEvent", function() setupBroker() end)
 
+local renderOnce
+-- In the main window the log takes the page's width and as many rows as fit its height (fewer in Bought, where the
+-- recipe card sits under the list).
 function B.render()
+  local f = B.frame
+  if not (f and f:IsShown()) then return end
+  if not B.docked then return renderOnce() end
+  local hh = math.floor((B.docked:GetHeight() or 0) + 0.5)
+  B.dockW = math.floor((B.docked:GetWidth() or W) + 0.5)
+  local key = (B.mode or "bought") .. ":" .. hh .. ":" .. B.dockW
+  if B.fitKey ~= key then B.fitKey, B.dockRows = key, MAX_ROWS end
+  renderOnce()
+  for _ = 1, 4 do
+    local over = (f:GetHeight() or 0) - hh
+    if hh <= 0 or over <= 0 or B.dockRows <= MIN_ROWS then break end
+    B.dockRows = math.max(MIN_ROWS, B.dockRows - math.ceil(over / ROW))
+    renderOnce()
+  end
+end
+
+function renderOnce()
   local f = B.frame
   if not (f and f:IsShown()) then return end
   paintAlpha(f)
@@ -1430,25 +1458,49 @@ function B.render()
   f:SetHeight(L.top + listH + 10 + (f.recipe:GetHeight() or 0) + 16)
 end
 
+-- The log is a page of the main window (Hub.lua); a window of its own only when that window couldn't be made.
 function B.open(recipeID)
+  local d = db()
+  if recipeID then B.mode = "bought" end
+  if recipeID and d then d.boughtRecipe = recipeID end
+  if ns.hub and ns.hub.open("log") then return end
   local f = makeFrame()
   if not f then
     if ns.say then ns.say("the AH log needs the EverlookUI library, which didn't load.") end
     return
   end
-  local d = db()
-  if recipeID then B.mode = "bought" end
-  if recipeID and d then d.boughtRecipe = recipeID end
   f:Show()
   B.render()
 end
 
 function B.toggle(mode)
+  if ns.hub and ns.hub.ready then
+    if ns.hub.isOpen("log") and (mode or "bought") == (B.mode or "bought") then ns.hub.close(); return end
+    B.mode = mode or "bought"
+    ns.hub.open("log")
+    return
+  end
   local f = makeFrame()
   if not f then return B.open() end
   if f:IsShown() and (mode or "bought") == (B.mode or "bought") then f:Hide(); return end
   B.mode = mode or "bought"
   B.open()
+end
+
+-- Into the main window's page (Hub.lua), and out of sight when another page takes its place.
+function B.dock(holder)
+  local f = makeFrame()
+  if not f or not ns.hub then return end
+  ns.hub.dock(f, holder)
+  B.docked = holder
+  f.gear:ClearAllPoints()
+  f.gear:SetPoint("TOPRIGHT", -14, -10)
+  f:Show()
+  B.render()
+end
+function B.undock()
+  if B.picker then B.picker:Hide() end
+  if B.frame then B.frame:Hide() end
 end
 
 -- A setting changed (opacity, rows): the open window follows.

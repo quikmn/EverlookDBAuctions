@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="EVERLOOKDBAUCTIONS_TOGGLE" header="EVERLOOKDBAUCTIONS" category="ADDONS">
+		EverlookDBAuctions_ToggleMain()
+	</Binding>
+</Bindings>

@@ -341,10 +341,10 @@ function ns.upgradesSettings(app, UI)
       set = function(v) U.char().page = v; U.changed() end })
   end
 
-  app:Section("upgrades", "Gear upgrades", function(stack)
-    UI.Header(stack, "Gear upgrades", "What gear is worth to your spec, from the last full scan: the Upgrades tab at the auction house (beside Quick sell and Shopping), or /eah up anywhere.")
+  app:Section("upgrades", "Specs and weights", function(stack)
+    UI.Header(stack, "Specs and weights", "What Gear upgrades scores gear with: your specs, the price limits and the stat weights. Gear upgrades is a page of this window, and the Upgrades tab at the auction house.")
     UI.ButtonRow(stack, {
-      { label = "Open Upgrades", width = 140, style = "accent", onClick = function() if ns.upgradesView then ns.upgradesView.open() end end,
+      { label = "Open Gear upgrades", width = 160, onClick = function() if ns.upgradesView then ns.upgradesView.open() end end,
         desc = "The best upgrade per slot from the last scan: the tab at the auction house, else a window of its own.", keywords = { "open", "upgrades", "window", "tab" } },
     })
     UI.Header(stack, "Your specs")
@@ -418,7 +418,7 @@ function ns.upgradesSettings(app, UI)
     UI.Note(stack, "Stat weights: our own simulations (wowsims/forever, MIT, with levelling added), estimates marked. "
       .. "Where we have no simulation yet (some specs below 60, tanks' survival below 60): the per-level model of Forever Leveling BiS v0.12.0-beta, MIT license, Copyright (c) 2026 Thunder, marked as estimates. "
       .. "Talent effects, item procs and rating conversions: wowsims/forever (github.com/wowsims/forever), MIT license. Item names and prices: EverlookDB and your own scans.")
-  end, { icon = "sword" })
+  end, { icon = "sliders" })
 
   app:Command("up", "up", "gear upgrades: the Upgrades tab or window (/eah up help for its commands)", function(rest) O.slash(rest) end, { "upgrades", "upgrade", "gear" })
 end

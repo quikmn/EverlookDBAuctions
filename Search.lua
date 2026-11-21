@@ -1527,8 +1527,8 @@ local function makeHost()
   h.area = CreateFrame("Frame", nil, h)
   h.area:SetPoint("TOPLEFT", 10, -42)
   h.area:SetPoint("BOTTOMRIGHT", -10, 12)
-  h:SetScript("OnHide", function() if Q.frame and Q.away then Q.frame:Hide() end end)
-  tinsert(UISpecialFrames, "EverlookAuctionsPrices")
+  h:SetScript("OnHide", function() if Q.frame and Q.away and not Q.inHub then Q.frame:Hide() end end)
+  if EUI and EUI.CloseOnEscape then EUI.CloseOnEscape(h) end   -- Escape closes it (never UISpecialFrames)
   h:Hide()
   Q.host = h
   return h
@@ -1564,9 +1564,9 @@ local function placeIn(area)
   fitRows(f)
 end
 
-local function makeResults()
+local function makeResults(where)
   local ah = _G.AuctionHouseFrame
-  local area = ah and ah.BrowseResultsFrame
+  local area = where or (ah and ah.BrowseResultsFrame)
   if Q.frame then return Q.frame end
   if not area then area = makeHost().area end
   local f = UI.own(CreateFrame("Frame", "EverlookAuctionsQueryResults", area))
@@ -1577,7 +1577,10 @@ local function makeResults()
   UI.placeEdge(f, PLACE)
   f:EnableMouse(true)
   f:SetScript("OnShow", function() if not Q.away then blizzardList(false); blizzardSearch(false) end; modeButton() end)
-  f:SetScript("OnHide", function() blizzardList(true); blizzardSearch(true); modeButton(); if Q.away and Q.host then Q.host:Hide() end end)
+  f:SetScript("OnHide", function()
+    blizzardList(true); blizzardSearch(true); modeButton()
+    if Q.away and Q.host and not Q.inHub then Q.host:Hide() end
+  end)
   f:Hide()   -- frames start shown; hiding first makes the first Show run OnShow too
 
   -- where you are: "Advanced search", and "Advanced search > item" while buying (Buy.lua sets it)
@@ -1599,6 +1602,7 @@ local function makeResults()
   local close = UI.button(f, "Close", 54, 24)
   close:SetPoint("TOPRIGHT", -8, -72)
   close:SetScript("OnClick", hideResults)
+  f.closeBtn = close
 
   local help = UI.button(f, "Guide", 54, 24)
   help:SetPoint("RIGHT", close, "LEFT", -6, 0)
@@ -2006,9 +2010,37 @@ function Q.hookAH()
   hooksecurefunc(ah, "SetDisplayMode", function() if not Q.opening then hideResults() end end)
 end
 
+-- Advanced search as a page of the main window (Hub.lua), away from the auction house or beside it: the same search
+-- over the last scan and the Price Feed. query: words to search at once (from Home's search box).
+function ns.openSearchIn(area, query)
+  local f = makeResults(area)
+  if not f then return end
+  if f:IsShown() and not Q.away then hideResults() end   -- the auction house had it: it moves here
+  Q.away, Q.inHub = true, area
+  f.crumb:SetText(C_PLACE .. "From the last scan|r" .. C_MUTE .. "   live prices and buying at the auction house|r")
+  if f.closeBtn then f.closeBtn:Hide() end
+  placeIn(area)
+  f:Show()
+  render()
+  if query and query:match("%S") then
+    f.box:SetText(query)
+    ns.query(query)
+  elseif #Q.results == 0 and not (f.box:GetText() or ""):match("%S") then
+    local q = STARTERS[math.random(#STARTERS)]
+    f.box:SetText(q)
+    ns.query(q)
+  end
+end
+-- The page closes (another page, or the window): the search goes out of sight, its results kept.
+function ns.closeSearchIn(area)
+  if Q.inHub ~= area then return end
+  if Q.frame and Q.away then Q.frame:Hide() end
+end
+
 -- Opens Advanced search over the auction list (switching to the Buy tab first), with the last results.
 function ns.openSearch()
   local ah = _G.AuctionHouseFrame
+  if away() and ns.hub and ns.hub.open("search") then return end
   if away() then
     -- away from the auction house: the window of its own
     local f = makeResults()
@@ -2032,10 +2064,11 @@ function ns.openSearch()
   local f = makeResults()
   if not f then return end
   if Q.away then
-    Q.away = nil
+    Q.away, Q.inHub = nil, nil
     if Q.host then Q.host:Hide() end
     placeIn(ah.BrowseResultsFrame)
     f.crumb:SetText(C_PLACE .. "Advanced search|r")
+    if f.closeBtn then f.closeBtn:Show() end
   end
   -- the addon's own tabs cover the auction list; close them
   if ns.closeSelling then ns.closeSelling() end

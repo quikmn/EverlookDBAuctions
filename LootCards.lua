@@ -82,6 +82,28 @@ end
 local cards = {}   -- shown, newest first
 local pool = {}
 
+
+-- The card's one way into the main window: a small link (the card itself lets clicks through). Hovering it holds the
+-- card; a click opens the AH log on Looted.
+local function moreLink(f, label, mode)
+  local b = CreateFrame("Button", nil, f)
+  b:SetSize(64, 16)
+  b:SetPoint("TOPRIGHT", -8, -5)
+  b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  b.text:SetPoint("RIGHT")
+  b.text:SetText(label .. " >")
+  b.text:SetTextColor(0.62, 0.66, 0.72)
+  b:SetScript("OnEnter", function(self) self.text:SetTextColor(1, 0.82, 0); f.age = math.min(f.age or 0, 1) end)
+  b:SetScript("OnLeave", function(self) self.text:SetTextColor(0.62, 0.66, 0.72) end)
+  b:SetScript("OnClick", function()
+    if ns.purchases then ns.purchases.mode = mode end
+    if ns.hub and ns.hub.open("log") then return end
+    if ns.purchases and ns.purchases.toggle then ns.purchases.toggle(mode) end
+  end)
+  f.more = b
+  return b
+end
+
 local function makeCard()
   local EUI = LibStub and LibStub("EverlookUI-1", true)
   local f = CreateFrame("Frame", nil, UIParent, (not EUI) and "BackdropTemplate" or nil)
@@ -114,6 +136,8 @@ local function makeCard()
   f.sub:SetPoint("RIGHT", -10, 0)
   f.sub:SetJustifyH("LEFT")
   f.sub:SetTextColor(0.62, 0.66, 0.72)
+  moreLink(f, "Loot log", "looted")
+  f.name:SetPoint("RIGHT", f.more, "LEFT", -6, 0)
   f:SetScript("OnUpdate", function(self, el)
     self.age = (self.age or 0) + el
     local a = self.age

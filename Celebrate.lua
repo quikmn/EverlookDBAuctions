@@ -44,6 +44,28 @@ end
 
 local CARD_W, CARD_H, ICON = 340, 76, 48
 
+
+-- The card's one way into the main window: a small link (the card itself lets clicks through). Hovering it holds the
+-- card; a click opens the AH log on Income.
+local function moreLink(f, label, mode)
+  local b = CreateFrame("Button", nil, f)
+  b:SetSize(64, 16)
+  b:SetPoint("TOPRIGHT", -8, -5)
+  b.text = b:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+  b.text:SetPoint("RIGHT")
+  b.text:SetText(label .. " >")
+  b.text:SetTextColor(0.62, 0.66, 0.72)
+  b:SetScript("OnEnter", function(self) self.text:SetTextColor(1, 0.82, 0); f.age = math.min(f.age or 0, 1) end)
+  b:SetScript("OnLeave", function(self) self.text:SetTextColor(0.62, 0.66, 0.72) end)
+  b:SetScript("OnClick", function()
+    if ns.purchases then ns.purchases.mode = mode end
+    if ns.hub and ns.hub.open("log") then return end
+    if ns.purchases and ns.purchases.toggle then ns.purchases.toggle(mode) end
+  end)
+  f.more = b
+  return b
+end
+
 local function makeFrame()
   if C.frame then return C.frame end
   -- the card: dark slate, a gold line along the top, the item's icon, then Hurray!, what sold and the money
@@ -80,6 +102,7 @@ local function makeFrame()
   f.big:SetPoint("TOPLEFT", f.icon, "TOPRIGHT", 12, 1)
   f.big:SetText("Hurray! Sold")
   f.big:SetTextColor(1, 0.82, 0)
+  moreLink(f, "Income", "income")
   f.line = f:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
   f.line:SetPoint("TOPLEFT", f.big, "BOTTOMLEFT", 0, -4)
   f.line:SetPoint("RIGHT", -12, 0)

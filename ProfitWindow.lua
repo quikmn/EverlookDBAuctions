@@ -224,8 +224,7 @@ local function makeFrame()
     W.render(true)
   end)
   EUI.WindowChrome(f, T)
-  EUI.CloseButton(f, T)
-  if UISpecialFrames then tinsert(UISpecialFrames, "EverlookAuctionsProfit") end   -- Escape closes it, like the Prices window
+  f.closeButton = EUI.CloseButton(f, T)
 
   f.icon = f:CreateTexture(nil, "ARTWORK")
   f.icon:SetSize(18, 18)
@@ -493,17 +492,37 @@ function W.makeList()
   W.render(true)
 end
 
+-- A page of the main window (Hub.lua); a window of its own only when that window couldn't be made.
 function W.open()
+  W.status = nil
+  if ns.hub and ns.hub.open("crafts") then return end
   local f = makeFrame()
   if not f then return end
-  W.status = nil
   f:Show()
   W.render()
 end
 function W.toggle()
+  if ns.hub and ns.hub.ready then
+    if ns.hub.isOpen("crafts") then ns.hub.close() else W.open() end
+    return
+  end
   local f = makeFrame()
   if f and f:IsShown() then f:Hide() else W.open() end
 end
+
+-- Into the main window's page, as wide as the page; out of sight when another page takes its place.
+function W.dock(holder)
+  local f = makeFrame()
+  if not f or not ns.hub then return end
+  ns.hub.dock(f, holder)
+  W.docked = holder
+  f:SetWidth(math.max(WIDTH, math.floor((holder:GetWidth() or WIDTH) + 0.5)))
+  f.gear:ClearAllPoints()
+  f.gear:SetPoint("TOPRIGHT", -14, -10)
+  f:Show()
+  W.render()
+end
+function W.undock() if W.frame then W.frame:Hide() end end
 function W.refresh() if W.frame and W.frame:IsShown() then W.render() end end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -532,18 +551,20 @@ local function addToApp(app)
   })
   app:Command("profit", "profit", "the recipes you know that sell for more than their materials cost (works anywhere)",
     function() W.toggle() end, { "profits", "craftprofit", "flip" })
-  app:Section("profit", "Crafting profit", function(stack)
+  app:Section("profit", "Crafting", function(stack)
     local EU = EUI
-    EU.Header(stack, "Crafting profit", "The recipes you know whose result sells on the auction house for more than its materials cost, after the cut. Open it anywhere with /eah profit.")
+    EU.Header(stack, "Crafting", "The crafting cost box beside your profession window, and Crafting profit: the recipes you know whose result sells for more than its materials cost, after the cut (/eah profit).")
+    if app:GetSetting("crafting") then app:Widget(stack, "crafting") end
+    EU.Header(stack, "Crafting profit")
     EU.ButtonRow(stack, {
-      { label = "Open profit finder", width = 170, style = "accent", onClick = function() W.open() end,
+      { label = "Open Crafting profit", width = 170, onClick = function() W.open() end,
         desc = "The list of your profitable recipes, with a shopping list for the crafts you plan.",
         keywords = { "profit", "finder", "crafting", "open", "flip", "recipes" } },
     })
     app:Widget(stack, "profitcraft")
     app:Widget(stack, "profitmin")
     EU.Note(stack, "Prices are your last scan of the auction house; nothing is guessed. A material without an AH price shows ≈ (the real profit is lower), and a recipe whose result has no price is left out. Open each profession window once so the addon knows your recipes.")
-  end, { icon = "hammer" })
+  end, { icon = "wrench" })
 end
 
 local ev = CreateFrame("Frame")

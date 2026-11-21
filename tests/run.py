@@ -134,6 +134,7 @@ def main() -> int:
     failures += upgrades_tab()
     failures += item_tip()
     failures += health()
+    failures += hub()
 
     if failures:
         for f in failures:
@@ -3439,6 +3440,105 @@ def cheer():
     G.MOCK_DB.cheer = False
     fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Copper Bar.")
     check(not f.shown, "turned off: no banner")
+    return failures
+
+
+def hub():
+    """The main window (Hub.lua): the start page, income sums, ages, the minimap button's place on round and square
+    minimaps, opening and toggling pages, and the sale card's link into the AH log's Income."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("MOCK_DB = {}; time = time or os.time; date = date or os.date")
+    ns = lua.table()
+    ns.db = lua.eval("function() return MOCK_DB end")
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(source_of("Hub.lua"), "Hub.lua", "EverlookDBAuctions", ns)
+    H = ns.hub
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("hub: " + what)
+
+    known = lua.eval("{ home = true, log = true, gear = true, general = true }")
+    check(H.startPage(None, known) == "home", "nothing used yet: Home")
+    check(H.startPage("log", known) == "log", "the page used last")
+    check(H.startPage("gear", known) == "home", "never Gear upgrades by itself")
+    check(H.startPage("gone", known) == "home", "a page that no longer exists: Home")
+    check(H.startPage("general", known) == "general", "a settings page is remembered too")
+
+    now = lua.eval("time({ year = 2026, month = 11, day = 21, hour = 15, min = 0, sec = 0 })")
+    income = lua.eval("function(now) return { { t = now - 3600, c = 500 }, { t = now - 20 * 3600, c = 300 }, "
+                      "{ t = now - 6 * 86400, c = 200 }, { t = now - 9 * 86400, c = 1000 } } end")(now)
+    pending = lua.eval("{ { est = 120 }, { est = nil }, { est = 80 } }")
+    today, week, waiting, est = H.income(income, pending, now)
+    check(today == 500, f"today's income: {today}")
+    check(week == 1000, f"the last 7 days: {week}")
+    check(waiting == 3 and est == 200, f"waiting in the mail: {waiting}, ~{est}")
+    check(H.income(None, None, now) == (0, 0, 0, 0), "no log yet: all zero")
+
+    check(H.age(now - 30, now) == "just now", "age: just now")
+    check(H.age(now - 12 * 60, now) == "12 min old", "age: minutes")
+    check(H.age(now - 5 * 3600, now) == "5 h old", "age: hours")
+    check(H.age(now - 3 * 86400, now) == "3 days old", "age: days")
+
+    def near(a, b):
+        return abs(a - b) < 0.01
+
+    x, y = H.minimapOffset(0, "ROUND", 80)
+    check(near(x, 80) and near(y, 0), f"round, angle 0: right edge ({x}, {y})")
+    x, y = H.minimapOffset(225, "ROUND", 80)
+    check(near(x * x + y * y, 6400), "round: always on the circle")
+    x, y = H.minimapOffset(225, "SQUARE", 80)
+    check(x < -56.6 and y < -56.6 and x >= -80 and y >= -80, f"square, bottom left: out in the corner ({x}, {y})")
+    # LibDBIcon's shapes: CORNER-TOPRIGHT is round only in the top right quarter
+    x, y = H.minimapOffset(45, "CORNER-TOPRIGHT", 80)
+    check(near(x * x + y * y, 6400), "CORNER-TOPRIGHT, top right: on the circle")
+    x, y = H.minimapOffset(225, "CORNER-TOPRIGHT", 80)
+    check(x * x + y * y > 6400 + 1, "CORNER-TOPRIGHT, bottom left: out towards the square corner")
+
+    # opening: a stand-in for the EverlookUI app with its sections
+    lua.execute("""
+      HUB_APP = { sections = { home = {}, log = {}, gear = {}, general = {} }, shown = false, opened = {} }
+      function HUB_APP:Open(id) self.shown = true; self.current = id or self.current or "home"; table.insert(self.opened, self.current) end
+      function HUB_APP:Close() self.shown = false end
+      function HUB_APP:IsShown() return self.shown end
+    """)
+    G = lua.globals()
+    check(H.open("log") is False, "no window yet: open says so (callers fall back to their own window)")
+    ns.app = G.HUB_APP
+    H.ready = True
+    check(H.open("log") is True and G.HUB_APP.current == "log", "open on a page")
+    check(H.isOpen("log") and not H.isOpen("home"), "which page is open")
+    H.toggle("log")
+    check(not G.HUB_APP.shown, "toggle on the open page closes the window")
+    H.toggle("log")
+    check(G.HUB_APP.shown and G.HUB_APP.current == "log", "toggle again opens it")
+    H.open("nope")
+    check(G.HUB_APP.current == "log", "an unknown page: the page used last")
+    H.onPage(None, "general")
+    check(G.MOCK_DB.hubPage == "general", "the page is remembered")
+    G.EverlookDBAuctions_ToggleMain()
+    check(not G.HUB_APP.shown, "the key binding toggles the window")
+
+    # the sale card's link: into the AH log's Income page
+    lua.execute("""
+      ERR_AUCTION_SOLD_S = 'A buyer has been found for your auction of %s.'
+      GetTime = function() return 100 end
+      C_Item.GetItemInfoInstant = function(name) for id, n in pairs(MOCK_ITEMS) do if n == name then return id end end end
+    """)
+    ns.purchases = lua.table()
+    ns.money = lua.eval("function(c) return tostring(c) .. 'c' end")
+    ns.sellSettings = lua.eval("function() return { memory = {} } end")
+    run(source_of("Celebrate.lua"), "Celebrate.lua", "EverlookDBAuctions", ns)
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    fire("CHAT_MSG_SYSTEM", "A buyer has been found for your auction of Runed Copper Rod.")
+    card = G.EverlookAuctionsCheer
+    check(card is not None and card.more is not None, "the sale card has its Income link")
+    if card is not None and card.more is not None:
+        card.more.scripts.OnClick(card.more)
+        check(G.HUB_APP.shown and G.HUB_APP.current == "log" and ns.purchases.mode == "income",
+              f"the link opens the AH log on Income ({G.HUB_APP.current}, {ns.purchases.mode})")
     return failures
 
 

@@ -41,4 +41,6 @@ UpgradesExtras.lua
 UpgradesOptions.lua
 Options.lua
 ProfitWindow.lua
+Hub.lua
+MinimapButton.lua
 API.lua

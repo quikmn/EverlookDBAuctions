@@ -1,9 +1,13 @@
--- EverlookDB Auctions: the settings window (/eah), on the shared EverlookUI look (the same as Lattice and the other
--- EverlookDB addons), with its entry in the game's Settings under AddOns.
+-- EverlookDB Auctions: the main window (/eah), on the shared EverlookUI look (the same as Lattice and the other
+-- EverlookDB addons), with its entry in the game's Settings under AddOns. Hub.lua adds the addon's own pages on top
+-- (Home, Advanced search, AH log, Crafting profit, Gear upgrades, Merchant's Favor); the settings pages are listed
+-- under a Settings heading:
+--   General   automatic price updates, the Price Feed, the minimap button, the EverlookDB look for Blizzard's auction
+--             house, compare with what you wear only while holding Shift
 --   Selling   undercut, default duration
 --   Tooltips  auction price, 30-day low and median, disenchant value, vendor price, full-stack price with Shift, the hovered stack's with Ctrl
---   General   automatic price updates, the EverlookDB look for Blizzard's auction house, crafting cost, compare with
---             what you wear only while holding Shift
+--   Logging   what the AH log keeps, loot cards, the sale celebration
+--   Specs and weights (UpgradesOptions.lua), Crafting (ProfitWindow.lua)
 -- Every setting is also a command: /eah <setting> <value> sets it, says so in chat and updates the open window;
 -- /eah get lists them. The core (EverlookDBAuctions.lua) routes /eah to this app, which follows the chat-command
 -- pattern every EverlookDB addon shares (EverlookUI): help, get/set, search, status, version, suggestions.
@@ -35,9 +39,15 @@ local function build()
     addon = ADDON,
     slash = "/eah",
     tagline = "Prices, Quick sell and shopping lists for the auction house. Sellers and bidders are never saved.",
+    subtitle = "Prices, gold and gear",
     accent = { T.accent[1], T.accent[2], T.accent[3] },   -- EverlookDB gold
     position = function() return ns.db() end,
     feedbackURL = FEEDBACK_URL,
+    -- the main window: the addon's pages (Hub.lua), then the settings under their own heading, search box top centre
+    searchTop = true, width = 1020, height = 580,
+    groups = { { id = "main" }, { id = "settings", title = "Settings" } },
+    windowDesc = "the main window: Home, the AH log, Advanced search and the rest, and the settings",
+    onPage = function(a, id) if ns.hub then ns.hub.onPage(a, id) end end,
   })
   O.app = app
 
@@ -128,23 +138,17 @@ local function build()
     get = function() return db().compareShift ~= false end,
     set = function(v) db().compareShift = v end,
   })
-  -- the AH log (Purchases.lua)
-  local function logRefresh() if ns.purchases and ns.purchases.refresh then ns.purchases.refresh() end end
+  -- the AH log (Purchases.lua): a page of the main window, as big as the page (no opacity or rows of its own)
   app:Setting({
-    key = "logopacity", type = "number", label = "Window opacity", min = 30, max = 100, step = 5,
-    chatLabel = "AH log opacity", keywords = { "transparency", "alpha", "see through", "background", "log" },
-    desc = "How solid the AH log window is, in percent.",
-    get = function() return math.floor((tonumber(db().logAlpha) or 0.97) * 100 + 0.5) end,
-    set = function(v) db().logAlpha = math.max(30, math.min(100, tonumber(v) or 97)) / 100 end,
-    after = logRefresh,
-  })
-  app:Setting({
-    key = "logrows", type = "number", label = "Rows shown", min = 3, max = 40, step = 1,
-    chatLabel = "AH log rows", keywords = { "lines", "height", "size", "log" },
-    desc = "How many rows the list shows before you scroll. Or drag the window's bottom right corner: taller for more rows, narrower for only the essentials.",
-    get = function() return tonumber(db().logRows) or 12 end,
-    set = function(v) db().logRows = math.max(3, math.min(40, math.floor(tonumber(v) or 12))) end,
-    after = logRefresh,
+    key = "minimap", type = "bool", label = "Minimap button (click: this window, right-click: settings, drag: move it)",
+    chatLabel = "Minimap button", keywords = { "minimap", "button", "icon", "launcher", "map", "hide", "show" },
+    desc = "Everlook Bar and other button collectors can hold it; Everlook Bar also has an EverlookDB Auctions launcher.",
+    get = function() return not (db().minimapButton and db().minimapButton.hide) end,
+    set = function(v)
+      db().minimapButton = db().minimapButton or {}
+      db().minimapButton.hide = (not v) or nil
+    end,
+    after = function() if ns.minimapButton then ns.minimapButton.refresh() end end,
   })
   app:Setting({
     key = "logbuys", type = "bool", label = "Log what you buy at the auction house",
@@ -210,6 +214,15 @@ local function build()
     local lines = ns.shared and ns.shared.statusLines() or { "Price Feed: not available" }
     for _, l in ipairs(lines) do ns.say(l) end
   end, { "shared", "pricefeed" })
+  -- the main window on a page: /eah options (config) the settings, /eah home the Home page
+  app:Command("options", "options", "the settings (General)", function() app:Open("general") end, { "config" }).hidden = true
+  app:Command("home", "home", "the main window's Home page", function() if ns.hub then ns.hub.open("home") end end, { "hub", "main" }).hidden = true
+  app:Command("minimap", "minimap [on|off]", "show or hide the minimap button (on its own: switches it)", function(rest, a)
+    local def = a:GetSetting("minimap")
+    if not def then return end
+    if not (rest or ""):match("%S") then rest = def.get() and "off" or "on" end
+    a:SetFromText(def, rest)
+  end, { "minimapbutton", "icon" })
   app:Command("sell", "sell", "open Quick sell (auction house open)", function() ns.slash("sell") end, { "selling", "quicksell", "quick" })
   app:Command("shop", "shop", "open Shopping (auction house open)", function() ns.slash("shop") end, { "shopping", "lists" })
   app:Command("bought", "bought", "your auction house purchases, and a recipe's cost from what you paid (works anywhere)", function()
@@ -263,33 +276,49 @@ local function build()
     if ns.debugReport then ns.debugReport() end
   end).hidden = true
 
+  -- the settings pages (the "settings" group: the last one, so it needs no group = ...)
+  local function logPage(mode)
+    return function()
+      if ns.purchases then ns.purchases.mode = mode end
+      if ns.hub then ns.hub.open("log") end
+    end
+  end
+  app:Section("general", "General", function(stack)
+    UI.Header(stack, "General")
+    app:Widget(stack, "openon")
+    app:Widget(stack, "auto")
+    app:Widget(stack, "feed")
+    UI.Note(stack, function() return ns.shared and ns.shared.feedLine() or "" end)
+    app:Widget(stack, "minimap")
+    app:Widget(stack, "skin")
+    app:Widget(stack, "compareshift")
+    UI.Header(stack, "Chat commands")
+    UI.Note(stack, "/eah  this window (Home, or the page you used last)\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah feed  the Price Feed (/eah feed off turns it off)\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah prices  Advanced search, anywhere\n/eah bought, /eah forsale, /eah income, /eah loot  the AH log\n/eah profit  Crafting profit\n/eah up  Gear upgrades (/eah up help for its commands)\n/eah minimap  show or hide the minimap button\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\nKey Bindings, AddOns: a key for this window")
+  end, { icon = "gear" })
   app:Section("selling", "Selling", function(stack)
     UI.Header(stack, "Selling", "Quick sell's price is the cheapest live auction minus your undercut. Blizzard's own Sell tab gets the same undercut when you pick an auction in its list.")
     app:Widget(stack, "undercut")
     app:Widget(stack, "duration")
-  end)
+  end, { icon = "share" })
   app:Section("tooltips", "Tooltips", function(stack)
     UI.Header(stack, "Tooltips", "Lines added to item tooltips: labels left, prices right with their coins in line. Every price says how old it is; prices over a day old are grey.")
     for _, t in ipairs(TIP_LINES) do app:Widget(stack, t[1]) end
     app:Widget(stack, "tipdetail")
     if app:GetSetting("tipsolid") then app:Widget(stack, "tipsolid") end
   end)
-  app:Section("ahlog", "AH log", function(stack)
-    UI.Header(stack, "AH log", "What you bought and what you sold, with what a craft cost you. Open it anywhere with /eah bought, /eah forsale, /eah income or /eah loot, or from its Loot plugin on Everlook Bar.")
+  app:Section("ahlog", "Logging", function(stack)
+    UI.Header(stack, "Logging", "What the AH log keeps: what you bought, what you sold, your auctions and your loot. /eah bought, /eah forsale, /eah income and /eah loot open it, so does its Loot plugin on Everlook Bar.")
     UI.ButtonRow(stack, {
-      { label = "Purchases", width = 124, style = "accent", onClick = function() if ns.purchases then ns.purchases.open() end end,
-        desc = "Everything you bought, and a recipe's cost per craft from what you paid.", keywords = { "bought", "log", "open" } },
-      { label = "For sale", width = 124, onClick = function() if ns.purchases then ns.purchases.toggle("forsale") end end,
+      { label = "Bought", width = 110, onClick = logPage("bought"),
+        desc = "Everything you bought, and a recipe's cost per craft from what you paid.", keywords = { "bought", "purchases", "log", "open" } },
+      { label = "For sale", width = 110, onClick = logPage("forsale"),
         desc = "Your auctions up for sale, as the auction house last showed them.", keywords = { "for sale", "listed", "posted", "auctions", "open" } },
-      { label = "Income", width = 124, onClick = function() if ns.purchases then ns.purchases.toggle("income") end end,
+      { label = "Income", width = 110, onClick = logPage("income"),
         desc = "Money you took from the mail: auctions sold and other gold.", keywords = { "income", "sold", "open" } },
-      { label = "Loot log", width = 124, onClick = function() if ns.purchases then ns.purchases.toggle("looted") end end,
+      { label = "Looted", width = 110, onClick = logPage("looted"),
         desc = "Everything you looted, with when and where.", keywords = { "loot", "looted", "drops", "open" } },
     })
-    UI.Header(stack, "Window")
-    app:Widget(stack, "logopacity")
-    app:Widget(stack, "logrows")
-    UI.Header(stack, "Logging")
+    UI.Header(stack, "What is logged")
     app:Widget(stack, "logbuys")
     app:Widget(stack, "logincome")
     app:Widget(stack, "logloot")
@@ -305,19 +334,7 @@ local function build()
         desc = "Back to the right side, under your buffs.", keywords = { "reset", "position", "loot" } },
     })
     UI.Note(stack, "Sales show up when you take their money from the mail. Bids aren't logged. Nothing about other players is saved: no sellers, buyers or senders.")
-  end, { icon = "coins" })
-  app:Section("general", "General", function(stack)
-    UI.Header(stack, "General")
-    app:Widget(stack, "openon")
-    app:Widget(stack, "auto")
-    app:Widget(stack, "feed")
-    UI.Note(stack, function() return ns.shared and ns.shared.feedLine() or "" end)
-    app:Widget(stack, "skin")
-    app:Widget(stack, "crafting")
-    app:Widget(stack, "compareshift")
-    UI.Header(stack, "Chat commands")
-    UI.Note(stack, "/eah  this window\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah feed  the Price Feed (/eah feed off turns it off)\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah prices  search the last price update, anywhere\n/eah bought  what you bought, and a recipe's cost from what you paid\n/eah forsale  your auctions up for sale, with time left\n/eah income  what you sold (from the mail), with what crafting it again costs\n/eah loot  everything you looted\n/eah profit  recipes that sell for more than their materials\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\n/eah up  gear upgrades (/eah up help for its commands)")
-  end)
+  end, { icon = "clock" })
   if ns.upgradesSettings then ns.upgradesSettings(app, UI) end   -- the Gear upgrades page (UpgradesOptions.lua)
 end
 
@@ -328,7 +345,7 @@ local function open()
       .. ". Settings still work as commands: /eah help lists them, for example /eah auto off.")
     return
   end
-  O.app:Open()
+  O.app:Open("general")
 end
 
 local function feedback()
