@@ -931,16 +931,26 @@ end
 -- The upgrades in the last full scan
 
 -- The newest full scan of the house: our own or the shared one, whichever is newer. Returns the scan and its source
--- ("own" or "shared").
+-- ("own" or "shared"). A scan is this house's by its realm name, or by its realm ID (scans saved while the game
+-- didn't say the realm's name: realm "" or "?", and the house key "?-Alliance").
 function U.newestScan()
   local db = ns.db and ns.db()
   local hk = ns.houseOrFaction and ns.houseOrFaction()
   if not db or not hk then return nil end
   local realm, side = hk:match("^(.*)%-(%a+)$")
+  if realm == "" or realm == "?" then realm = nil end
+  local realmID
+  if ns.realmInfo then
+    local okR, _, id = pcall(ns.realmInfo)
+    if okR and type(id) == "number" and id > 0 then realmID = id end
+  end
   local mine
   for k = #(db.scans or {}), 1, -1 do
     local sc = db.scans[k]
-    if sc.realm == realm and sc.side == side and sc.rows then mine = sc; break end
+    if sc.side == side and sc.rows and ((realm and sc.realm == realm) or (realmID and sc.realmID == realmID)) then
+      mine = sc
+      break
+    end
   end
   local shared = ns.shared and ns.shared.scan(hk)
   if shared and (not mine or (shared.at or 0) > (mine.at or 0)) then return shared, "shared" end
@@ -995,6 +1005,9 @@ local function consider(out, key, line, spec, worn, maxPrice, minPct)
     local cmp = U.compare(st, id, loc, spec, worn)
     if cmp and cmp.note == "twohand" then
       slot.twohand = true
+    elseif okU and (minPct or 0) > 0 and U.isUpgrade(cmp, 0) and not U.isUpgrade(cmp, minPct)
+        and not (maxPrice and price > maxPrice) then
+      slot.underMin = (slot.underMin or 0) + 1   -- an upgrade, but smaller than MIN % (the footer says so)
     elseif U.isUpgrade(cmp, minPct) then
       local name = (suffix ~= 0 and f[13] and f[13] ~= "") and f[13] or info[1]
       local entry = { key = key, id = id, suffix = suffix, name = name, quality = info[2], icon = info[8],
@@ -1023,8 +1036,14 @@ end
 local function finish(r)
   local _, _, rich = filters()
   local total, n = 0, 0
+  r.overMax, r.underMin = 0, 0
   for _, g in ipairs(U.ORDER) do
     local slot = r.slots[g]
+    if slot.better == 0 then
+      -- upgrades the filters hide in slots that show none (the footer names the filter to loosen)
+      r.overMax = r.overMax + (slot.overMax or 0)
+      r.underMin = r.underMin + (slot.underMin or 0)
+    end
     table.sort(slot.list, function(a, b) return U.rank(a, b, rich) end)
     while #slot.list > 40 do table.remove(slot.list) end
     slot.best = slot.list[1]

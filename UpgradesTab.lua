@@ -1,8 +1,13 @@
 -- EverlookDB Auctions: the Upgrades tab. A bottom tab at the auction house (beside Quick sell and Shopping), and the
--- same view in a window of its own away from it (/eah up). From the last full scan (our own or the shared one):
---   header    last scan's age and whose it is, how many gear items it has and how many are upgrades
---   specs     one button per spec of the class: shop for another spec than the ones you gear for
---   filters   max price per item, smallest upgrade in %, rich mode (biggest upgrade, else most upgrade per gold)
+-- same view in a window of its own away from it (/eah up). It opens only when clicked or with /eah up: never on its
+-- own when the auction house opens (Sell.lua remembers only the core tabs). From the last full scan (our own or the
+-- shared one):
+--   row 1     the spec buttons (shop for another spec than the ones you gear for), and the filters on the right:
+--             max price per item, smallest upgrade in %, rich mode (biggest upgrade, else most upgrade per gold)
+--   row 2     the status line, on its own row: last scan's age and whose it is, gear items and upgrades, and the
+--             weights when they are estimates (the full text in its tooltip)
+--   states    while there is no scan to read (a price update running, or none yet) one calm message in place of the
+--             slots, which fills in by itself when the scan is done; "Reading the last scan" while it is scored
 --   slots     the paper doll: per slot the best upgrade within the max price; click one for its other options
 --   options   the slot's upgrades, best first ("BEST" on the first); right-click finds it in Buy, Shift-click links it
 --   summary   "Best upgrade in every slot: N items for <total>" and the gold Make shopping list (the Shopping tab's
@@ -79,17 +84,90 @@ local function upText(e)
   return U.pctText(e.cmp)
 end
 
--- What a slot without a pick says.
+-- What a slot card without a pick says: only what is particular to that slot (a two-hander, the level the next
+-- upgrade needs); otherwise a quiet dash. The empty state and the filters are said once: in the footer, and in the
+-- picked slot's panel.
+V.QUIET = "\226\128\148"   -- an em dash
 function V.slotWhy(slot)
-  if slot.nextLevel and slot.usable > 0 and slot.better == 0 then
-    return ("Next upgrade needs level %d"):format(slot.nextLevel)
-  end
+  if not slot or (slot.better or 0) > 0 then return V.QUIET end
   if slot.twohand then return "You wear a two-hander" end
-  if (slot.overMax or 0) > 0 and slot.better == 0 then
-    return ("%d over your max price"):format(slot.overMax)
+  if slot.nextLevel then return ("Next upgrade at level %d"):format(slot.nextLevel) end
+  return V.QUIET
+end
+
+-- The picked slot's panel when it has no upgrade: plain words, then what there is.
+function V.slotNote(slot)
+  if slot.twohand then return "You wear a two-handed weapon: an off-hand would need a one-hander too." end
+  local hidden = (slot.overMax or 0) + (slot.underMin or 0)
+  local parts = { hidden > 0 and "No upgrade within your filters." or "No upgrade on the AH right now." }
+  if (slot.overMax or 0) > 0 then
+    parts[#parts + 1] = ("%d %s over your max price."):format(slot.overMax, slot.overMax == 1 and "is" or "are")
   end
-  if slot.usable == 0 then return "Nothing you can use" end
-  return ("%d on the AH, none better than yours"):format(slot.usable)
+  if (slot.underMin or 0) > 0 then
+    parts[#parts + 1] = ("%d %s smaller than your min %%."):format(slot.underMin, slot.underMin == 1 and "is" or "are")
+  end
+  if slot.nextLevel then parts[#parts + 1] = ("A better one needs level %d."):format(slot.nextLevel) end
+  if (slot.usable or 0) > 0 and hidden == 0 then
+    parts[#parts + 1] = ("%d for this slot that you can use, none better than yours."):format(slot.usable)
+  end
+  return table.concat(parts, " ")
+end
+
+-- The line under the slots. When no slot has an upgrade: the filters only when they hide something (and which one
+-- to loosen), else the plain empty state, said this once.
+function V.footer(r)
+  if not r or not r.done or r.none then return "" end
+  if (r.count or 0) > 0 then
+    return ("Best upgrade in every slot: %d %s for %s"):format(r.count, r.count == 1 and "item" or "items", money(r.total))
+  end
+  local over, under = r.overMax or 0, r.underMin or 0
+  if over > 0 and under > 0 then
+    return ("No upgrades within your filters: %d over your max price, %d below your min %%. Raise MAX PRICE or lower MIN %%."):format(over, under)
+  elseif over > 0 then
+    return ("No upgrades within your filters: %d over your max price. Raise MAX PRICE to see %s."):format(over, over == 1 and "it" or "them")
+  elseif under > 0 then
+    return ("No upgrades within your filters: %d below your min %%. Lower MIN %% to see %s."):format(under, under == 1 and "it" or "them")
+  end
+  return "No upgrade on the AH right now" .. (r.spec and (" for " .. r.spec.name) or "") .. "."
+end
+
+-- "Updating prices… upgrades show when it's done (99%)"
+function V.scanText()
+  local okP, pct = false, nil
+  if ns.scanProgress then okP, pct = pcall(ns.scanProgress) end
+  return "Updating prices\226\128\166 upgrades show when it's done"
+    .. ((okP and type(pct) == "number") and (" (%d%%)"):format(math.floor(pct * 100)) or "")
+end
+
+-- What the tab shows: "ready" (the slots), or a calm message in their place:
+--   "nospec"    no weights for this class or spec: nothing to score with
+--   "scanning"  a price update runs and there is no scan of this house yet
+--   "none"      no scan of this house yet (and none running)
+--   "reading"   the last scan is being scored for this spec
+-- Returns the state, the message and a second, dimmer line.
+function V.state(r, spec)
+  if not spec then
+    return "nospec", "No stat weights for your class yet", "Gear upgrades need stat weights for your class to score gear with."
+  end
+  local w = U.weights(spec)
+  if type(w) ~= "table" or not next(w) then
+    return "nospec", ("No stat weights for %s"):format(spec.name),
+      "Pick another spec above, or set your own weights on the Gear upgrades page of /eah."
+  end
+  local scanning = ns.scanning and ns.scanning() or false
+  if not U.newestScan() then
+    if scanning then
+      return "scanning", V.scanText(), "Gear upgrades are read from this auction house's newest prices. This fills in by itself."
+    end
+    return "none", "No prices for this auction house yet",
+      "Upgrades show after the first price update. It starts when you open the auction house, or type /eah scan."
+  end
+  if not r or r.spec ~= spec or not r.done or r.none then
+    local p = V.reading and V.reading.spec == spec and V.reading.progress or 0
+    return "reading", ("Reading the last scan\226\128\166 %d%%"):format(math.floor(p * 100)),
+      "Scoring every item in it for " .. spec.name .. "."
+  end
+  return "ready"
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -149,7 +227,7 @@ local function fillCard(b, slot)
   else
     b.icon:EdbSet(nil)
     b.icon:SetAlpha(0.5)
-    b.name:SetText(UI.hex(T.mute) .. (slot and V.slotWhy(slot) or "") .. "|r")
+    b.name:SetText(UI.hex(T.mute) .. V.slotWhy(slot) .. "|r")
     b.pct:SetText("")
     b.price:SetText("")
   end
@@ -195,18 +273,24 @@ local function layoutSpecs(f)
   local shown = V.spec()
   local c = U.char()
   local x = 0
+  -- room up to the filters on the same row (MAX PRICE ... Rich mode); a button that wouldn't fit is left out ("Other..."
+  -- steps through every spec), except the one shown
+  local room = math.huge
+  local fl, ml = f:GetLeft(), f.maxL and f.maxL:GetLeft()
+  if type(fl) == "number" and type(ml) == "number" then room = ml - fl - 12 - 16 - (f.other:GetWidth() or 0) end
   for _, b in ipairs(f.specs) do
     local on = c.specs[b.spec.key] or (shown and shown.key == b.spec.key) or (not next(c.specs) and not b.spec.build)
+    if on and not (shown and shown.key == b.spec.key) and x + (b:GetWidth() or 0) > room then on = false end
     b:SetShown(on and true or false)
     if on then
       b:ClearAllPoints()
       b:SetPoint("LEFT", x, 0)
-      x = x + b:GetWidth() + 4
+      x = x + (b:GetWidth() or 0) + 4
     end
   end
   f.other:ClearAllPoints()
   f.other:SetPoint("LEFT", x, 0)
-  f.specBar:SetWidth(math.max(1, x + f.other:GetWidth()))
+  f.specBar:SetWidth(math.max(1, x + (f.other:GetWidth() or 0)))
 end
 
 local function makeSpecButtons(f)
@@ -252,13 +336,29 @@ local function make(parent)
   f.specBar:SetPoint("TOPLEFT", 12, -10)   -- the title bar says "Gear upgrades"; the spec buttons lead here
   makeSpecButtons(f)
 
+  -- the status line: a row of its own under the spec buttons and filters, never under them; cut short with "..."
+  -- when it is long, the whole of it in the tooltip
   f.head = UI.text(f, "dim")
-  f.head:SetPoint("TOPLEFT", 12, -36)
-  f.head:SetPoint("RIGHT", f, "RIGHT", -320, 0)
+  f.head:SetPoint("TOPLEFT", 12, -38)
+  f.head:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+  f.head:SetWordWrap(false)
+  f.headHit = CreateFrame("Frame", nil, f)
+  f.headHit:SetPoint("TOPLEFT", 10, -34)
+  f.headHit:SetPoint("RIGHT", f, "RIGHT", -10, 0)
+  f.headHit:SetHeight(20)
+  f.headHit:EnableMouse(true)
+  f.headHit:SetScript("OnEnter", function(self)
+    if not V.headTip or #V.headTip == 0 then return end
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+    GameTooltip:SetText("Gear upgrades")
+    for _, l in ipairs(V.headTip) do GameTooltip:AddLine(l, T.dim[1], T.dim[2], T.dim[3], true) end
+    GameTooltip:Show()
+  end)
+  f.headHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
-  -- filters, top right
+  -- filters, top right, on the spec buttons' row
   f.rich = UI.check(f, "Rich mode", function(_, on) U.set("rich", on); V.refresh() end)
-  f.rich:SetPoint("TOPRIGHT", -12, -32)
+  f.rich:SetPoint("TOPRIGHT", -12, -10)
   UI.tip(f.rich, "Rich mode", "On: the biggest upgrade within your max price. Off: the most upgrade per gold.")
   f.min = UI.input(f, 40, 20, { hint = "0", max = 3, numeric = true, right = true })
   f.min:SetPoint("RIGHT", f.rich, "LEFT", -18, 0)
@@ -268,6 +368,7 @@ local function make(parent)
   f.max:SetPoint("RIGHT", minL, "LEFT", -12, 0)
   local maxL = UI.label(f, "MAX PRICE")
   maxL:SetPoint("RIGHT", f.max, "LEFT", -6, 0)
+  f.maxL = maxL
   local function saveFilters()
     local m = (f.max:GetText() or ""):match("^%s*(.-)%s*$")
     if m == "" or m == "any" then
@@ -289,7 +390,8 @@ local function make(parent)
   -- slots, two columns like the character window
   f.cards = {}
   local area = CreateFrame("Frame", nil, f)
-  area:SetPoint("TOPLEFT", 10, -60)
+  f.area = area
+  area:SetPoint("TOPLEFT", 10, -62)
   area:SetSize(CARD_W * 2 + 8, CARD_H * 8 + 7 * 4)
   for i, g in ipairs(U.ORDER) do
     local c = makeCard(area, g)
@@ -300,8 +402,26 @@ local function make(parent)
 
   -- the picked slot's options
   local R = UI.panel(CreateFrame("Frame", nil, f), T.surface, T.edge)
+  f.R = R
   R:SetPoint("TOPLEFT", area, "TOPRIGHT", 10, 0)
   R:SetPoint("BOTTOMRIGHT", -10, 44)
+
+  -- the calm message in place of the slots (no scan yet, a price update running, reading the scan)
+  local M = CreateFrame("Frame", nil, f)
+  f.msg = M
+  M:SetPoint("TOPLEFT", 10, -62)
+  M:SetPoint("BOTTOMRIGHT", -10, 44)
+  M:Hide()
+  f.msgTitle = UI.text(M, "title")
+  f.msgTitle:SetPoint("BOTTOMLEFT", M, "LEFT", 40, 6)
+  f.msgTitle:SetPoint("BOTTOMRIGHT", M, "RIGHT", -40, 6)
+  f.msgTitle:SetJustifyH("CENTER")
+  f.msgTitle:SetTextColor(unpack(PLACE))
+  f.msgBody = UI.text(M, "dim")
+  f.msgBody:SetPoint("TOPLEFT", M, "LEFT", 60, -4)
+  f.msgBody:SetPoint("TOPRIGHT", M, "RIGHT", -60, -4)
+  f.msgBody:SetJustifyH("CENTER")
+  f.msgBody:SetWordWrap(true)
   f.optTitle = UI.text(R, "title")
   f.optTitle:SetPoint("TOPLEFT", 10, -10)
   f.optTitle:SetPoint("RIGHT", -10, 0)
@@ -333,7 +453,16 @@ local function make(parent)
   f.status:SetPoint("BOTTOMLEFT", 12, 9)
   f.status:SetPoint("RIGHT", f.make, "LEFT", -12, 0)
 
-  f:SetScript("OnShow", function() V.refresh() end)
+  f:SetScript("OnShow", function() V.wasScanning = nil; V.refresh() end)
+  -- once a second while shown: the scan's % while a price update runs, and the slots read again by themselves when
+  -- it ends (saved or not), when a scan arrives some other way (the Price Feed), or when items were still loading
+  local tick = 0
+  f:SetScript("OnUpdate", function(_, elapsed)
+    tick = tick + (elapsed or 0)
+    if tick < 1 then return end
+    tick = 0
+    V.poll()
+  end)
   return f
 end
 
@@ -347,6 +476,46 @@ local function ageText(r)
   return ns.ago and ns.ago(at) or ""
 end
 
+-- The status line and its tooltip: the line, and the tooltip's lines.
+function V.headText(r, spec)
+  local who = r.source == "shared" and "other players (Price Feed)" or "you"
+  local parts = { ("Last scan %s by %s"):format(ageText(r), who),
+    ("%s gear items"):format(ns.num and ns.num(r.gear) or r.gear),
+    ("%s upgrades"):format(ns.num and ns.num(r.upgrades) or r.upgrades) }
+  local tip = { ("Read from the last full scan of this auction house, %s by %s."):format(ageText(r), who) }
+  if ns.scanning and ns.scanning() then
+    local okP, pct = false, nil
+    if ns.scanProgress then okP, pct = pcall(ns.scanProgress) end
+    parts[#parts + 1] = "updating prices" .. ((okP and type(pct) == "number") and (" %d%%"):format(math.floor(pct * 100)) or "")
+    tip[#tip + 1] = "Prices are updating now: the upgrades are read again when that's done."
+  end
+  local _, _, from, _, meta = U.weights(spec)
+  if from == "built-in" and meta and meta.src == "estimate" then
+    parts[#parts + 1] = ("using estimated weights for %s at level %d"):format(spec.name, U.level())
+    tip[#tip + 1] = "There are no simulated stat weights for " .. spec.name .. " at your level: these are estimates, so close calls can go either way."
+  end
+  if (r.pending or 0) > 0 then
+    parts[#parts + 1] = ("%s items still loading"):format(ns.num and ns.num(r.pending) or r.pending)
+    tip[#tip + 1] = "Some items weren't loaded by the game yet; they are read again in a moment."
+  end
+  local line = table.concat(parts, " \194\183 ")
+  table.insert(tip, 1, line)
+  return line, tip
+end
+
+local function showMessage(f, title, body)
+  f.area:Hide()
+  f.R:Hide()
+  f.msg:Show()
+  f.msgTitle:SetText(title or "")
+  f.msgBody:SetText(body or "")
+  f.head:SetText("")
+  V.headTip = nil
+  f.sum:SetText("")
+  f.make:Disable()
+  f.make:Hide()
+end
+
 function render()
   local f = F
   if not f or not f:IsShown() then return end
@@ -357,24 +526,19 @@ function render()
   if not f.min:HasFocus() then f.min:SetText((tonumber(U.get("min")) or 0) > 0 and tostring(U.get("min")) or "") end
   f.rich:EdbChecked(U.get("rich"))
   local r = U.result
-  if not r or not spec or r.spec ~= spec then
-    f.head:SetText("Reading the last scan…")
-    for _, g in ipairs(U.ORDER) do fillCard(f.cards[g], nil) end
-    f.opts:SetItems({})
-    f.sum:SetText("")
-    f.make:Disable()
+  local kind, title, body = V.state(r, spec)
+  V.kind = kind
+  if kind ~= "ready" then
+    showMessage(f, title, body)
     return
   end
-  if r.none then
-    f.head:SetText("No scan yet: open the auction house and let it update prices, or run the EverlookDB App for the Price Feed.")
-  else
-    local who = r.source == "shared" and "other players (Price Feed)" or "you"
-    local busy = not r.done and (" · reading %d%%"):format((r.progress or 0) * 100) or ""
-    local _, _, from, _, meta = U.weights(spec)
-    local est = (from == "built-in" and meta and meta.src == "estimate") and " · weights: estimates at your level" or ""
-    f.head:SetText(("Last scan %s by %s · %s gear items · %s upgrades%s%s"):format(ageText(r), who,
-      ns.num and ns.num(r.gear) or r.gear, ns.num and ns.num(r.upgrades) or r.upgrades, est, busy))
-  end
+  f.msg:Hide()
+  f.area:Show()
+  f.R:Show()
+  f.make:Show()
+  local line, tip = V.headText(r, spec)
+  f.head:SetText(line)
+  V.headTip = tip
   for _, g in ipairs(U.ORDER) do fillCard(f.cards[g], r.slots[g]) end
   local sel = V.sel or "head"
   local slot = r.slots[sel]
@@ -382,11 +546,7 @@ function render()
   f.optTitle:SetText(("%s: %d %s"):format(U.SLOT_NAME[sel], n, n == 1 and "upgrade" or "upgrades"))
   local note
   if slot and #slot.list == 0 then
-    note = slot.usable == 0 and "Nothing for this slot on the AH that you can use."
-      or slot.twohand and "You wear a two-handed weapon: an off-hand would need a one-hander too."
-      or (slot.nextLevel and ("%d items for this slot on the AH, none better than yours at your level. Next upgrade needs level %d."):format(slot.usable, slot.nextLevel))
-      or ("%d items for this slot on the AH, none better than yours%s."):format(slot.usable,
-        (slot.overMax or 0) > 0 and (" within your max price (" .. slot.overMax .. " over it)") or "")
+    note = V.slotNote(slot)
   elseif slot then
     local best = slot.best
     local vs = best and best.cmp.vs and best.cmp.vs.link
@@ -397,13 +557,8 @@ function render()
   f.optNote:SetText(note or "")
   f.opts.empty:SetText("")
   f.opts:SetItems(slot and slot.list or {})
-  if r.count and r.count > 0 then
-    f.sum:SetText(("Best upgrade in every slot: %d %s for %s"):format(r.count, r.count == 1 and "item" or "items", money(r.total)))
-    f.make:Enable()
-  else
-    f.sum:SetText(r.done and "No upgrades within your filters." or "")
-    f.make:Disable()
-  end
+  f.sum:SetText(V.footer(r))
+  if r.count and r.count > 0 then f.make:Enable() else f.make:Disable() end
 end
 V.render = function() render() end
 
@@ -412,10 +567,40 @@ function V.refresh()
   if not F or not F:IsShown() then return end
   local spec = V.spec()
   if not spec then render(); return end
-  U.onProgress = function() render() end
-  U.collect(spec, function() render() end)
+  U.onProgress = function(r) V.reading = r; render() end
+  V.reading = nil
+  U.collect(spec, function(r)
+    V.reading = nil
+    -- items the game hadn't loaded: read again in a few seconds, three times at most per scan
+    if V.retryScan ~= r.scan then V.retryScan, V.retries = r.scan, 0 end
+    if (r.pending or 0) > 0 and (V.retries or 0) < 3 and not r.none then
+      V.retries = (V.retries or 0) + 1
+      V.retryAt = (GetTime and GetTime() or 0) + 5
+    end
+    render()
+  end)
   render()
   if InCombatLockdown and InCombatLockdown() then setStatus("Waiting for combat to end before reading the scan.", T.dim) end
+end
+
+-- Once a second while the view is shown (OnUpdate): the slots are read again when a price update ends (saved or
+-- not), when a scan turns up while there was none (the Price Feed), or after items that were still loading.
+function V.poll()
+  if not F or not F:IsShown() then return end
+  local scanning = ns.scanning and ns.scanning() or false
+  local was = V.wasScanning
+  V.wasScanning = scanning
+  if was and not scanning then V.refresh(); return end
+  if V.kind == "none" or V.kind == "scanning" then
+    if U.newestScan() then V.refresh() else render() end
+    return
+  end
+  if V.retryAt and (GetTime and GetTime() or 0) >= V.retryAt then
+    V.retryAt = nil
+    V.refresh()
+    return
+  end
+  if scanning then render() end
 end
 
 -- The best upgrade per slot as a shopping list ("Gear upgrades: Fury"), in the Shopping tab.
@@ -481,7 +666,7 @@ function V.openTab()
   if ns.raise then ns.raise(f) end
   f:Show()
   if ns.ahTitle then ns.ahTitle("Gear upgrades", PLACE) end
-  if ns.noteTab then ns.noteTab("upgrades") end
+  -- not remembered as the last tab: the auction house never opens on Upgrades by itself
   if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
   if ns.upAsk then ns.upAsk() end
 end
@@ -565,16 +750,20 @@ if CreateFrame then
       if not (_G.AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return end
       if not tab and ns.makeTab then tab = ns.makeTab("EverlookAuctionsUpgradesTab", "Upgrades", V.openTab, closeTab, "upgrades") end
       if win and win:IsShown() then win:Hide() end
-      local d = ns.db and ns.db()
-      if d and (d.openOn or "last") == "last" and d.lastTab == "upgrades" then V.openTab() end
+      -- never opened here: Upgrades opens when its tab is clicked or with /eah up (a saved lastTab of "upgrades"
+      -- from 0.16.0 is forgotten in Sell.lua's openStartTab)
       if ns.upAsk then ns.upAsk() end
     end)
   end)
 end
 
 -- a new full scan: read it again if the view is open
+-- (a moment later: the scan still counts as running until just after this call)
 local prevScan = ns.onScan
 function ns.onScan(...)
   if prevScan then prevScan(...) end
-  if F and F:IsShown() then V.refresh() end
+  C_Timer.After(0.1, function()
+    V.wasScanning = nil
+    if F and F:IsShown() then V.refresh() end
+  end)
 end

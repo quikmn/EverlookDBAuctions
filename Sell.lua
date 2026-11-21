@@ -2097,9 +2097,13 @@ end
 
 -- Which tab the auction house opens on (db.openOn): "browse" (Blizzard's own choice, its Browse tab), "sell" (Quick
 -- sell) or "last" (the default: the tab used last, kept in db.lastTab as "sell", "shopping" or Blizzard's tab ID).
+-- Only the core tabs are remembered (Buy, Sell, Auctions, Quick sell, Shopping): Gear upgrades and other addons'
+-- tabs open only when clicked, never on their own when the auction house opens.
+local CORE_TABS = { sell = true, shopping = true, [1] = true, [2] = true, [3] = true }
+function ns.isCoreTab(tab) return tab ~= nil and CORE_TABS[tab] == true end
 function ns.noteTab(tab)
   local db = ns.db()
-  if db then db.lastTab = tab end
+  if db and ns.isCoreTab(tab) then db.lastTab = tab end
 end
 
 local blizzHooked = {}
@@ -2123,6 +2127,8 @@ function ns.openStartTab()
   local db, ah = ns.db(), _G.AuctionHouseFrame
   hookBlizzardTabs()
   if not db or not ah or not ah:IsShown() then return end
+  -- a tab remembered by an older version that isn't a core one ("upgrades") is forgotten: the AH opens on Buy
+  if db.lastTab ~= nil and not ns.isCoreTab(db.lastTab) then db.lastTab = nil end
   local want = db.openOn or "last"
   local tab = want == "sell" and "sell" or want == "last" and db.lastTab or nil
   if tab == "sell" then

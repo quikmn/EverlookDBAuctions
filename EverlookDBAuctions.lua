@@ -1835,6 +1835,12 @@ ns.scanAge = function()
 end
 ns.scanWaitLeft = function() return house and math.max(0, scanWait(getHouse(house))) or nil end
 ns.scanning = function() return scan ~= nil end
+-- How far the running full scan is (0 to 0.99, as the price bar shows it), nil when none runs (the Upgrades tab).
+ns.scanProgress = function()
+  if not scan then return nil end
+  if not scan.reading or not scan.total or scan.total <= 0 then return 0 end
+  return math.min(0.99, (scan.done or 0) / scan.total)
+end
 ns.startScan = function() startScan() end
 
 -- Shared with Sell.lua, Search.lua and Skin.lua

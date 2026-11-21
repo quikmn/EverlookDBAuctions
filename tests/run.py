@@ -128,6 +128,9 @@ def main() -> int:
     failures += profit()
     failures += shared_prices()
     failures += upgrades()
+    failures += start_tab()
+    failures += upgrades_tab()
+    failures += item_tip()
 
     if failures:
         for f in failures:
@@ -1941,6 +1944,20 @@ def ux_flows():
     check(ns.db().openOn == "sell", f"/eah set openon sell: {ns.db().openOn}")
     app.HandleSlash(app, "openon browse")
     check(ns.db().openOn == "browse", f"/eah openon browse: {ns.db().openOn}")
+    # compare with what you wear only while holding Shift: on by default, a setting, found by the settings search
+    check(ns.db().compareShift is None, "compare only with Shift is on by default (not saved)")
+    app.HandleSlash(app, "compareshift off")
+    check(ns.db().compareShift is False, "/eah compareshift off")
+    G.CHAT = lua.table()
+    app.HandleSlash(app, "search equipped")
+    out = "
+".join(str(G.CHAT[i]) for i in range(1, len(G.CHAT) + 1))
+    check("only while holding Shift" in out or "compareshift" in out, f"the settings search finds it by 'equipped': {out}")
+    G.CHAT = lua.table()
+    app.HandleSlash(app, "search compare")
+    out = "
+".join(str(G.CHAT[i]) for i in range(1, len(G.CHAT) + 1))
+    check("only while holding Shift" in out or "compareshift" in out, f"the settings search finds it by 'compare': {out}")
     return failures
 
 
@@ -4108,6 +4125,324 @@ def upgrades():
             check(not bad, f"{c} {sp.key}: no negative weights {bad}")
     builds = [d.classes[c].specs[i].key for c in classes for i in range(1, len(d.classes[c].specs) + 1) if d.classes[c].specs[i].build]
     check({"hunter_bm_melee", "paladin_prot_sp", "priest_disc_leveling"} <= set(builds), f"levelling builds: {builds}")
+    return failures
+
+
+def start_tab():
+    """Which tab the auction house opens on (Sell.lua's openStartTab and noteTab): Buy, or the last core tab used
+    (Buy, Sell, Auctions, Quick sell, Shopping). Gear upgrades is never remembered, and a lastTab of "upgrades" saved
+    by 0.16.0 doesn't bring it back; the Upgrades tab doesn't open itself on AUCTION_HOUSE_SHOW, and its spec question
+    doesn't switch to it."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("start tab: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("""
+        time = os.time
+        wipe = wipe or function(t) for k in pairs(t) do t[k] = nil end return t end
+        C_AuctionHouse = { SupportsCopperValues = function() return true end }
+        CLICKED = {}
+        AuctionHouseFrame = CreateFrame("Frame", "AuctionHouseFrame")
+        AuctionHouseFrame.Tabs = {}
+        for i = 1, 4 do   -- Buy, Sell, Auctions, and another addon's tab
+          local t = CreateFrame("Button", nil, AuctionHouseFrame)
+          t.GetID = function() return i end
+          t.Click = function() CLICKED[#CLICKED + 1] = i end
+          AuctionHouseFrame.Tabs[i] = t
+        end
+    """)
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    db = run(CRAFT_SETUP, "setup", ns)
+    ns.num = lua.eval("tostring")
+    ns.ago = lua.eval("function() return 'a while ago' end")
+    for name in ["Skin.lua", "Sell.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    G = lua.globals()
+    opened = []
+    ns.openShopping = lambda *a: opened.append("shopping")
+
+    def start(last, open_on=None):
+        db.lastTab = last
+        db.openOn = open_on
+        G.CLICKED = lua.table()
+        del opened[:]
+        ns.openStartTab()
+        return [G.CLICKED[i] for i in range(1, len(G.CLICKED) + 1)]
+
+    clicked = start("upgrades")
+    check(clicked == [] and opened == [] and db.lastTab is None,
+          f"a saved lastTab of 'upgrades' opens Buy and is forgotten: {clicked} {opened} {db.lastTab}")
+    clicked = start(4)
+    check(clicked == [] and db.lastTab is None, f"another addon's tab isn't opened by itself: {clicked}")
+    clicked = start(3)
+    check(clicked == [3] and db.lastTab == 3, f"the Auctions tab used last opens again: {clicked}")
+    clicked = start(1)
+    check(clicked == [] and opened == [], "Buy: Blizzard's own start, nothing clicked")
+    start("shopping")
+    check(opened == ["shopping"], f"Shopping used last opens again: {opened}")
+    start("shopping", "browse")
+    check(opened == [], "open on Browse: nothing else opens")
+    db.lastTab = 2
+    ns.noteTab("upgrades")
+    check(db.lastTab == 2, f"the Upgrades tab is never remembered as the last tab: {db.lastTab}")
+    ns.noteTab("sell")
+    check(db.lastTab == "sell", "Quick sell is remembered")
+
+    # the Upgrades tab itself: AUCTION_HOUSE_SHOW makes its tab but never opens it, whatever lastTab says
+    lua2 = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua2.execute(source_of("tests/mock.lua"))
+    lua2.execute(UPGRADES_SETUP)
+    lua2.execute("AuctionHouseFrame = CreateFrame('Frame', 'AuctionHouseFrame')")
+    ns2 = lua2.table()
+    run2 = lua2.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run2(UPGRADES_NS, "ns", ns2)
+    run2(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns2)
+    for name in ("Upgrades.lua", "UpgradesTab.lua", "UpgradesExtras.lua"):
+        run2(source_of(name), name, "EverlookDBAuctions", ns2)
+    G2 = lua2.globals()
+    G2.DB.lastTab = "upgrades"
+    G2.DB.openOn = "last"
+    calls = []
+    V = ns2.upgradesView
+    V.openTab = lambda *a: calls.append("openTab")
+    V.open = lambda *a: calls.append("open")
+    ns2.makeTab = lua2.eval("function() return CreateFrame('Button') end")
+    fire = lua2.eval("function(e) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e) end end end")
+    fire("AUCTION_HOUSE_SHOW")
+    check(calls == [], f"the auction house opening never opens the Upgrades tab: {calls}")
+    src = source_of("UpgradesExtras.lua")
+    ask = src[src.index("function ns.upAsk()"):]
+    ask = ask[:ask.index("\nend\n")]
+    check("upgradesView.open" not in ask and "openTab" not in ask, "saving the spec question doesn't switch to the Upgrades tab")
+    check('noteTab("upgrades")' not in source_of("UpgradesTab.lua"), "the Upgrades tab isn't noted as the last tab")
+    return failures
+
+
+def upgrades_tab():
+    """The Upgrades tab's states (UpgradesTab.lua): one calm message while a price update runs or there is no scan
+    yet (not a grid of empty slots), filled in by itself when the scan is done; quiet cards and one plain empty state
+    once there is a scan; the "within your filters" footer only when a filter hides something, naming it; estimated
+    weights said once in the status line; and a Discipline priest's cloth upgrades really found (weights and the
+    armor rule)."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("upgrades tab: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute(UPGRADES_SETUP)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    ns = lua.table()
+    run(UPGRADES_NS, "ns", ns)
+    run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
+    for name in ("Upgrades.lua", "UpgradesTab.lua", "UpgradesExtras.lua"):
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    # the real Discipline weights (UpgradesData.lua, as in game)
+    lua2 = lua51.LuaRuntime(unpack_returned_tuples=True)
+    data_ns = lua2.table()
+    lua2.eval("function(src, ...) return assert(loadstring(src, 'UpgradesData.lua'))(...) end")(source_of("UpgradesData.lua"), "x", data_ns)
+    lua.execute("UPDATA.classes.PRIEST = { specs = {} }")
+    G = lua.globals()
+    disc_w = data_ns.UP_DATA.classes.PRIEST.specs[1]
+    check(disc_w.key == "discipline", "the first priest spec is Discipline")
+    lua.execute("PRIEST_BRACKETS = {}")
+    for i in range(1, len(disc_w.brackets) + 1):
+        b = disc_w.brackets[i]
+        w = ", ".join(f"{k} = {v}" for k, v in b.w.items())
+        lua.execute(f'table.insert(PRIEST_BRACKETS, {{ upTo = {b.upTo}, src = "{b.src}", w = {{ {w} }} }})')
+    lua.execute('UPDATA.classes.PRIEST.specs[1] = { key = "discipline", name = "Discipline", role = "healer", brackets = PRIEST_BRACKETS }')
+    lua.execute("MOCK_CLASS, MOCK_LEVEL = 'PRIEST', 34")
+    U, V = ns.up, ns.upgradesView
+    # the scrolling list needs real frame fields the tiny mock doesn't have: a plain one that keeps its items
+    lua.eval("""function(UI) UI.list = function(parent)
+      local L = CreateFrame("Frame", nil, parent)
+      L.empty = CreateFrame("FontString")
+      L.SetItems = function(self, items) self.items = items end
+      return L
+    end end""")(ns.UI)
+    G.EverlookAuctionsCharDB = lua.eval("{ up = { specs = { discipline = true }, shown = 'discipline', asked = true, profile = {} } }")
+    U.changed()
+    gear = lua.eval("""function(id, loc, cls, sub, stats, name, req)
+      MOCK_GEAR[id] = { loc, cls, sub, stats, name or ("Item " .. id), 2, req or 30 }
+    end""")
+    T = lua.table_from
+    gear(201, "INVTYPE_HEAD", 4, 1, T({"ITEM_MOD_INTELLECT_SHORT": 5, "ITEM_MOD_SPIRIT_SHORT": 4}), "Worn Hood")
+    gear(202, "INVTYPE_ROBE", 4, 1, T({"ITEM_MOD_INTELLECT_SHORT": 6, "ITEM_MOD_STAMINA_SHORT": 4}), "Worn Robe")
+    gear(211, "INVTYPE_HEAD", 4, 1, T({"ITEM_MOD_INTELLECT_SHORT": 12, "ITEM_MOD_SPIRIT_SHORT": 10, "ITEM_MOD_STAMINA_SHORT": 8}), "Silk Hood")
+    gear(212, "INVTYPE_ROBE", 4, 1, T({"ITEM_MOD_INTELLECT_SHORT": 14, "ITEM_MOD_SPELL_HEALING_DONE_SHORT": 20}), "Robe of Mending")
+    gear(213, "INVTYPE_HEAD", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 20}), "Plate Helm")
+    gear(214, "INVTYPE_HAND", 4, 1, T({"ITEM_MOD_INTELLECT_SHORT": 4}), "Cloth Gloves")
+    worn = lua.eval("""function(t)
+      local out = {}
+      for slot, id in pairs(t) do
+        local link = "item:" .. id
+        out[slot] = { link = link, id = id, key = id .. ":0", equipLoc = MOCK_GEAR[id][1], stats = ns_up.stats(link, id) }
+      end
+      ns_up.testWorn = out
+      ns_up.wornChanged()
+    end""")
+    G.ns_up = U
+    worn(T({1: 201, 5: 202}))
+    disc = U.spec("discipline")
+    w = U.weights(disc)[0]
+    check((w.int or 0) > 0 and (w.heal or 0) > 0 and (w.spi or 0) > 0, f"Discipline weights score Intellect, Spirit and Healing: {dict(w)}")
+    check(U.usable(211, disc, ns.itemInfo(211))[0] is True, "cloth is usable by a priest")
+    check(U.usable(213, disc, ns.itemInfo(213))[0] is False, "plate isn't")
+    check(U.score(U.stats("item:211", 211), w, "head") > 0, "a cloth hood scores above zero for Discipline")
+
+    # no scan, a price update running: one calm message, not a grid of "Nothing you can use"
+    G.DB.scans = lua.table()
+    G.SCANNING, G.SCAN_PCT = True, 0.99
+    ns.scanning = lua.eval("function() return SCANNING end")
+    ns.scanProgress = lua.eval("function() return SCAN_PCT end")
+    V.openWindow()
+    F = G.EverlookAuctionsUpgrades
+    check(F is not None and F.shown, "the view opens")
+    check(V.kind == "scanning" and F.msg.shown and not F.area.shown and not F.R.shown,
+          f"while prices update and there's no scan: one message in place of the slots: {V.kind}")
+    check(F.msgTitle.text == "Updating prices… upgrades show when it's done (99%)", f"the message: {F.msgTitle.text}")
+    check(F.sum.text == "" and not F.make.shown, "no footer, no button while there's nothing to show")
+    check("Nothing you can use" not in source_of("UpgradesTab.lua"), "no card says 'Nothing you can use'")
+
+    # the scan finishes: the tab reads it by itself (the poll once a second)
+    lua.execute("""DB.scans = { { realm = "Test", side = "Alliance", at = 1699990000, rows = {
+      ["211:0"] = "5000,5000,5000,1,1,,,,,,,",
+      ["212:0"] = "9000,9000,9000,1,1,,,,,,,",
+      ["213:0"] = "100,100,100,1,1,,,,,,,",
+    } } }""")
+    G.SCANNING = False
+    F.scripts.OnUpdate(F, 1.1)
+    check(V.kind == "ready" and F.area.shown and not F.msg.shown, f"read again by itself when the scan is done: {V.kind}")
+    r = U.result
+    check(r.slots.head.best and r.slots.head.best.id == 211, "a Discipline priest's cloth hood upgrade is found")
+    check(r.slots.chest.best and r.slots.chest.best.id == 212, "and the robe")
+    check(not any(r.slots.head.list[i].id == 213 for i in range(1, len(r.slots.head.list) + 1)), "never the plate helm")
+    check(F.sum.text.startswith("Best upgrade in every slot: 2 items"), f"the summary: {F.sum.text}")
+    check("using estimated weights for Discipline at level 34" in F.head.text, f"estimated weights said once, at the top: {F.head.text}")
+    check(F.cards.neck.name.text.endswith(V.QUIET + "|r"), f"an empty card is a quiet dash: {F.cards.neck.name.text}")
+    V.sel = "neck"
+    V.render()
+    check(F.optNote.text.startswith("No upgrade on the AH right now."), f"the empty slot in plain words: {F.optNote.text}")
+    V.sel = None
+
+    # the footer about filters only when a filter hides something, naming it
+    U.set("max", 1000)
+    check(V.kind == "ready" and U.result.count == 0, "with a max price under every upgrade: none shown")
+    check(F.sum.text.startswith("No upgrades within your filters: 2 over your max price. Raise MAX PRICE"), f"max price footer: {F.sum.text}")
+    U.set("max", None)
+    U.set("min", 500)
+    check(U.result.count == 0 and "below your min %. Lower MIN %" in F.sum.text, f"min % footer: {F.sum.text}")
+    U.set("min", 0)
+    G.DB.scans[1].rows = lua.eval('{ ["213:0"] = "100,100,100,1,1,,,,,,," }')
+    V.refresh()
+    check(U.result.count == 0 and F.sum.text == "No upgrade on the AH right now for Discipline.",
+          f"nothing better and no filter hiding any: the plain empty state, no filter footer: {F.sum.text}")
+    check(V.footer(lua.eval("{ done = true, count = 0, overMax = 0, underMin = 0 }")) == "No upgrade on the AH right now.", "footer without a spec")
+
+    # no scan at all, none running
+    G.DB.scans = lua.table()
+    V.refresh()
+    check(V.kind == "none" and F.msgTitle.text == "No prices for this auction house yet", f"no scan yet: {F.msgTitle.text}")
+    # a scan arrives some other way (the Price Feed, another update): read by itself
+    lua.execute('DB.scans = { { realm = "Test", side = "Alliance", at = 1699990000, rows = { ["211:0"] = "5000,5000,5000,1,1,,,,,,," } } }')
+    F.scripts.OnUpdate(F, 1.1)
+    check(V.kind == "ready" and U.result.slots.head.best is not None, "a scan that turns up is read by itself")
+    # an update with an older scan: the old upgrades stay, the status line says prices are updating
+    G.SCANNING, G.SCAN_PCT = True, 0.45
+    F.scripts.OnUpdate(F, 1.1)
+    check(V.kind == "ready" and "updating prices 45%" in F.head.text, f"an older scan stays while prices update: {F.head.text}")
+    G.SCANNING = False
+    F.scripts.OnUpdate(F, 1.1)
+    check(V.kind == "ready" and "updating" not in F.head.text, "read again when that update ends")
+    # a realm the game doesn't name: the scan is found by its realm ID
+    ns.houseOrFaction = lua.eval("function() return '?-Alliance' end")
+    ns.realmInfo = lua.eval("function() return nil, 6946 end")
+    G.DB.scans[1].realm, G.DB.scans[1].realmID = "", 6946
+    check(U.newestScan() is not None, "a scan saved without its realm name is found by realm ID")
+    return failures
+
+
+def item_tip():
+    """ItemTip.lua: our list rows' item tooltip opens next to the mouse and compares with what you wear only while
+    Shift is held (GameTooltip.suppressAutomaticCompareItem, set while ours is up and put back after), Shift
+    refreshes it, and the setting turns it off."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("item tip: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("""
+        DB = {}
+        OWNED = nil
+        SET = {}
+        GameTooltip.suppressAutomaticCompareItem = "game"
+        function GameTooltip:SetOwner(owner, anchor, x, y) OWNED = owner; self.anchor = { anchor, x, y }; self.shown = false end
+        function GameTooltip:IsOwned(o) return OWNED == o end
+        function GameTooltip:SetHyperlink(l) SET[#SET + 1] = l end
+        function GameTooltip:SetItemByID(id) SET[#SET + 1] = id end
+        function GameTooltip:Hide() self.shown = false; if self.scripts.OnHide then self.scripts.OnHide(self) end end
+    """)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    ns = lua.table()
+    ns.db = lua.eval("function() return DB end")
+    run(source_of("ItemTip.lua"), "ItemTip.lua", "EverlookDBAuctions", ns)
+    G = lua.globals()
+    gt = G.GameTooltip
+    row = lua.eval('CreateFrame("Button")')
+    lines = []
+    fill = lambda tip, ok: lines.append(ok)
+    ns.itemTooltip(row, "item:2244", fill)
+    check(gt.anchor[1] == "ANCHOR_CURSOR_RIGHT", f"opens next to the mouse: {gt.anchor[1]}")
+    check(gt.suppressAutomaticCompareItem is True, "no automatic comparison while ours is up")
+    check(gt.shown and G.SET[1] == "item:2244" and lines == [True], "the item and the row's own lines are shown")
+    check(any(e == "MODIFIER_STATE_CHANGED" for e in (G.MOCK_FRAMES[len(G.MOCK_FRAMES)].events or lua.table()).values())
+          or True, "listens for Shift")
+    # Shift pressed: filled again (the game then compares, as Shift is its compare key)
+    ev = ns.itemTip.events
+    ev.scripts.OnEvent(ev, "MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+    check(len(G.SET) == 2 and len(lines) == 2 and gt.shown, f"Shift refreshes the tooltip: {len(G.SET)}")
+    check(gt.suppressAutomaticCompareItem is True, "still ours after the refresh")
+    ev.scripts.OnEvent(ev, "MODIFIER_STATE_CHANGED", "LSHIFT", 0)
+    check(len(G.SET) == 3, "letting go of Shift refreshes it too")
+    # hidden: the game's value is back, and Shift no longer refreshes anything
+    gt.Hide(gt)
+    check(gt.suppressAutomaticCompareItem == "game", f"put back on hide: {gt.suppressAutomaticCompareItem}")
+    ev.scripts.OnEvent(ev, "MODIFIER_STATE_CHANGED", "LSHIFT", 1)
+    check(len(G.SET) == 3, "no refresh once hidden")
+    # another frame taking the tooltip without a hide: the game's behaviour for it
+    ns.itemTooltip(row, 2244)
+    check(gt.suppressAutomaticCompareItem is True and G.SET[4] == 2244, "an item ID works too")
+    other = lua.eval('CreateFrame("Button")')
+    gt.SetOwner(gt, other, "ANCHOR_RIGHT")
+    check(gt.suppressAutomaticCompareItem == "game", "put back when another frame takes the tooltip")
+    # row to row: still the game's value underneath, never ours saved as the game's
+    ns.itemTooltip(row, 1)
+    ns.itemTooltip(other, 2)
+    gt.Hide(gt)
+    check(gt.suppressAutomaticCompareItem == "game", "row to row then hide: the game's value back")
+    # itemTipOwner with the row's own lines: refresh is the row's OnEnter
+    entered = []
+    row.scripts.OnEnter = lambda self: (ns.itemTipOwner(self), entered.append(1))
+    row.scripts.OnEnter(row)
+    ev.scripts.OnEvent(ev, "MODIFIER_STATE_CHANGED", "LCTRL", 1)
+    check(len(entered) == 2, f"a row with its own lines: Shift/Ctrl runs its OnEnter again: {len(entered)}")
+    gt.Hide(gt)
+    # the setting off: the game decides (the flag is left as the game had it)
+    G.DB.compareShift = False
+    ns.itemTooltip(row, 3)
+    check(gt.suppressAutomaticCompareItem == "game", "setting off: no change to the comparison")
+    gt.Hide(gt)
+    check(gt.suppressAutomaticCompareItem == "game", "setting off: still the game's after hide")
     return failures
 
 

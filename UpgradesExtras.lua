@@ -245,9 +245,8 @@ function ns.upAsk()
     f:Hide()
     local names = {}
     for _, s in ipairs(U.ticked()) do names[#names + 1] = s.name end
-    say("gear upgrades for " .. table.concat(names, ", ") .. ". Change it on the Gear upgrades page of /eah, or /eah up spec <name>.")
-    -- at the auction house: straight to the Upgrades tab (shared prices work without a scan of your own)
-    if _G.AuctionHouseFrame and AuctionHouseFrame:IsShown() and ns.upgradesView then ns.upgradesView.open() end
+    say("gear upgrades for " .. table.concat(names, ", ") .. ". See them in the Upgrades tab at the auction house, or /eah up.")
+    -- no switch to the Upgrades tab: it opens only when you click it or type /eah up (an open one reads again by itself)
   end)
   local later = UI.button(f, "Not now", 96, 24)
   later:SetPoint("RIGHT", save, "LEFT", -8, 0)
