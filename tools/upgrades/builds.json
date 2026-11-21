@@ -61,7 +61,7 @@
         "sim": "paladin_protection"
       },
       "model": "protection",
-      "note": "Spell-power Protection from level 40: wowsims' damage and threat sim, where spell damage is worth about 3 attack power.",
+      "note": "Spell-power Protection from level 40, where spell damage is worth about 3 attack power.",
       "ours": {
         "lvl": "paladin_protection"
       }
@@ -113,7 +113,7 @@
       "ours": {
         "lvl": "mage_arcane_aoe"
       },
-      "note": "Pulling four mobs and Arcane Explosion. An estimate: the sim has no kiting, the mobs hit the mage all pull."
+      "note": "Pulling four mobs and Arcane Explosion. An estimate: it assumes no kiting, so the mobs hit you the whole pull."
     }
   ]
 }

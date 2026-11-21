@@ -2,6 +2,7 @@ package-as: EverlookDBAuctions
 
 ignore:
   - README.md
+  - API.md
   - .github
   - tools
   - tests

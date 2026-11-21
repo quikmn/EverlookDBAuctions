@@ -1,63 +1,38 @@
 # EverlookDB Auctions
 
 ## Unreleased
-- Income is a ledger now (`/eah income`, the Income card on Home). Every auction you post is followed to one outcome: sold (the money after the cut, the buyer, when its mail came and when you took it), expired or cancelled (the item back by mail, the deposit lost). Open auctions show their state at the top: listed, sold with the money waiting, the item waiting in the mail.
-- Only real gains count as income: auction sales after the cut, vendor sales, looted money and quest rewards. Gold from other players, gold moved between your own characters and outbid refunds are listed apart; lost deposits, C.O.D. payments and AH purchases (bids you won too) are costs. Pick Today, 7 days, 30 days or All.
-- Fixed: a sale's deposit came back with its money and was counted as income; outbid refunds and gold from your alts counted as income; two auctions of the same item could tick off the wrong one; "Auction canceled" mail wasn't recognised. Items back from expired or cancelled auctions no longer show in Looted.
-- Your old Income entries are moved into the ledger once (nothing is deleted). Gold from the mail whose sender wasn't kept before is marked Unsorted: click it to pick what it was.
-- For EverlookDB Mail and other mail addons: API version 4 has `EverlookDBAuctionsAPI.mail` (scanned, taken, classifier). Mail read by any addon, Blizzard's Open All or a click is counted once.
-- Much shorter tooltip lines, topped by "Most profit: Auction +1s 97c" or "Most profit: Vendor". Auction only wins when it clearly pays more (at least 20% and 50c more after the AH cut); anything closer says Vendor: sure, instant money. Then "AH 2,255 · 4h", "30d low", "Craft 4h".
-- One main window for everything: the minimap button, `/eah`, a key binding (Key Bindings, AddOns) and an "EverlookDB Auctions" launcher on Everlook Bar all open it. The sidebar has Home, Advanced search, AH log, Crafting profit, Gear upgrades and Merchant's Favor, then the settings under a Settings heading, with the search box at the top. It opens on the page you used last, but never on Gear upgrades by itself.
-- Home: a card for each part of the addon: income today and this week (and sales waiting in the mail), today's loot, Merchant's Favor, the newest gear upgrades, crafting profit and the auction house tabs, plus a box that searches prices anywhere. Each card opens its page.
-- The AH log, Advanced search away from the auction house, Crafting profit and Gear upgrades away from the auction house are pages of the main window now, not windows of their own. /eah bought, forsale, income, loot, prices, profit and up open those pages.
-- New Merchant's Favor page: how much Favor you have and, with EverlookDB Crafting 4 or newer, the three Waylaid Crates that cost the least gold per Favor, with a link to its full list.
-- New minimap button: click for the main window, right-click for the settings, drag it around the minimap (round or square). Its tooltip shows income today and this week and how old your prices are. Everlook Bar's drawer can hold it. Hide it on the General page or with /eah minimap.
-- At the auction house, the bar at the bottom has "Open in EverlookDB Auctions" (on the Gear upgrades or Advanced search page when you are on those). Loot cards and the Hurray! card have a small link to the AH log.
-- Settings pages renamed so they don't clash with the main pages: AH log is now Logging, Gear upgrades is Specs and weights, Crafting profit is Crafting (with the crafting cost switch, moved from General). General comes first. The AH log's own opacity and rows settings are gone: as a page it fills the window.
-- Tooltips: one tidy look shared by every EverlookDB addon. Prices sit in the right-hand column with their coins lined up (gold under gold, silver under silver), labels are brighter, how many and how old are in a soft blue, and profit is green. A blank line separates prices, gear upgrades and crafting.
-- Tooltips: the 30-day low and median are two lines; "More to auction" now reads "Auction beats vendor · after 5% cut · +1s 97c" (in green); the craft cost is green when crafting is cheaper than buying and red when dearer; the gear upgrade line no longer repeats the price in its note (the auction house line has it).
-- New setting "Solid tooltip background" (on by default, Tooltips page): item and unit tooltips get an opaque background so nothing shows through. Shared by every EverlookDB addon; left alone when TipTac, ElvUI or a similar tooltip skin is loaded.
+- Income is now a ledger (`/eah income`): every auction you post is followed to sold, expired or cancelled, and only real gains count as income (auction sales after the cut, vendor sales, looted money, quest rewards). Gold from players and your alts, and outbid refunds, are listed apart; lost deposits, C.O.D. and AH purchases are costs.
+- Fixed: returned deposits, outbid refunds and gold from your alts counted as income; "Auction canceled" mail wasn't recognised; items back from expired auctions showed as loot. Your old Income entries move into the ledger once.
+- Works with EverlookDB Mail and other mail addons: mail opened any way is counted once.
+- Shorter price tooltips, topped by "Most profit: Auction" or "Vendor", with a tidier look shared by every EverlookDB addon. New setting: solid tooltip background (on by default).
+- One main window for everything (minimap button, `/eah`, a key binding, Everlook Bar), with a Home page of cards: income, loot, Merchant's Favor, gear upgrades and crafting profit. The AH log, Advanced search, Crafting profit and Gear upgrades are pages in it.
+- New Merchant's Favor page: your Favor and, with EverlookDB Crafting, the cheapest Waylaid Crates per Favor.
+- New minimap button: click for the main window, right-click for settings. Hide it with `/eah minimap`.
+- Settings pages renamed so they don't clash with the main pages (Logging, Specs and weights, Crafting).
 
 ## v0.17.0 (2026-11-21)
-- Gear upgrades now use our own simulated stat weights for every spec and level bracket, with error margins; estimates are marked.
-- A small self-test at login notes whether this game build still gives the addon what a price scan needs (the auction functions, item info, the realm), and saves the answer with your scans. EverlookDB.com uses it to spot quickly when a game update breaks scanning. It only holds yes/no answers and the game and addon version, nothing about you or your characters.
+- Gear upgrades use our own simulated stat weights for every spec and level; estimates are marked.
+- A small check at login notes whether the game still gives the addon what a price scan needs, so EverlookDB.com can spot quickly when a game update breaks scanning. Nothing about you or your characters is saved.
 
 ## v0.16.1 (2026-11-21)
-- Price updates: scans are accepted by EverlookDB.com again. Since today's WoW Forever client update the game no longer tells addons the realm's name, so every scan was saved without it and refused as "This scan has a bad realm". The realm is now taken from your character and named from your own earlier scans or the Price Feed, so scans are saved with it again.
-- Scans and prices saved without their realm since the client update are put right at your next login: the scans get your realm (the EverlookDB App then sends them again by itself) and the prices saved under a nameless auction house go back to your realm's. Only when that's certain: the scan names your realm's ID, or this account has only played on this realm and the scan is of your side or neutral. Anything else is left alone, and /eah status says so.
-- A scan saved without its realm no longer pushes older scans out of the saved file early (it counted as a different auction house, so two big scans were kept unpacked).
-- Gear upgrades: the auction house no longer opens on the Upgrades tab. It opens on Buy, or on the tab you used last when that is Buy, Sell, Auctions, Quick sell or Shopping; Upgrades opens only when you click it or type /eah up. Saving the spec question no longer jumps to it either, and a remembered "last tab" of Upgrades from 0.16.0 is forgotten.
-- Gear upgrades: while prices are still updating, or there are no prices for this auction house yet, the Upgrades tab says so in one calm message ("Updating prices… upgrades show when it's done (99%)") instead of a grid of "Nothing you can use", and fills in by itself when the update is done.
-- Gear upgrades: slots with nothing better are a quiet "—"; "No upgrade on the AH right now" is said once. "No upgrades within your filters" only shows when your max price or min % really hides some, and says which to loosen. Estimated stat weights are mentioned once at the top ("using estimated weights for Discipline at level 34").
-- Gear upgrades: the status line has its own row, so it no longer runs under MAX PRICE, MIN % and Rich mode (the full text is in its tooltip). Scans saved without the realm's name are found for the Upgrades tab too.
-- Item tooltips in our lists (Buy, Quick sell, Advanced search, Gear upgrades, Crafting, Profit, the AH log) open right next to the mouse, showing the item you point at. What you wear for that slot only shows beside it while you hold Shift, and comes and goes the moment you press or let go. You can turn this off in /eah General ("Compare with what I wear: only while holding Shift"). Blizzard's own auction list and every other tooltip are left as the game has them.
+- Fixed: after today's game update, scans were refused by EverlookDB.com because the realm was missing. Scans saved since then get their realm back at your next login.
+- Gear upgrades: the auction house no longer opens on the Upgrades tab; it shows a calm "Updating prices…" while prices load, and only says "No upgrades within your filters" when your filters really hide some.
+- Item tooltips in our lists open next to the mouse; what you wear only shows while you hold Shift (a setting on the General page).
 
 ## v0.16.0 (2026-11-21)
-- Price Feed: the shared prices from the EverlookDB App have a name now, and their own small addon, "EverlookDB Auctions: Price Feed", listed under EverlookDB Auctions in the addon list (also on CurseForge, for the app to fill). The bar at the bottom of the auction house has a second line that says how it is: "Price Feed: Alliance · other players' scan, 12 min old", or "no data yet", or "off" with where to get it; the General page of /eah shows the same. The first time you open the auction house without it, one chat line says where it comes from, once per account. /eah feed says how it is and /eah feed off turns it off (/eah shared still works). Prices from it still say "other players' scan · 12 min ago".
-- Gear upgrades: a new Upgrades tab at the bottom of the auction house shows, for every slot, the best upgrade for your spec in the last price update (yours, or other players' shared one), within your max price. Click a slot for all its upgrades; right-click an item to find it in Buy, Shift-click to link it. "Make shopping list" puts the best of every slot in a Shopping list. /eah up opens it anywhere, away from the auction house too.
-- Gear upgrades: the first time you open the auction house you're asked which spec (or specs) you gear for; "Not now" counts them all. Change it any time on the new Gear upgrades page of /eah or with /eah up spec.
-- Gear upgrades: items are scored with stat weights for your spec and level (every five levels up to 60), adjusted to your talents, and compared with what you wear: rings and trinkets with the weaker one, an off-hand while you wear a two-hander, empty slots. Procs and Use: effects count too (a setting). Plate and mail wearers only see their best armor type unless you turn that off.
-- Gear upgrades: levelling builds as well as specs: Beast Mastery with a melee two-hander, dual-wield melee hunter, Protection warrior levelling, spell-power Protection paladin (40+), Discipline levelling then Shadow. Pick them like a spec; "Other..." on the Upgrades tab shows the rest of your class's specs and builds.
-- Gear upgrades: an item is only called an upgrade when the gain is bigger than the stat weights' margin of error, else "About the same". Tooltips always say why (the stats that make the difference, and how much of your gear's worth that is) with the price beside it, and say "estimate" where the weights for your level are estimates.
-- Gear upgrades: your own stat weight profiles (copy, change, import, export), and Pawn scales: paste Pawn's export text, or let it use Pawn's scale for your spec.
-- Gear upgrades: tooltips on gear say how big an upgrade it is for each of your specs, or why it isn't one; bag slots holding an upgrade get a small "+6.5%" (the gain as a share of your whole gear, the same number in tooltips, the Upgrades tab and quest rewards; the change over the worn item is in words, "+136% over your worn helm"). Until you pick a spec, tooltips show the best two and "+N more"; chat says when new gear in your bags is an upgrade, once per item.
-- Gear upgrades: the quest reward window shows the upgrade on each choice and a star on the best one, and chat says which to take, or which sells for the most when none is an upgrade.
-- Gear upgrades: sell your grey items when you open a vendor (off unless you turn it on), or with /eah up junk at a vendor. Only grey items.
-- Gear upgrades: /eah up price <item> gives an item's lowest price now and over 30 days; /eah up stats <item> its stats and score; /eah up check checks your worn gear was read.
+- Price Feed: other players' newest prices now come in their own small addon, "EverlookDB Auctions: Price Feed", filled by the EverlookDB App. The auction house bar and `/eah feed` say how it is.
+- New: Gear upgrades. An Upgrades tab at the auction house shows the best upgrade for your spec in every slot, within your max price, and `/eah up` opens it anywhere.
+- Pick your specs or levelling builds the first time you open the auction house; items are scored with stat weights for your spec, level and talents, and only clear gains count as upgrades.
+- Upgrades show on gear tooltips, as a "+6.5%" badge on bag slots, and as a star on the best quest reward. Make your own weight profiles or import a Pawn scale.
+- Optional: sell your grey items when you open a vendor.
 
 ## v0.15.0 (2026-11-21)
-- Shared prices: with the EverlookDB App running, you get the newest scan anyone uploaded to EverlookDB.com for your auction houses, one /reload or login away, even out in the world. Wherever it is newer than your own scan it's used for that item, and it says so: "other players' scan · 12 min ago" in tooltips, "other players' scan" in the Prices window (/eah prices), Quick sell's usual price, loot cards, Crafting profit and the AH log. The 30-day low and median use everyone's daily lows. Your own saved scans are never changed: the two are only combined when a price is read. Turn it off on the General page ("Use other players' prices", or /eah shared off). /eah status lists the shared houses.
-- For addon authors: EverlookDBAuctionsAPI version 3: `price()` returns a fifth value, `"own"` or `"shared"` (other players' scan), and `price()` and `history()` include shared prices.
-- Posting on the Sell tab: the addon's own price searches hold off while an item sits on the Sell tab and for a few seconds after you post, so the server doesn't refuse your post (the item used to jump back into your bags and you had to try again). If the auction house still refuses a post, chat now says so and why.
-- Loot log: items from mail and trades are logged as "Mail" and "Trade with a player", never with the other player's name, so the addon still saves no player names.
-- Loot log: items you take from the mail, buy from a merchant or get in a trade are no longer taken for loot. They're logged with where they came from ("Expired auction", "Cancelled auction", "Won auction", "Mail from <name>", the merchant's name, the player you traded with), get no loot card and don't count in today's loot.
-- Prices window (/eah prices): a title bar on top to drag it anywhere, and it opens where you left it. Its bottom edge no longer gets cut off. The first time you open it, it starts with a search (the most listed items, rare and better, recipes, items below vendor price and the like, picked at random) so the list isn't empty.
-- Price updates: an auction the game sends in an odd shape is skipped instead of stopping the whole update, and an update that stops partway for any other reason lets go after two minutes, so the next one can start without a /reload. Prices stay as they were.
-- Tooltips: at the neutral auction houses (Booty Bay, Gadgetzan, Everlook) "More to auction" counts their 15% cut, not 5%, and says so.
-- AH log, Income: money the auction house sends back (an outbid refund) is "Auction house refund", short enough to read in full.
-- Advanced search: "live prices checked" is set apart from the result count with a dot, so the two don't run together.
-- Settings, General: the list of chat commands includes /eah prices, /eah loot and /eah profit.
-- AH log and Crafting profit close with Escape, like the Prices window.
+- Shared prices: with the EverlookDB App running, you get the newest prices other players uploaded, even out in the world. Prices from it say "other players' scan". Turn it off on the General page.
+- For addon authors: API version 3 says whether a price is your own or shared.
+- Fixed: posting on the Sell tab could bounce the item back into your bags.
+- Loot log: mail, trades and merchant buys are no longer counted as loot, and other players' names are never saved.
+- Prices window: drag it anywhere, and it opens with a search so it's never empty.
+- Tooltips count the 15% cut at the neutral auction houses.
 
 ## v0.14.1 (2026-11-20)
 - Tooltips: "More to vendor" or "More to auction" says where an item earns more, and by how much: the vendor's price against the last scan's lowest price after the auction house's 5% cut. Grey when that price is over a day old. Shift and Ctrl work on it like the other prices. A setting turns it off.
@@ -130,8 +105,8 @@
 
 ## v0.11.0 (2026-11-19)
 
-- Automatic price updates now run every 30 minutes instead of 15 (still when you open the auction house). The server allows one full scan per 15 minutes, so this leaves room for other addons that scan too, like Cheap Upgrades. Update prices can still be pressed after 15 minutes.
-- Quick sell and Shopping tabs now sit after every other tab at the bottom of the auction house, also other addons' tabs (they used to land on top of Cheap Upgrades' tab).
+- Automatic price updates now run every 30 minutes instead of 15 (still when you open the auction house). Update prices can still be pressed after 15 minutes.
+- Quick sell and Shopping tabs now sit after every other tab at the bottom of the auction house, other addons' tabs too.
 
 ## v0.10.1 (2026-11-18)
 
@@ -277,25 +252,6 @@
 - Options in the game's Settings under AddOns (or /eah options): undercut, default duration, which tooltip lines to show, automatic full scan, and the auction house look.
 
 ## [v0.1.0](https://github.com/quikmn/EverlookDBAuctions/tree/v0.1.0) (2026-11-13)
-[Full Changelog](https://github.com/quikmn/EverlookDBAuctions/commits/v0.1.0) [Previous Releases](https://github.com/quikmn/EverlookDBAuctions/releases)
 
-- /eah test: reload after every full scan so the scan is written to disk at once  
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>  
-- Random stats: use the first bonus ID when the suffix field is empty and the name differs; save link samples and the most-unlinked items; re-request item loads each retry round  
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>  
-- Full scan: record how many auctions still lack a link after each retry round  
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>  
-- Full scan: load items whose link wasn't ready and read them again (up to 3 rounds), so random suffixes are known  
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>  
-- README: /eah auto  
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>  
-- License: GPL-3.0-or-later  
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>  
-- Automatic full scan when opening the auction house (at most every 15 minutes; /eah auto off)  
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>  
-- Full scans keep region, realm, auction house, server time and per item version: low/p10/median price, quantity, auctions, bids, time left  
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>  
-- Roomier panel, thousands separators  
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>  
-- EverlookDB Auctions: full scans, prices from searches, tooltip prices  
-    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>  
+- First release: full auction house scans, prices from normal searches, and prices in tooltips.
+- Automatic price update when you open the auction house (at most every 15 minutes; `/eah auto off`).

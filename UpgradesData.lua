@@ -34,19 +34,19 @@ local _, ns = ...
 ns.UP_DATA = {
   source = "our simulations (ForeverSims 2026-11-21, wowsims/forever fd59de0, MIT); fallback: Forever Leveling BiS v0.12.0-beta model (MIT)",
   ratings = { hit = 10, crit = 14, haste = 10, exp = 10, dodge = 12, parry = 15, block = 5, def = 1 },
-  belowLo = "no simulation below level 10: the level 10 weights",
+  belowLo = "no simulation below level 10: the level-10 weights",
   why = {
-    "dual wield is learned at level 20; simmed dual wielding anyway",
-    "no survival simulation below 60: Forever Leveling BiS' model (MIT), met to our level-60 survival weights",
-    "dual wield is learned at level 20; simmed dual wielding anyway; no Ankh of Life below 40 (required level): same build as warrior_fury_dw with a Spirit gear prior",
-    "no Ankh of Life below 40 (required level): same build as warrior_fury_dw with a Spirit gear prior",
-    "analytical mana model, not a simulation (no healer suites in wowsims); talents, overhealing and spell choice are not modelled",
-    "no simulation of ours for this level: Forever Leveling BiS' model (MIT), met to our level-60 simulation",
-    "no simulation of ours for this level: Forever Leveling BiS' model (MIT), met to wowsims hunter/dps/presets.ts MeleeEpWeights",
-    "no simulation of ours: wowsims hunter/dps/presets.ts MeleeEpWeights",
-    "analytical mana model, not a simulation (no healer suites in wowsims); talents, overhealing and spell choice are not modelled; same model as priest_holy: the specs differ by talents, which are not modelled",
+    "dual wield is learned at level 20; these weights assume you already have it",
+    "no survival simulation below 60 yet, scaled to the level-60 weights",
+    "dual wield is learned at level 20; these weights assume you already have it; no Ankh of Life below 40: the same as dual-wield Fury, leaning to Spirit gear",
+    "no Ankh of Life below 40: the same as dual-wield Fury, leaning to Spirit gear",
+    "worked out from healing per mana, not simulated; talents, overhealing and spell choice aren't counted",
+    "no simulation for this level yet, scaled to the level-60 weights",
+    "no simulation for this level yet, scaled to standard melee hunter weights",
+    "no simulation yet: standard melee hunter weights",
+    "worked out from healing per mana, not simulated; talents, overhealing and spell choice aren't counted, so the numbers match Holy",
     "AoE pull without kiting: the mobs melee the mage for the whole pull",
-    "Cat Form is learned at level 20; the cat APL runs without it",
+    "Cat Form is learned at level 20; below that the weights are without it",
   },
   classes = {
     WARRIOR = { specs = {
@@ -228,7 +228,7 @@ ns.UP_DATA = {
         { tab = 1, tier = 5, col = 2, name = "Holy Shock", scenario = "group", w = "agi=.88/.012,ap=.22/.00054,arp=.021/6.2e-05,crit=1.29/.012,exp=.75/.011,haste=.61/.012,hit=1.46/.014,int=2.5/.012,mhdps=2.81/.0071,mp5=1.79/.012,sp=1/.0016,sp_holy=1/.0016,spi=1.79/.012,sta=.086/.00057,str=.54/.0014", mana = { haste = true, int = true, mp5 = true, spi = true } },
       },
       },
-      { key = "paladin_prot_sp", name = "Protection (spell power, 40+)", role = "melee", src = "our simulations (wowsims/forever, MIT)", build = true, note = "Spell-power Protection from level 40: wowsims' damage and threat sim, where spell damage is worth about 3 attack power.", brackets = {
+      { key = "paladin_prot_sp", name = "Protection (spell power, 40+)", role = "melee", src = "our simulations (wowsims/forever, MIT)", build = true, note = "Spell-power Protection from level 40, where spell damage is worth about 3 attack power.", brackets = {
         { upTo = 14, scenario = "group", lo = 10, metric = "tps", w = "agi=.43/.023,ap=.28/.00095,crit=.16/.0086,def=.034/.018,haste=.19/.0096,hit=.3/.022,mhdps=3.72/.013,parry=.06/.0086,sp=1/.003,sp_holy=1/.003,sta=.14/.0015,str=.61/.0021" },
         { upTo = 14, scenario = "solo", lo = 10, w = "agi=.56/.0072,ap=.4/.00035,armor=.029/5.8e-05,bv=.67/.004,crit=.15/.0025,def=.18/.0055,dodge=.068/.0048,haste=.19/.0025,hit=.17/.0044,int=.0055/.00015,mhdps=5.47/.005,mp5=.013/.0005,parry=.088/.0036,sp=1/.00075,sp_holy=1/.00075,spi=.29/.00076,sta=.41/.0016,str=.85/.00077" },
         { upTo = 19, scenario = "group", metric = "tps", w = "agi=.53/.021,ap=.35/.0014,crit=.22/.013,def=.079/.02,dodge=.027/.02,haste=.25/.014,hit=.43/.021,mhdps=4.98/.017,parry=.14/.017,sp=1/.0033,sp_holy=1/.0033,sta=.15/.0019,str=.77/.0031" },
@@ -685,7 +685,7 @@ ns.UP_DATA = {
         { upTo = 60, scenario = "solo", w = "crit=.49/.012,haste=.8/.012,hit=.96/.012,int=.28/.012,mp5=.21/.012,sp=1/.0023,sp_frost=1/.0023,spi=.2/.011", mana = { haste = true, int = true, mp5 = true, spi = true } },
       },
       },
-      { key = "mage_arcane_aoe", name = "Arcane (AoE pulls)", role = "caster", src = "our simulations (wowsims/forever, MIT)", build = true, note = "Pulling four mobs and Arcane Explosion. An estimate: the sim has no kiting, the mobs hit the mage all pull.", brackets = {
+      { key = "mage_arcane_aoe", name = "Arcane (AoE pulls)", role = "caster", src = "our simulations (wowsims/forever, MIT)", build = true, note = "Pulling four mobs and Arcane Explosion. An estimate: it assumes no kiting, so the mobs hit you the whole pull.", brackets = {
         { upTo = 14, src = "estimate", scenario = "group", lo = 10, why = 10, w = "crit=.051/.0027,hit=.17/.012,int=.1/.0047,sp=1/.0015,sp_arcane=1/.0015" },
         { upTo = 14, src = "estimate", scenario = "solo", lo = 10, why = 10, w = "armor=.0019/.00016,crit=.052/.0027,hit=.25/.0058,int=.1/.0037,sp=1/.008,sp_arcane=1/.008,spi=.051/.00022,sta=.042/.0067" },
         { upTo = 19, src = "estimate", scenario = "group", why = 10, w = "crit=.11/.004,haste=.4/.0023,hit=.35/.017,int=.14/.0053,sp=1/.001,sp_arcane=1/.001" },

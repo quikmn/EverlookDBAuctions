@@ -4359,14 +4359,14 @@ def upgrades_ours():
     as_char("PALADIN", 40, "holy")
     holy = U.spec("holy")
     _, _, _, label, meta = U.weights(holy)
-    check(meta.src == "estimate" and "analytical mana model" in (meta.why or ""), f"Holy paladin: an estimate: {meta.why}")
+    check(meta.src == "estimate" and "healing per mana" in (meta.why or ""), f"Holy paladin: an estimate: {meta.why}")
     gear(311, "INVTYPE_HEAD", 4, 4, T({"ITEM_MOD_INTELLECT_SHORT": 3}), "Old Helm")
     gear(312, "INVTYPE_HEAD", 4, 4, T({"ITEM_MOD_INTELLECT_SHORT": 12, "ITEM_MOD_SPIRIT_SHORT": 8}), "Helm of Light")
     worn(T({1: 311}))
     lines = X.tipLines("item:312", 312)
     check(lines and lines[1].left == "Upgrade for Holy" and (lines[1].why or "").endswith("(estimate)"),
           f"healer tooltip says estimate: {lines and lines[1].why}")
-    check("An estimate: analytical mana model" in O.weightsText(holy), "the weights text says why it's an estimate")
+    check("An estimate: worked out from healing per mana" in O.weightsText(holy), "the weights text says why it's an estimate")
 
     # 4. mana-dependent stats: labelled, never negative
     d = ns.UP_DATA

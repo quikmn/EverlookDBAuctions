@@ -2,93 +2,49 @@
 
 Auction house prices, selling and shopping lists for WoW Forever, from the makers of [EverlookDB.com](https://everlookdb.com).
 
-- **One main window:** the minimap button, `/eah`, a key (Key Bindings, AddOns) and the EverlookDB Auctions launcher on Everlook Bar all open the same window. Its sidebar lists every part of the addon: Home, Advanced search, AH log, Crafting profit, Gear upgrades and Merchant's Favor, then the settings (General, Selling, Tooltips, Logging, Specs and weights, Crafting), with the search box at the top. Home has a card for each: today's and this week's income, today's loot, your Merchant's Favor, the newest gear upgrades, crafting profit, and a box that searches prices anywhere. It opens on the page you used last (never on Gear upgrades by itself). At the auction house, Quick sell, Shopping and Upgrades stay tabs of their own, and the bar at the bottom has "Open in EverlookDB Auctions".
-- **Minimap button:** click for the main window, right-click for the settings, drag it around the minimap (round or square). Its tooltip has today's income and how old your prices are. Everlook Bar's button drawer can hold it; hide it on the General page or with `/eah minimap`.
-- **Price updates:** a bar along the bottom of the auction house shows which house you're at, how many items have prices and how old they are. Prices update by themselves a few seconds after you open the auction house and every 30 minutes while it's open (the server allows one update about every 15 minutes, so other addons' scans fit in between). An update reads every auction in about 30 seconds, with a progress bar, and you can keep buying and selling meanwhile. Update prices on the bar starts one by hand.
-- **Searches count too:** prices from normal auction house searches are saved, no scan needed.
-- **Prices in tooltips:** lowest buyout per item, how many are up, how old the price is, and the 30-day low and median. Hold Shift for the price of a full stack, Ctrl for the stack under the mouse. Also what a vendor pays (where the game leaves it out), what crafting one costs at today's prices, and "More to vendor" or "More to auction": which pays more, after the auction house's cut. Each line can be turned off on the Tooltips page. In our own lists (Buy, Quick sell, Advanced search, Gear upgrades, Crafting, Profit, the AH log) the item's tooltip opens next to the mouse, and what you wear only shows beside it while you hold Shift (General: "Compare with what I wear: only while holding Shift"). The game's own tooltips are left alone: to see the comparison only with Shift everywhere, type `/console alwaysCompareItems 0` (`/console alwaysCompareItems 1` brings it back).
-- **Disenchant value:** for gear that can be disenchanted, the tooltip shows what the materials are worth on your auction house: each material's chance and amount (from classic-db) times its lowest price. It's an estimate, and it shows once every material has a price.
-- **Quick sell tab:** EverlookDB's own selling tab, next to Blizzard's Sell tab (which still works as before, with the same undercut and a warning when the deposit is more than the sale brings). Everything in your bags you can sell, with a filter, favourites (right-click) and hidden items (Shift+right-click). Pick one and the price is set just under the cheapest auction someone else has up (1 silver by default, copper works too; your own auctions are matched, never undercut), or your last price for it, or the typical price from your last full scan, with how old that is. The post block reads like Blizzard's own Sell frame: Quantity (or Max), Unit price in gold, silver and copper boxes, Duration, Deposit, Total price, Post. Stackable goods go up as one listing that buyers take any amount of, so there are no stacks to split. Type your own price and an Undercut cheapest link takes you back to the automatic one. A red line warns when the deposit is more than the sale brings. If the auction house doesn't answer, the tab says so instead of claiming nobody is selling. The item's live auctions are listed (click one to price under it), with a 30-day price chart. Each item's last price, quantity and duration are remembered. One click on Post posts once.
-- **Your auctions:** on the Quick sell tab, each of your auctions is checked against the live auctions and marked Undercut, Lowest or Sold, with a Cancel button (one click cancels one auction). The undercut button cancels your next undercut auction, one per click, and its tooltip shows what the cancel costs. When you post the last of an item, the next one in your list is picked for you. If the cheapest auction is a single one far below the usual price, the price line says so.
-- **Advanced search:** the gold Advanced search button on the Buy tab, above the categories, opens a query box over the auction list. It searches everything in your last full scan with the same query language as EverlookDB.com, including things the normal search can't: stats, random-stat versions, slot, item and required level, price. For example `type has wand and reqlevel le 29 sort by price`, `slot is trinket and price lt 5g sort by price` or `sta ge 10 and reqlevel le 40 top 20 by sta`. `effect` holds an item's Equip:, Use: and Chance on hit: lines (`slot is feet and effect has "speed"`) and `text` everything on its tooltip; `has` without a column searches the tooltip: `has "fire damage" and slot is trinket`. Click a result to see its live auctions and buy: Buy, then Confirm with the price on the button.
-- **Below vendor price:** the Below vendor button in Advanced search lists auctions that cost less than a vendor pays for the item, with the profit each and for a full stack, biggest profit first: buy them and sell them to any vendor (vendors take no cut). In the query language it's `belowvendor` or `price lt vendor`, with `profit` and `stackprofit` as columns. Elsewhere such auctions get a green mark: a Below vendor tag in search results, the profit beside the auction in the buy panel, and a green edge in Blizzard's own lists. Quest items and items vendors don't buy never count.
-- **Shopping tab:** named lists of searches. Run a whole list in one click and see each search's results under it, with live prices. Save in Advanced search adds a search to a list. Lists import and export as plain text (`# name`, then one search per line).
-- **Crafting cost:** beside the profession window, for the recipe you pick: each material and its lowest auction price, what the materials cost together, what the result sells for (and what disenchanting it is worth, for gear), and the profit after the auction house's 5% cut. It uses your saved prices, so it works away from the auction house.
-- **Shopping list from a recipe:** the Shopping list button under the crafting cost lists the recipe's materials with how many you have and how many to buy (ticked when you have too few; change the amounts or the number of crafts). Create list saves them as a shopping list named after the recipe, so at the auction house you can search each one with one click.
-- **Prices anywhere:** the Advanced search page of the main window (or Home's search box, or `/eah prices`) searches your last full scan away from the auction house. Live prices and buying still need the auction house.
-- **Crafting profit:** `/eah profit` lists every recipe you know whose result sells for more than its materials cost, after the cut, best first. Make shopping list saves what the crafts you plan need.
-- **AH log:** a page of the main window with four tabs, anywhere. Bought (`/eah bought`): everything you bought at the auction house; mark the purchases you crafted with and a recipe shows its cost per craft at what you paid. For sale (`/eah forsale`): your auctions as the auction house last showed them. Income (`/eah income`): a ledger of real gains (auction sales after the cut, vendor sales, looted money, quest rewards), gold from players and your alts kept apart, costs (lost deposits, C.O.D., AH purchases), and every auction you posted with its state: listed, sold with the money waiting, or the item back in the mail. The buyer's name is kept only in that character's own saved file. Looted (`/eah loot`): everything you picked up, with where it came from and what it's worth.
-- **Loot cards and Hurray!:** a short card at the top of the screen for each loot, with roughly what it's worth, and a card with fireworks when one of your auctions sells. A small link on each opens the AH log (Looted or Income). Both can be turned off.
-- **Everlook Bar:** a Loot plugin for Everlook Bar (or any data-broker bar) shows today's loot, and an EverlookDB Auctions launcher opens the main window.
-- **Merchant's Favor:** the main window's Merchant's Favor page shows how much Favor you have and, with EverlookDB Crafting, the three Waylaid Crates that cost the least gold per Favor, with a link to its full list.
-- **Settings:** the Settings pages of the main window (`/eah options` opens General; also in the game's Settings under AddOns). Every setting is a command too: `/eah get` lists them, `/eah duration 24` changes one.
-- **Price Feed:** with the [EverlookDB App](https://github.com/quikmn/everlookdb-uploader) running, the newest scan anyone uploaded to EverlookDB.com for your auction houses is in the game at your next `/reload` or login, so prices are fresh even when you haven't been to the auction house for days. See below.
-- Prices are kept per realm and per auction house (Alliance, Horde, and the neutral houses in Booty Bay, Gadgetzan and Everlook).
+- **One main window:** the minimap button, `/eah`, a key (Key Bindings, AddOns) and the EverlookDB Auctions launcher on Everlook Bar all open it. The sidebar has Home, Advanced search, AH log, Crafting profit, Gear upgrades and Merchant's Favor, then the settings, with a search box at the top. Home has a card for each: income, today's loot, Merchant's Favor, the newest gear upgrades, crafting profit, and a box that searches prices anywhere. At the auction house, Quick sell, Shopping and Upgrades are tabs of their own.
+- **Minimap button:** click for the main window, right-click for the settings, drag it around the minimap. Its tooltip has today's income and how old your prices are. Hide it on the General page or with `/eah minimap`.
+- **Price updates:** a bar along the bottom of the auction house shows which house you're at, how many items have prices and how old they are. Prices update by themselves a few seconds after you open the auction house and every 30 minutes while it's open (the server allows one update about every 15 minutes). An update takes about 30 seconds, with a progress bar, and you can keep buying and selling meanwhile. Normal auction house searches save prices too.
+- **Prices in tooltips:** lowest buyout, how many are up, how old the price is, and the 30-day low and median. Hold Shift for a full stack, Ctrl for the stack under the mouse. Also what a vendor pays, what crafting one costs, and whether the auction house or a vendor pays more after the cut. Each line can be turned off on the Tooltips page.
+- **Disenchant value:** for gear that can be disenchanted, what the materials are worth on your auction house. It's an estimate, shown once every material has a price.
+- **Quick sell tab:** everything in your bags you can sell, with a filter, favourites (right-click) and hidden items (Shift+right-click). Pick one and the price is set just under the cheapest auction someone else has up (1 silver by default; your own auctions are never undercut), or your last price for it. Quantity, unit price, duration, deposit and total work like Blizzard's Sell tab, with a 30-day price chart and a warning when the deposit is more than the sale brings. One click on Post posts once.
+- **Your auctions:** each one is marked Undercut, Lowest or Sold, with a Cancel button. The undercut button cancels your next undercut auction, one per click.
+- **Advanced search:** the Advanced search button on the Buy tab searches your last full scan with the same query language as EverlookDB.com: stats, random-stat versions, slot, level, price, effects. For example `type has wand and reqlevel le 29 sort by price` or `slot is feet and effect has "speed"`. Click a result to see its live auctions and buy.
+- **Below vendor price:** lists auctions that cost less than a vendor pays, with the profit each, biggest first. Such auctions also get a green mark in the auction house lists.
+- **Shopping tab:** named lists of searches. Run a whole list in one click. Lists import and export as plain text.
+- **Crafting cost:** beside the profession window, for the recipe you pick: each material's price, the total, what the result sells for, and the profit after the cut. The Shopping list button turns a recipe's materials into a shopping list.
+- **Crafting profit:** `/eah profit` lists every recipe you know that sells for more than its materials cost, best first.
+- **Prices anywhere:** `/eah prices` (or Home's search box) searches your last full scan away from the auction house.
+- **AH log:** Bought (`/eah bought`), For sale (`/eah forsale`), Income (`/eah income`) and Looted (`/eah loot`). Income is a ledger of real gains: auction sales after the cut, vendor sales, looted money and quest rewards, with gold from players and your alts kept apart, and every auction you posted followed to sold, expired or cancelled.
+- **Loot cards and Hurray!:** a short card at the top of the screen for each loot, with roughly what it's worth, and a card with fireworks when one of your auctions sells. Both can be turned off.
+- **Everlook Bar:** a Loot plugin shows today's loot (works with any data-broker bar), and a launcher opens the main window.
+- **Merchant's Favor:** how much Favor you have and, with EverlookDB Crafting, the Waylaid Crates that cost the least gold per Favor.
+- **Price Feed:** with the [EverlookDB App](https://github.com/quikmn/everlookdb-uploader) running, you get the newest prices other players uploaded to EverlookDB.com for your auction houses at your next login or `/reload`. See below.
+- **Settings:** the Settings pages of the main window (`/eah options`; also in the game's Settings under AddOns). Every setting is a command too: `/eah get` lists them, `/eah duration 24` changes one.
 
-Sellers, bidders and other players are never saved. Nothing is ever posted, bought or cancelled without your click.
+Prices are kept per realm and per auction house (Alliance, Horde, and the neutral houses in Booty Bay, Gadgetzan and Everlook). Sellers, bidders and other players are never saved. Nothing is ever posted, bought or cancelled without your click.
 
 ## Price Feed
 
-Players' scans are uploaded to EverlookDB.com by the [EverlookDB App](https://github.com/quikmn/everlookdb-uploader). The app also goes the other way: every 15 minutes, and right after each of your uploads, it fetches the newest scan of each auction house you play on (your realms and factions, and the realm's neutral house) and writes it into the game as the Price Feed: a small data addon, **EverlookDB Auctions: Price Feed** (folder `EverlookDBAuctions_Shared`), listed under EverlookDB Auctions in the addon list. It is also on CurseForge, empty, for the app to fill (like TradeSkillMaster's AppHelper). The game only reads addon files at login and `/reload`, so that is when new prices from the feed arrive. Without the app (or with its Price Feed switch off) nothing changes.
+Install **EverlookDB Auctions: Price Feed** next to this addon and run the [EverlookDB App](https://github.com/quikmn/everlookdb-uploader). The app keeps it filled with the newest prices players uploaded for the auction houses you play on, so your prices are fresh even when you haven't been to the auction house for days. New prices arrive at login and `/reload`.
 
-- The bar at the bottom of the auction house and the General page of `/eah` say how the feed is: "Price Feed: Alliance · other players' scan, 12 min old", "Price Feed: no data yet" (installed, the app isn't filling it yet) or "Price Feed: off" (with where to get it). The first time you open the auction house without it, one chat line says so; never again.
-- For each item and random-stat version, whichever is newer is used: your own scan or the feed's. A price from the feed always says so ("other players' scan · 12 min ago").
-- The 30-day low and median combine your daily lows with everyone's (the lower of the two each day).
-- Your own saved scans and prices are never overwritten; the feed is kept apart and only combined when a price is read. A missing, old or broken feed is simply ignored.
-- The feed has no player names, like everything else here.
-- `/eah feed` says how it is. Turn it off on the General page of `/eah` ("Use the Price Feed") or with `/eah feed off` (`/eah shared off` still works).
+- The bar at the bottom of the auction house and the General page say how the feed is ("Price Feed: Alliance · other players' scan, 12 min old").
+- For each item, whichever is newer is used: your own scan or the feed's. A price from the feed always says so.
+- Your own prices are never overwritten, and the feed has no player names.
+- `/eah feed` says how it is; turn it off on the General page or with `/eah feed off`.
 
 ## Gear upgrades
 
 What gear is worth to your spec, and what the auction house has that beats what you wear.
 
-- **Your specs and builds:** the first time you open the auction house, pick the spec or levelling build (several, if you're not sure yet) this character gears for: the talent specs plus builds players level with, such as Beast Mastery with a melee two-hander, a dual-wield melee hunter, Protection warrior levelling, spell-power Protection paladin from 40, or Discipline to 40 then Shadow (`tools/upgrades/builds.json`). "Not now" counts every spec of your class. Change it on the Gear upgrades page of `/eah` or with `/eah up spec fury`.
-- **Upgrades tab:** a tab at the bottom of the auction house, beside Quick sell and Shopping, read from the last full scan (yours or other players' shared one), so `/eah up` opens it in a window of its own anywhere. Every slot like the character window, with the best upgrade within your max price; click a slot for all its upgrades. Right-click an item to find it in Buy, Shift-click to link it. "Make shopping list" saves the best upgrade of every slot as a list in the Shopping tab. Max price per item, smallest upgrade in %, and rich mode (the biggest upgrade instead of the most upgrade per gold).
-- **Scores:** every stat the game reports (spell damage per school, healing, weapon DPS for main hand, off hand and ranged, random "of the Bear" suffixes each on their own), times your spec's stat weights, plus the average value of procs and Use: effects. Compared with what you wear: rings and trinkets against the weaker of your two, an off-hand while you wear a two-hander says so, an empty slot is "fills an empty slot". Items your class can't use are skipped; plate and mail wearers see only their best armor type (casters and healers see every type they can wear). An item above your level shows as "Next upgrade needs level N".
-- **Only real upgrades, with the reason:** an item counts as an upgrade only when its gain beats the error margin of the weights (twice the standard error; sims give theirs, estimates count as less sure); otherwise it says "About the same". Every gain is a share of your whole gear ("+6.5% of your gear"), the same number in tooltips, on bag slots, in the Upgrades tab and on quest rewards. The tooltip always says why ("+14 Crit Rating, +8 Strength (+136% over your worn helm)") with the price next to it, and weights that are estimates say so.
-- **Stat weights per level:** each spec has weights for every five levels up to 60, because ratings, talents and abilities change as you level. Adjusted to your talents (a * marks a weight a talent changed). Copy them into a profile of your own and change any value, import and export strings to share, or import a Pawn scale. Optionally Pawn's own scale for your spec.
-- **Around the game:** the upgrade for each of your specs on gear tooltips ("+6.5% of your gear" for Fury, the best two and "+N more" until you pick a spec, "Not your armor type", "You have a better one in your bags"), a "+6.5%" badge on bag slots (Blizzard's bags and Bagnon), one chat line when new gear in your bags is an upgrade, the upgrade on each quest reward with a star on the best, and, if you turn it on, your grey items sold when you open a vendor (`/eah up junk` does it once). Only grey items, never anything else.
+- **Your specs and builds:** the first time you open the auction house, pick the specs or levelling builds this character gears for (for example Beast Mastery with a melee two-hander, or Discipline to 40 then Shadow). Change it on the Gear upgrades page or with `/eah up spec fury`.
+- **Upgrades tab:** every slot like the character window, with the best upgrade within your max price; click a slot for all its upgrades. `/eah up` opens it anywhere. "Make shopping list" saves the best upgrade of every slot.
+- **Scores:** every stat times your spec's stat weights for your level, adjusted to your talents, plus procs and Use: effects, compared with what you wear. Items your class can't use are skipped.
+- **Only real upgrades:** small gains say "About the same". Every gain is a share of your whole gear ("+6.5% of your gear") and the tooltip says why.
+- **Stat weights:** for every spec and levelling build, every five levels up to 60, for solo levelling or groups. Make your own profile, share it with an import string, or import a Pawn scale. Weights that are estimates say so.
+- **Around the game:** upgrades on gear tooltips, a "+6.5%" badge on bag slots (Blizzard's bags and Bagnon), a chat line when new gear in your bags is an upgrade, a star on the best quest reward, and, if you turn it on, your grey items sold at a vendor.
 
-`/eah up help` lists its commands: `spec`, `weights`, `reset`, `set <stat> <value>`, `export`, `import`, `max 25g`, `min 1`, `rich on|off`, `solo`, `group`, `check`, `stats <item>`, `price <item>`, `junk`, `mem`.
-
-Where the numbers come from: our own simulations (wowsims/forever, MIT, with levelling added), estimates marked.
-- Stat weights for every spec and levelling build, every five levels from 10 to 60, solo (levelling: mobs per hour, rest included) and in groups (dungeons; at 60 the 5-man buffs), each weight with its error margin: our ForeverSims runs of [wowsims/forever](https://github.com/wowsims/forever) (MIT license) with a level parameter and a levelling scenario added. Tanks at 60 are weighed for survival, with threat shown beside it. Healers' weights come from an analytical mana model, so they are estimates, like a few early brackets (dual wield or Cat Form not learned yet) and the AoE Arcane build. Pick "Weights for: Solo levelling / Groups and dungeons" on the Gear upgrades page, or `/eah up solo` / `/eah up group`. `tools/gen_upgrades.py` rebuilds `UpgradesData.lua` from those results; its inputs are in `tools/upgrades/`, with wowsims' license.
-- Where we have no simulation yet (Marksmanship, Survival, Assassination and Destruction below 60, the melee Survival hunter, tanks' survival below 60, Discipline levelling below 40): the per-level model in Forever Leveling BiS v0.12.0-beta's `Data/ModelWeights.lua`, MIT license, Copyright (c) 2026 Thunder (`tools/upgrades/ForeverLevelingBiS-LICENSE`), met to our level-60 numbers. Those brackets are estimates. Nothing else from that addon is used.
-- Talent effects, item procs and rating conversions: wowsims/forever.
-- Items and prices: the game and EverlookDB's own data and scans.
-
-## For addon authors: EverlookDBAuctionsAPI
-
-A small API, read-only apart from adding shopping lists, so other addons can use these prices without reading the saved data. It reads what is already saved and never sends anything to the server.
-
-```lua
-local api = EverlookDBAuctionsAPI
-if api and api.version >= 1 then
-  local low, age, qty, auctions = api.price(itemID)
-end
-if api and api.version >= 3 then
-  local low, age, qty, auctions, source = api.price(itemID)   -- source: "own" or "shared"
-end
-if api and api.version >= 2 then
-  local ok, isNew = api.addShoppingList("Mageweave Bag", { { 4338, 8 }, { 2321, 2 } })
-end
-```
-
-- `api.version`: a number that goes up by one whenever something is added. Nothing is ever removed or changed.
-- `api.price(item[, suffix[, side]])` returns, or `nil` when there is no price:
-  - the lowest buyout per unit, in copper
-  - how old that price is, in seconds
-  - how many are up
-  - how many auctions (`nil` when only a normal search saw it)
-  - (version 3) where it is from: `"own"` (this player's scans and searches) or `"shared"` (other players' newest scan, from the EverlookDB App; see Shared prices). Whichever is newer is returned.
-- `api.history(item[, side])`: the lowest price per day for the last 30 days, oldest first: `{ { day = <unix time at the start of the day, UTC>, low = <copper> }, ... }`, own and shared scans together. It's an empty table when there is none.
-- `api.disenchant(item)` returns, or `nil` when the item can't be disenchanted or a material has no price yet:
-  - the estimated auction house value of disenchanting it, in copper
-  - the age in seconds of the oldest material price it used
-
-- `api.addShoppingList(name, items)` (version 2) saves a shopping list in the auction house's Shopping tab: `items = { { itemID, count }, ... }`. A list with the same name is replaced, so pushing it again updates it. Returns `true` and whether the list is new, or `false` and why: `"no name"`, `"no items"`, `"loading"` (the game hasn't loaded every item's name yet: call again in a moment) or `"not ready"` (the addon hasn't loaded its saved data yet). It is the one call that writes, and it only adds or replaces a list.
-
-`item` is an item ID or an item link. A link carries its random-stat version ("of the Bear"), and `price` then looks up that version. With an ID, pass the version's suffix ID as `suffix`. Prices are for the player's realm and their own faction's auction house, or for the one that is open now. Pass `side` (`"Alliance"`, `"Horde"` or `"Neutral"`) to pick one. Returned tables are copies, and the API table can't be written to.
+`/eah up help` lists its commands.
 
 ## Install
 
@@ -98,25 +54,23 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 
 ## Commands
 
-`/eah` follows the same pattern as every EverlookDB addon; a mistyped command suggests the nearest one.
-
-- `/eah` opens the main window (on the page you used last); `/eah options` the settings; `/eah help` (or `?`) lists the commands
-- `/eah minimap` shows or hides the minimap button (`/eah minimap off`, `on`)
-- `/eah status` shows the version, what's saved and which auction house API the game has; `/eah version`
-- `/eah scan` starts a full scan while the auction house is open
-- `/eah sell` opens the Quick sell tab, `/eah shop` the Shopping tab, `/eah run <list>` runs a shopping list
-- `/eah up` opens Gear upgrades (the tab at the auction house, else its window); `/eah up help` lists its commands
+- `/eah` opens the main window; `/eah options` the settings; `/eah help` lists the commands
+- `/eah minimap` shows or hides the minimap button
+- `/eah status` shows the version and how old your prices are
+- `/eah scan` updates prices now while the auction house is open
+- `/eah sell` opens Quick sell, `/eah shop` Shopping, `/eah run <list>` runs a shopping list
+- `/eah up` opens Gear upgrades; `/eah up help` lists its commands
 - `/eah prices` searches your last full scan anywhere; `/eah profit` the crafting profit list
 - `/eah bought`, `/eah forsale`, `/eah income`, `/eah loot` open the AH log on that tab
 - `/eah lootmove` moves the loot cards, `/eah loottest` shows a few
 - `/eah undercut 1s` sets how far under the cheapest auction to price: `1c`, `50c`, `1g`, `5%`, or `0` to match it
-- `/eah get` lists every setting with its value (`/eah get duration` one); `/eah <setting> <value>` or `/eah set <setting> <value>` changes one (for example `/eah duration 24` or `/eah tipvendor on`), says so in chat and updates the open window. `/eah settings` still lists them too
-- `/eah search <words>` opens the options with the search box filled
-- `/eah debug` lists what is shown where, the addon's auction house searches and any cut-off labels (for bug reports)
-- `/eah feedback` (or the Feedback button in the options) shows a link for reporting bugs and ideas
-- `/eah test` reloads the UI after every full scan, so the scan is saved to disk at once (for testing)
-- `/eah auto off` (or `on`) stops or restarts automatic price updates: one when you open the auction house, then every 30 minutes while it's open
+- `/eah get` lists every setting; `/eah <setting> <value>` changes one (for example `/eah duration 24`)
+- `/eah search <words>` finds a setting
+- `/eah auto off` (or `on`) stops or restarts automatic price updates
 - `/eah skin off` (or `on`) turns the EverlookDB look for the auction house off or on (then `/reload`)
+- `/eah debug` shows details for bug reports; `/eah feedback` shows where to report bugs and ideas
+
+Addon authors: see [API.md](API.md).
 
 ## Coming next
 
@@ -124,4 +78,6 @@ Alerts when a shopping list has a match under your price.
 
 ## License
 
-GPL-3.0-or-later (see LICENSE). Disenchant chances come from classic-db by the CMaNGOS community (GPL-3.0, https://github.com/cmangos/classic-db); `tools/disenchant_data.py` rebuilds Disenchant.lua from its dump. Gear upgrade stat weights: wowsims/forever (MIT) and the Forever Leveling BiS v0.12.0-beta model (MIT, Copyright (c) 2026 Thunder); see Gear upgrades above. Not affiliated with Blizzard Entertainment.
+GPL-3.0-or-later (see LICENSE). Not affiliated with Blizzard Entertainment.
+
+Credits: disenchant chances from classic-db by the CMaNGOS community (GPL-3.0); stat weights from our own simulations on wowsims/forever (MIT), with the Forever Leveling BiS v0.12.0-beta model (MIT, Copyright (c) 2026 Thunder) for some levels.

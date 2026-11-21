@@ -291,7 +291,7 @@ PLAY = (("solo", "levelling", "solo"), ("group", "dungeon", "group5"))
 # raid_boss fights of mana users were cut before running out of mana: these stats' value there depends on mana
 MANA_STATS = ("Intellect", "Spirit", "MP5", "HasteRating")
 METRIC = {"mobs_per_hour": "mph", "dps": "dps", "tps": "tps", "tmi": "tmi", "dungeon_pulls_per_hour": "pulls"}
-BELOW_10 = "no simulation below level 10: the level 10 weights"
+BELOW_10 = "no simulation below level 10: the level-10 weights"
 
 
 def up_to_of(level):
@@ -353,6 +353,30 @@ def our_bracket(d, up_to, scen, ratings, lo=None):
     if tps and d["metric"] != "tps":
         b["tps"], b["tpsSe"] = ours_w(tps, ratings)
     return b
+
+
+
+# what players read after "An estimate: " (in-game text): plain words, no sources or file names
+PUBLIC_WHY = [
+    (r"^no survival simulation below 60: .*$", "no survival simulation below 60 yet, scaled to the level-60 weights"),
+    (r"^no simulation of ours for this level: .*met to our level-60 simulation$", "no simulation for this level yet, scaled to the level-60 weights"),
+    (r"^no simulation of ours for this level: .*MeleeEpWeights$", "no simulation for this level yet, scaled to standard melee hunter weights"),
+    (r"^no simulation of ours for this level: .*$", "no simulation for this level yet"),
+    (r"^no simulation of ours: .*MeleeEpWeights$", "no simulation yet: standard melee hunter weights"),
+    (r"^no simulation of ours: .*$", "no simulation yet"),
+    (r"simmed dual wielding anyway", "these weights assume you already have it"),
+    (r" \(required level\): same build as warrior_fury_dw with a Spirit gear prior", ": the same as dual-wield Fury, leaning to Spirit gear"),
+    (r"analytical mana model, not a simulation \(no healer suites in wowsims\); talents, overhealing and spell choice are not modelled",
+     "worked out from healing per mana, not simulated; talents, overhealing and spell choice aren't counted"),
+    (r"; same model as priest_holy: the specs differ by talents, which are not modelled", ", so the numbers match Holy"),
+    (r"the cat APL runs without it", "below that the weights are without it"),
+]
+
+
+def public_why(text):
+    for pat, rep in PUBLIC_WHY:
+        text = re.sub(pat, rep, text)
+    return text
 
 
 def main():
@@ -543,6 +567,7 @@ def main():
     whys = []
 
     def why_ref(text):
+        text = public_why(text)
         if text not in whys:
             whys.append(text)
         return whys.index(text) + 1
