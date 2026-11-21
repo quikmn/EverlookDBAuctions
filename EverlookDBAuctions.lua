@@ -234,6 +234,7 @@ function ns.unfinishedText(h)
   local why = h.why == "noanswer" and "got no answer from the server"
     or h.why == "empty" and "got an empty list from the server"
     or h.why == "closed" and "stopped when the AH closed"
+    or h.why == "stalled" and "stopped partway"
     or "was cut off by a reload"
   return ("The last price update %s. Prices are unchanged."):format(why)
 end
@@ -453,6 +454,7 @@ local function makePanel(parent)
     acc = acc + dt
     if acc < (scan and 0.2 or 1) then return end
     acc = 0
+    if ns.dropStalled then ns.dropStalled() end
     refreshPanel()
     if db.auto ~= false and not scan and house then
       local h = getHouse(house)
@@ -471,12 +473,16 @@ end
 
 -- Reads auction i the same way for both APIs: count, buyout, itemID, minimum bid, current bid, item link, time-left
 -- band (0 short .. 3 very long). Seller and bidder come back from the same call; they are skipped, never kept.
+-- Only plain numbers and strings count: anything else (a hidden value, a broken row) is unknown.
+local function numOnly(v) v = ok(v); return type(v) == "number" and v or nil end
+local function strOnly(v) v = ok(v); return type(v) == "string" and v or nil end
+
 local function readModern(i)
   local okCall, _, _, count, _, _, _, _, minBid, _, buyout, bid, _, _, _, _, _, itemID = pcall(C_AuctionHouse.GetReplicateItemInfo, i)
   if not okCall then return nil end
   local okLink, link = pcall(C_AuctionHouse.GetReplicateItemLink, i)
   local okLeft, left = pcall(C_AuctionHouse.GetReplicateItemTimeLeft, i)
-  return ok(count), ok(buyout), ok(itemID), ok(minBid), ok(bid), okLink and ok(link) or nil, okLeft and ok(left) or nil
+  return numOnly(count), numOnly(buyout), numOnly(itemID), numOnly(minBid), numOnly(bid), okLink and strOnly(link) or nil, okLeft and numOnly(left) or nil
 end
 
 local function readClassic(i)
@@ -484,8 +490,8 @@ local function readClassic(i)
   if not okCall then return nil end
   local okLink, link = pcall(GetAuctionItemLink, "list", i)
   local okLeft, left = pcall(GetAuctionItemTimeLeft, "list", i)
-  left = okLeft and ok(left)
-  return ok(count), ok(buyout), ok(itemID), ok(minBid), ok(bid), okLink and ok(link) or nil, left and (left - 1) or nil
+  left = okLeft and numOnly(left)
+  return numOnly(count), numOnly(buyout), numOnly(itemID), numOnly(minBid), numOnly(bid), okLink and strOnly(link) or nil, left and (left - 1) or nil
 end
 
 -- The item's own name ("Bandit Cloak"), when the game has it loaded.
@@ -705,26 +711,33 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
   local rows, items = {}, {}
   local deals = {}   -- below vendor price: "unit:count,..." per item version (Vendor.lua), worked out once here
   local i = 1
+  local badRows = (scan and scan.badRows) or 0
+  local function addRow(key)
+    local v = vars[key]
+    local low, p10, med = summarize(v)
+    -- low,p10,median,quantity,auctions,bid-only,with bids,short,medium,long,very long,lowest bid[,suffix name]
+    local row = table.concat({ low or "", p10 or "", med or "", v.qty, v.n, v.bidOnly, v.withBids,
+      v.tl[1], v.tl[2], v.tl[3], v.tl[4], v.minBid or "" }, ",")
+    if v.suffix ~= 0 and v.name then row = row .. "," .. v.name end
+    rows[key] = row
+    if ns.vendor and ns.vendor.scanDeals then
+      local okDeal, d = pcall(ns.vendor.scanDeals, v.id, v.units, v.counts)
+      if okDeal and d then deals[key] = d end
+    end
+    local it = items[v.id]
+    if not it then it = { nil, 0, 0 }; items[v.id] = it end
+    if low and (not it[1] or low < it[1]) then it[1] = low end
+    it[2] = it[2] + v.qty
+    it[3] = it[3] + v.n
+  end
+  local mine = scan
   local function step()
+    if not mine or scan ~= mine then return end   -- thrown away meanwhile
+    mine.beat = GetTime()
     local stop = math.min(i + 499, #list)
     for k = i, stop do
-      local key = list[k]
-      local v = vars[key]
-      local low, p10, med = summarize(v)
-      -- low,p10,median,quantity,auctions,bid-only,with bids,short,medium,long,very long,lowest bid[,suffix name]
-      local row = table.concat({ low or "", p10 or "", med or "", v.qty, v.n, v.bidOnly, v.withBids,
-        v.tl[1], v.tl[2], v.tl[3], v.tl[4], v.minBid or "" }, ",")
-      if v.suffix ~= 0 and v.name then row = row .. "," .. v.name end
-      rows[key] = row
-      if ns.vendor and ns.vendor.scanDeals then
-        local d = ns.vendor.scanDeals(v.id, v.units, v.counts)
-        if d then deals[key] = d end
-      end
-      local it = items[v.id]
-      if not it then it = { nil, 0, 0 }; items[v.id] = it end
-      if low and (not it[1] or low < it[1]) then it[1] = low end
-      it[2] = it[2] + v.qty
-      it[3] = it[3] + v.n
+      -- one odd item never costs the whole update: it is skipped and counted
+      if not pcall(addRow, list[k]) then badRows = badRows + 1 end
     end
     i = stop + 1
     if i <= #list then C_Timer.After(0, step); return end
@@ -757,6 +770,7 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       linkSamples = linkSamples,          -- up to 30 links of random-stat items (unique ID, level and spec blanked)
       rows = rows,
       deals = deals,                      -- auctions under vendor price, or the cheapest ones of items not loaded
+      badRows = badRows > 0 and badRows or nil, -- auctions or items skipped because they couldn't be read
     }
     table.insert(db.scans, sc)
     -- packs the house's previous scan, drops what is past keeping; drops for room are noted for /eah status
@@ -783,7 +797,7 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
 end
 
 -- Adds one auction to its item version.
-local function addAuction(vars, id, count, buyout, minBid, bid, link, left)
+local function addOne(vars, id, count, buyout, minBid, bid, link, left)
   local key, suffix, name = variantOf(id, link)
   if not key then key, suffix = id .. ":0", 0 end
   local v = vars[key]
@@ -807,6 +821,11 @@ local function addAuction(vars, id, count, buyout, minBid, bid, link, left)
   end
   local band = left and v.tl[left + 1]
   if band then v.tl[left + 1] = band + 1 end
+end
+
+-- The same, but an auction that can't be read is skipped and counted (scan.badRows), never the end of the update.
+local function addAuction(vars, ...)
+  if not pcall(addOne, vars, ...) and scan then scan.badRows = (scan.badRows or 0) + 1 end
 end
 
 local RETRY_WAITS = { 2, 3, 5 }   -- seconds before each re-read of auctions whose item wasn't loaded yet
@@ -864,6 +883,7 @@ local function processList(total, first, read)
     local i, missing, lost = 1, {}, 0
     local function step()
       if gone() then return end
+      mine.beat = GetTime()
       if not closed() and yielding() then
         C_Timer.After(0.25, step)
         return
@@ -903,6 +923,7 @@ local function processList(total, first, read)
     local i, still = 1, {}
     local function step()
       if gone() then return end
+      mine.beat = GetTime()
       if closed() then
         for j = i, #missing do still[#still + 1] = missing[j] end
         done(still)
@@ -937,6 +958,7 @@ local function processList(total, first, read)
     round = round + 1
     local function drain()
       if gone() then return end
+      mine.beat = GetTime()
       if closed() then finish(missing); return end
       if load and qi <= #queue then
         if not yielding() then pump() end
@@ -959,7 +981,23 @@ local function processList(total, first, read)
   firstPass(after)
 end
 
+-- A running update that has made no progress for STALL_AFTER seconds (an error stopped it): let it go, so the next
+-- update can start instead of waiting for a /reload. The prices stay as they were.
+local STALL_AFTER = 120
+local function dropStalled()
+  if not scan or not scan.reading or GetTime() - (scan.beat or GetTime()) < STALL_AFTER then return false end
+  scan = nil
+  if house then
+    local h = getHouse(house)
+    h.why = "stalled"
+    logScan(h, "stopped (no progress)")
+  end
+  return true
+end
+ns.dropStalled = dropStalled
+
 function startScan(auto)
+  dropStalled()
   if scan then return end
   if not house or not ahFrame() or not ahFrame():IsShown() then say("open the auction house first."); return end
   local h = getHouse(house)
@@ -1409,14 +1447,14 @@ end
 
 function events.REPLICATE_ITEM_LIST_UPDATE()
   if not scan or scan.mode ~= "replicate" or scan.reading then return end
-  scan.reading = true
+  scan.reading, scan.beat = true, GetTime()
   local total = C_AuctionHouse.GetNumReplicateItems() or 0
   processList(total, 0, readModern)   -- the replicate list counts from 0
 end
 
 function events.AUCTION_ITEM_LIST_UPDATE()
   if not scan or scan.mode ~= "getall" or scan.reading then return end
-  scan.reading = true
+  scan.reading, scan.beat = true, GetTime()
   local _, total = GetNumAuctionItems("list")
   processList(total or 0, 1, readClassic)
 end

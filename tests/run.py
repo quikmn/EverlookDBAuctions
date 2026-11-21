@@ -2586,6 +2586,41 @@ def full_scan():
     G.ADVANCE(9)
     G.ADVANCE(100)
     check(not ns.scanning() and "didn't send" not in printed(lua), f"an automatic update with no answer is quiet: {printed(lua)}")
+
+    # odd rows never fail the update: a count that isn't a number, a buyout that is a table, an item whose below-vendor
+    # check throws; each is skipped and the rest is saved
+    lua, ns, fire = scan_lua()
+    G = lua.globals()
+    G.LOADS_AFTER = 0
+    lua.execute("AUCTIONS[5] = { id = 6, count = '2', buyout = 100 }; AUCTIONS[7] = { id = 8, count = 2, buyout = {} }")
+    lua.execute("local get = C_AuctionHouse.GetReplicateItemInfo; C_AuctionHouse.GetReplicateItemInfo = function(i) "
+                "local a = AUCTIONS[i]; if type(a.buyout) == 'table' then return 'x', 1, 2, 1, false, 1, nil, 10, 1, a.buyout, 0, "
+                "false, nil, nil, nil, false, a.id end; return get(i) end")
+    ns.vendor = lua.eval("{ scanDeals = function(id) if id == 3 then error('boom') end end }")
+    G.SlashCmdList.EVERLOOKAUCTIONS("scan")
+    fire("REPLICATE_ITEM_LIST_UPDATE")
+    G.ADVANCE(30)
+    db = G.EverlookAuctionsDB
+    check(not ns.scanning() and len(db.scans) == 1, "an update with odd rows still finishes")
+    sc = db.scans[1] if len(db.scans) else None
+    check(sc is not None and sc.rows["3:0"] is not None and sc.rows["1:0"] is not None, "every item is still saved")
+    h = db.houses["Test-Alliance"]
+    check(h["items"][8] is not None and h["items"][3] is not None, "items with an odd auction keep their other auctions")
+
+    # an update stopped by something unexpected doesn't block the next one until a /reload
+    lua, ns, fire = scan_lua()
+    G = lua.globals()
+    G.SlashCmdList.EVERLOOKAUCTIONS("scan")
+    fire("REPLICATE_ITEM_LIST_UPDATE")
+    lua.execute("TIMERS = {}")     # the next slice never runs
+    check(ns.scanning(), "running")
+    G.ADVANCE(60)
+    check(not ns.dropStalled() and ns.scanning(), "a minute without progress is not yet stalled")
+    G.ADVANCE(70)
+    check(ns.dropStalled() and not ns.scanning(), "two minutes without progress: let go")
+    h = G.EverlookAuctionsDB.houses["Test-Alliance"]
+    check(h.log[1].how == "stopped (no progress)" and h["items"][99] is not None, f"logged, prices kept: {h.log[1].how}")
+    check("stopped partway" in ns.unfinishedText(h), "the bar says it stopped")
     return failures
 
 def item_cache():

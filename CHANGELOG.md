@@ -3,6 +3,7 @@
 ## Unreleased
 - Loot log: items you take from the mail, buy from a merchant or get in a trade are no longer taken for loot. They're logged with where they came from ("Expired auction", "Cancelled auction", "Won auction", "Mail from <name>", the merchant's name, the player you traded with), get no loot card and don't count in today's loot.
 - Prices window (/eah prices): a title bar on top to drag it anywhere, and it opens where you left it. Its bottom edge no longer gets cut off. The first time you open it, it starts with a search (the most listed items, rare and better, recipes, items below vendor price and the like, picked at random) so the list isn't empty.
+- Price updates: an auction the game sends in an odd shape is skipped instead of stopping the whole update, and an update that stops partway for any other reason lets go after two minutes, so the next one can start without a /reload. Prices stay as they were.
 
 ## v0.14.1 (2026-11-20)
 - Tooltips: "More to vendor" or "More to auction" says where an item earns more, and by how much: the vendor's price against the last scan's lowest price after the auction house's 5% cut. Grey when that price is over a day old. Shift and Ctrl work on it like the other prices. A setting turns it off.
