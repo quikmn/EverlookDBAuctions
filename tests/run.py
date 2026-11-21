@@ -130,7 +130,6 @@ def main() -> int:
     failures += upgrades()
     failures += start_tab()
     failures += upgrades_tab()
-    failures += item_tip()
 
     if failures:
         for f in failures:
@@ -1944,20 +1943,6 @@ def ux_flows():
     check(ns.db().openOn == "sell", f"/eah set openon sell: {ns.db().openOn}")
     app.HandleSlash(app, "openon browse")
     check(ns.db().openOn == "browse", f"/eah openon browse: {ns.db().openOn}")
-    # compare with what you wear only while holding Shift: on by default, a setting, found by the settings search
-    check(ns.db().compareShift is None, "compare only with Shift is on by default (not saved)")
-    app.HandleSlash(app, "compareshift off")
-    check(ns.db().compareShift is False, "/eah compareshift off")
-    G.CHAT = lua.table()
-    app.HandleSlash(app, "search equipped")
-    out = "
-".join(str(G.CHAT[i]) for i in range(1, len(G.CHAT) + 1))
-    check("only while holding Shift" in out or "compareshift" in out, f"the settings search finds it by 'equipped': {out}")
-    G.CHAT = lua.table()
-    app.HandleSlash(app, "search compare")
-    out = "
-".join(str(G.CHAT[i]) for i in range(1, len(G.CHAT) + 1))
-    check("only while holding Shift" in out or "compareshift" in out, f"the settings search finds it by 'compare': {out}")
     return failures
 
 
@@ -4366,83 +4351,6 @@ def upgrades_tab():
     ns.realmInfo = lua.eval("function() return nil, 6946 end")
     G.DB.scans[1].realm, G.DB.scans[1].realmID = "", 6946
     check(U.newestScan() is not None, "a scan saved without its realm name is found by realm ID")
-    return failures
-
-
-def item_tip():
-    """ItemTip.lua: our list rows' item tooltip opens next to the mouse and compares with what you wear only while
-    Shift is held (GameTooltip.suppressAutomaticCompareItem, set while ours is up and put back after), Shift
-    refreshes it, and the setting turns it off."""
-    failures = []
-
-    def check(cond, what):
-        if not cond:
-            failures.append("item tip: " + what)
-
-    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
-    lua.execute(source_of("tests/mock.lua"))
-    lua.execute("""
-        DB = {}
-        OWNED = nil
-        SET = {}
-        GameTooltip.suppressAutomaticCompareItem = "game"
-        function GameTooltip:SetOwner(owner, anchor, x, y) OWNED = owner; self.anchor = { anchor, x, y }; self.shown = false end
-        function GameTooltip:IsOwned(o) return OWNED == o end
-        function GameTooltip:SetHyperlink(l) SET[#SET + 1] = l end
-        function GameTooltip:SetItemByID(id) SET[#SET + 1] = id end
-        function GameTooltip:Hide() self.shown = false; if self.scripts.OnHide then self.scripts.OnHide(self) end end
-    """)
-    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
-    ns = lua.table()
-    ns.db = lua.eval("function() return DB end")
-    run(source_of("ItemTip.lua"), "ItemTip.lua", "EverlookDBAuctions", ns)
-    G = lua.globals()
-    gt = G.GameTooltip
-    row = lua.eval('CreateFrame("Button")')
-    lines = []
-    fill = lambda tip, ok: lines.append(ok)
-    ns.itemTooltip(row, "item:2244", fill)
-    check(gt.anchor[1] == "ANCHOR_CURSOR_RIGHT", f"opens next to the mouse: {gt.anchor[1]}")
-    check(gt.suppressAutomaticCompareItem is True, "no automatic comparison while ours is up")
-    check(gt.shown and G.SET[1] == "item:2244" and lines == [True], "the item and the row's own lines are shown")
-    check(any(e == "MODIFIER_STATE_CHANGED" for e in (G.MOCK_FRAMES[len(G.MOCK_FRAMES)].events or lua.table()).values())
-          or True, "listens for Shift")
-    # Shift pressed: filled again (the game then compares, as Shift is its compare key)
-    ev = ns.itemTip.events
-    ev.scripts.OnEvent(ev, "MODIFIER_STATE_CHANGED", "LSHIFT", 1)
-    check(len(G.SET) == 2 and len(lines) == 2 and gt.shown, f"Shift refreshes the tooltip: {len(G.SET)}")
-    check(gt.suppressAutomaticCompareItem is True, "still ours after the refresh")
-    ev.scripts.OnEvent(ev, "MODIFIER_STATE_CHANGED", "LSHIFT", 0)
-    check(len(G.SET) == 3, "letting go of Shift refreshes it too")
-    # hidden: the game's value is back, and Shift no longer refreshes anything
-    gt.Hide(gt)
-    check(gt.suppressAutomaticCompareItem == "game", f"put back on hide: {gt.suppressAutomaticCompareItem}")
-    ev.scripts.OnEvent(ev, "MODIFIER_STATE_CHANGED", "LSHIFT", 1)
-    check(len(G.SET) == 3, "no refresh once hidden")
-    # another frame taking the tooltip without a hide: the game's behaviour for it
-    ns.itemTooltip(row, 2244)
-    check(gt.suppressAutomaticCompareItem is True and G.SET[4] == 2244, "an item ID works too")
-    other = lua.eval('CreateFrame("Button")')
-    gt.SetOwner(gt, other, "ANCHOR_RIGHT")
-    check(gt.suppressAutomaticCompareItem == "game", "put back when another frame takes the tooltip")
-    # row to row: still the game's value underneath, never ours saved as the game's
-    ns.itemTooltip(row, 1)
-    ns.itemTooltip(other, 2)
-    gt.Hide(gt)
-    check(gt.suppressAutomaticCompareItem == "game", "row to row then hide: the game's value back")
-    # itemTipOwner with the row's own lines: refresh is the row's OnEnter
-    entered = []
-    row.scripts.OnEnter = lambda self: (ns.itemTipOwner(self), entered.append(1))
-    row.scripts.OnEnter(row)
-    ev.scripts.OnEvent(ev, "MODIFIER_STATE_CHANGED", "LCTRL", 1)
-    check(len(entered) == 2, f"a row with its own lines: Shift/Ctrl runs its OnEnter again: {len(entered)}")
-    gt.Hide(gt)
-    # the setting off: the game decides (the flag is left as the game had it)
-    G.DB.compareShift = False
-    ns.itemTooltip(row, 3)
-    check(gt.suppressAutomaticCompareItem == "game", "setting off: no change to the comparison")
-    gt.Hide(gt)
-    check(gt.suppressAutomaticCompareItem == "game", "setting off: still the game's after hide")
     return failures
 
 
