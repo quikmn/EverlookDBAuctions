@@ -158,7 +158,8 @@ function O.stats(rest)
     local verdict = why == "class" and "your class can't use this" or why == "armor" and "not your armor type"
       or (r and r.note == "twohand") and "you wear a two-handed weapon"
       or (r and U.isUpgrade(r, 0)) and (U.pctText(r) .. (r.vs and r.note ~= "empty" and (" vs " .. r.vs.link) or "")
-        .. (U.worthText(r) and (", " .. U.worthText(r)) or ""))
+        .. (U.whyText(r) and (": " .. U.whyText(r)) or ""))
+      or (r and r.same) and ("about the same (within the weights' margin): " .. (U.whyText(r) or ""))
       or "not an upgrade"
     print(("  %s: score %s, %s"):format(spec.name, fmt(score), verdict))
   end

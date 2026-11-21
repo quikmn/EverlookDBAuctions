@@ -14,6 +14,21 @@ Each spec gets brackets { upTo = 9, 14, ..., 59, 60 }: 60 from wowsims where it 
 the model rescaled so that its level-60 values meet wowsims' (per stat; where the model's 60 value is tiny the
 model's own shape is used as it is). Brackets that aren't a wowsims number are marked src = "model" (estimates).
 
+The data file's contract (Upgrades.lua reads only this, so other weights can replace these later): per class and
+spec, brackets = { { upTo = <level>, src = "simulated" | "estimate", scenario = "raid" | "solo" | "dungeon" | nil,
+w = { stat = weight }, se = { stat = standard error }, est = { stat = true } } } (est: stats of a simulated bracket
+that are still estimates), weights in units of the spec's reference stat. A spec may
+have several brackets with the same upTo, one per scenario. "simulated" brackets come from a sim (se where the sim
+gave one); "estimate" brackets are the model's and say so in the game.
+
+Levelling builds (a BM hunter with a melee two-hander, spell-power Protection paladin, ...) are specs too, with
+build = true and a note: tools/upgrades/builds.json lists them with the weights they use until sims cover them.
+
+Our own sims (plans/stat-weight-sims-2026-11-21.md) drop in as tools/upgrades/sims/*.json, one per class, spec,
+bracket and scenario: { "class": "WARRIOR", "spec": "fury", "upTo": 60, "scenario": "raid", "reference":
+"AttackPower", "stats": { "Strength": { "weight": 2.4, "stderr": 0.03 }, ... } } (proto stat names, as wowsims').
+Each replaces the bracket of that spec, level and scenario (or adds it).
+
 Usage: python -P tools/gen_upgrades.py --wowsims <clone of wowsims/forever> --model <ForeverLevelingBiS zip>
        [--report <file>]   (where the two disagree a lot at level 60)
 """
@@ -202,9 +217,15 @@ def main():
     procs = json.loads((INPUTS / "procs.json").read_text(encoding="utf-8")) if (INPUTS / "procs.json").exists() else {}
 
     classes, report = {}, []
-    for cls, key, name, role, src, mkey in SPECS:
+    builds = json.loads((INPUTS / "builds.json").read_text(encoding="utf-8")).get("builds", []) if (INPUTS / "builds.json").exists() else []
+    rows = [(c, k, n, r, s_, m, None) for c, k, n, r, s_, m in SPECS]
+    for b in builds:
+        ws_src = b.get("wowsims") or {}
+        src_ = ("preset", ws_src["preset"][0], ws_src["preset"][1]) if "preset" in ws_src else (("sim", ws_src["sim"]) if "sim" in ws_src else None)
+        rows.append((b["class"], b["key"], b["name"], b["role"], src_, b["model"], b.get("note") or ""))
+    for cls, key, name, role, src, mkey, build_note in rows:
         ref = ref_of(role, cls)
-        ws_w, ws_from = None, None
+        ws_w, ws_from, ws_se = None, None, {}
         if src and src[0] == "preset":
             ws_w = read_frommap((specs_dir / src[1]).read_text(encoding="utf-8"), src[2])
             ws_from = f"wowsims {src[1]} {src[2]}"
@@ -216,6 +237,9 @@ def main():
                     # a negative weight (haste for Arcane and Fire in these sims: rotation quirks) counts as 0
                     if WS_SHORT.get(k) and v:
                         ws_w[WS_SHORT[k]] = max(0.0, float(v))
+            for k, v in (s.get("stderr") or {}).items():
+                if WS_SHORT.get(k) and v is not None:
+                    ws_se[WS_SHORT[k]] = float(v)
             ws_from = f"wowsims stat weight sim ({src[1]})"
         mb = model.get(cls, {}).get(mkey)
         if not mb:
@@ -228,7 +252,7 @@ def main():
         for up_to, mw in mb:
             mn = norm(mw, ref)
             if top is None:
-                brackets.append((up_to, mn, "model"))
+                brackets.append((up_to, mn, "estimate", {}, None))
                 continue
             # Stats wowsims weighed: its level-60 value, and below 60 the model's level shape met to it,
             #   x(level) = wowsims60 * model(level) / model60
@@ -249,17 +273,34 @@ def main():
                 else:
                     out[k] = lv
             if up_to >= 60:
-                brackets.append((up_to, out, "wowsims"))
+                se = {k: v / (ws_w.get(ref) or 1) for k, v in ws_se.items() if k in out}
+                # the model's stats in a simulated bracket (ones wowsims didn't weigh) keep an estimate's error
+                for k in out:
+                    if k not in top:
+                        se.setdefault("est_" + k, 1)
+                brackets.append((up_to, out, "simulated", se, "raid"))
                 continue
-            brackets.append((up_to, out, "model"))
+            brackets.append((up_to, out, "estimate", {}, None))
         if top:
             for k in sorted(set(top) | set(m60)):
                 t, m = top.get(k, 0), m60.get(k, 0)
                 big = max(abs(t), abs(m))
                 if big >= 0.1 and (min(abs(t), abs(m)) == 0 or big / max(min(abs(t), abs(m)), 1e-9) >= 2):
                     report.append(f"{cls} {name}: {k} wowsims {t:.2f} vs model {m:.2f} (per {ref})")
+        for f in sorted((INPUTS / "sims").glob("*.json")) if (INPUTS / "sims").exists() else []:
+            j = json.loads(f.read_text(encoding="utf-8"))
+            if str(j.get("class", "")).upper() != cls or j.get("spec") != key:
+                continue
+            refk = WS_SHORT.get(j.get("reference", "")) or ref
+            raw = {WS_SHORT[k]: v for k, v in (j.get("stats") or {}).items() if WS_SHORT.get(k)}
+            r0 = (raw.get(refk) or {}).get("weight") or 1
+            w = {k: max(0.0, float(v.get("weight") or 0)) / r0 for k, v in raw.items()}
+            se = {k: float(v.get("stderr") or 0) / r0 for k, v in raw.items() if v.get("stderr") is not None}
+            item = (int(j["upTo"]), w, "simulated", se, j.get("scenario"))
+            brackets = [b for b in brackets if not (b[0] == item[0] and b[4] in (None, item[4]))] + [item]
+            brackets.sort(key=lambda b: (b[0], b[4] or ""))
         spec = {"key": key, "name": name, "role": role, "src": ws_from or "Forever Leveling BiS model (MIT)",
-                "brackets": brackets}
+                "brackets": brackets, "build": build_note}
         alt = ALT.get((cls, key))
         if alt:
             aw = norm(read_frommap((specs_dir / alt[1]).read_text(encoding="utf-8"), alt[2]), ref)
@@ -298,7 +339,7 @@ def main():
     out = ["-- Generated by tools/gen_upgrades.py. Do not edit; run it again.",
            f"-- Stat weights: wowsims/forever {commit} (https://github.com/wowsims/forever, MIT) at level 60; the brackets",
            "-- below 60, and specs wowsims has no weights for, from Forever Leveling BiS v0.12.0-beta's Data/ModelWeights.lua",
-           "-- (MIT, Copyright (c) 2026 Thunder), met to wowsims at 60 (src = \"model\": an estimate). Talent effects, item",
+           "-- (MIT, Copyright (c) 2026 Thunder), met to wowsims at 60 (src = \"estimate\"). Talent effects, item",
            "-- procs and rating conversions: wowsims/forever.",
            "--",
            "-- Forever Leveling BiS license (for the model's numbers):",
@@ -310,9 +351,15 @@ def main():
     for cls, c in classes.items():
         out.append(f"    {cls} = {{ specs = {{")
         for s in c["specs"]:
-            out.append(f'      {{ key = "{s["key"]}", name = "{s["name"]}", role = "{s["role"]}", src = "{s["src"]}", brackets = {{')
-            for up_to, w, src in s["brackets"]:
-                out.append(f'        {{ upTo = {up_to}, src = "{src}", w = {lua_table(rounded(w))} }},')
+            bn = (', build = true, note = "' + s["build"].replace('"', "'") + '"') if s.get("build") is not None else ""
+            out.append(f'      {{ key = "{s["key"]}", name = "{s["name"]}", role = "{s["role"]}", src = "{s["src"]}"{bn}, brackets = {{')
+            for up_to, w, src, se, scen in s["brackets"]:
+                est = sorted(k[4:] for k in se if k.startswith("est_"))
+                se = {k: v for k, v in se.items() if not k.startswith("est_")}
+                extra = (f', scenario = "{scen}"' if scen else "") + (f", se = {lua_table(rounded(se))}" if se else "")
+                if est:
+                    extra += ", est = { " + ", ".join(f"{k} = true" for k in est) + " }"
+                out.append(f'        {{ upTo = {up_to}, src = "{src}"{extra}, w = {lua_table(rounded(w))} }},')
             out.append("      },")
             if "alt" in s:
                 al = s["alt"]

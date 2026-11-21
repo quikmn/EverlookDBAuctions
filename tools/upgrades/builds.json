@@ -1,0 +1,20 @@
+{
+  "notes": "Levelling builds beside the talent-tree specs: a build is picked like a spec (first-time question, settings, /eah up spec <key>, the Upgrades tab). Until our own sims cover a build (tools/upgrades/sims/<file>.json with \"spec\": <build key>), its weights come from the wowsims source and model spec named here. role: melee, ranged, caster, healer or tank.",
+  "builds": [
+    { "class": "HUNTER", "key": "hunter_bm_melee", "name": "Beast Mastery (melee two-hander)", "role": "melee",
+      "wowsims": { "preset": ["hunter/dps/presets.ts", "MeleeEpWeights"] }, "model": "survivalmelee",
+      "note": "Levelling in melee with a two-handed weapon while the pet tanks." },
+    { "class": "HUNTER", "key": "hunter_dw_melee", "name": "Dual-wield melee (Fiery Weapon)", "role": "melee",
+      "wowsims": { "preset": ["hunter/dps/presets.ts", "MeleeEpWeights"] }, "model": "survivalmelee",
+      "note": "Two one-handers (Fiery Weapon enchants), melee levelling." },
+    { "class": "WARRIOR", "key": "warrior_prot_leveling", "name": "Protection (levelling)", "role": "melee",
+      "wowsims": { "preset": ["warrior/protection/presets.ts", "PreBiSBalancedEpWeights"] }, "model": "protection",
+      "note": "Shield and one-hander, levelling solo: damage first, then staying alive." },
+    { "class": "PALADIN", "key": "paladin_prot_sp", "name": "Protection (spell power, 40+)", "role": "melee",
+      "wowsims": { "sim": "paladin_protection" }, "model": "protection",
+      "note": "Spell-power Protection from level 40: wowsims' damage and threat sim, where spell damage is worth about 3 attack power." },
+    { "class": "PRIEST", "key": "priest_disc_leveling", "name": "Discipline (levelling 1-40, then Shadow)", "role": "caster",
+      "wowsims": { "preset": ["priest/dps/presets.ts", "ShadowEpWeights"] }, "model": "shadow",
+      "note": "Wand and Smite levelling in Discipline, Shadow from 40: damage weights." }
+  ]
+}

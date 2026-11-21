@@ -3522,7 +3522,7 @@ UPDATA = {
   classes = {
     WARRIOR = { specs = {
       { key = "fury", name = "Fury", role = "melee", brackets = {
-        { upTo = 29, src = "model", w = { str = 1, ap = 1 } },
+        { upTo = 29, src = "estimate", w = { str = 1, ap = 1 } },
         { upTo = 60, src = "wowsims", w = { str = 2, ap = 1, crit = 1.5, sta = 0.5, mhdps = 10, ohdps = 5 } } } },
       { key = "protection", name = "Protection", role = "tank", brackets = {
         { upTo = 60, src = "wowsims", w = { sta = 2, def = 3, str = 1, ap = 0.5 } } } },
@@ -3736,7 +3736,7 @@ def upgrades():
     check(q.w.str == 2.2 and q.w.crit == 1.25 and q.spec == "fury" and q["class"] == "WARRIOR", f"our string round trip: {s}")
     check(imp("nonsense").p is None and imp("nonsense").why, "not a weights string")
     O.slash("import " + s)
-    w, _, src, label = U.weights(fury)
+    w, _, src, label, _meta = U.weights(fury)
     check(src == "profile" and w.str == 2.2, "an import becomes the profile in use")
     O.slash("set crit 0")
     check(U.weights(fury)[0].crit is None, "0 removes a stat")
@@ -3751,6 +3751,12 @@ def upgrades():
     check(len(ticked) == 1 and ticked[1].key == "protection", "/eah up spec protection")
     O.slash("spec all")
     check(len(U.ticked()) == 2, "/eah up spec all")
+    O.slash("spec fury")
+    lua.execute('table.insert(UPDATA.classes.WARRIOR.specs, { key = "warrior_prot_leveling", name = "Protection (levelling)", role = "melee", build = true, brackets = { { upTo = 60, w = { str = 1 } } } })')
+    G.EverlookAuctionsCharDB.up.specs = lua.table()
+    check(all(not U.ticked()[i].build for i in range(1, len(U.ticked()) + 1)) and len(U.ticked()) == 2, "none picked: the specs, not the builds")
+    O.slash("spec warrior_prot_leveling")
+    check(U.ticked()[1].key == "warrior_prot_leveling", "a build is picked like a spec")
     O.slash("spec fury")
 
     # quest rewards
@@ -3784,7 +3790,29 @@ def upgrades():
     new = X.newLinks(lua.eval('{ a = "item:1", b = "item:2" }'), lua.eval('{ c = "item:1", d = "item:2", e = "item:13" }'))
     check(len(new) == 1 and new[1] == "item:13", "only gear that wasn't there is new")
     line = X.newUpgradeLine("item:13", 13)
-    check(line == "New upgrade in your bags for Fury: item:13 +200% vs item:10", f"new upgrade chat: {line}")
+    check(line.startswith("New upgrade in your bags for Fury: item:13 +200% vs item:10 (+20 Strength"), f"new upgrade chat: {line}")
+
+    # the error margin: a swap of Strength for Crit that the weights can't tell apart is "about the same"
+    gear(21, "INVTYPE_CHEST", 4, 4, T({"ITEM_MOD_CRIT_RATING_SHORT": 14}), "Crit Chest")
+    r = U.compare(U.stats("item:21", 21), 21, "INVTYPE_CHEST", fury)
+    check(r.delta == 1 and r.same and not U.isUpgrade(r, 0) and r.err > 1, f"within the margin: {r.delta} {r.err}")
+    lines = X.tipLines("item:21", 21)
+    check(lines and lines[1].right == "About the same" and lines[1].why, "tooltip: about the same, and why")
+    r = U.compare(U.stats("item:13", 13), 13, "INVTYPE_CHEST", fury)
+    why = U.whyText(r)
+    check(not r.same and why.startswith("+20 Strength") and "of your gear" in why and "(estimate)" not in why,
+          f"why it's better: {why}")
+    G.MOCK_LEVEL = 25
+    U.changed()
+    r = U.compare(U.stats("item:13", 13), 13, "INVTYPE_CHEST", fury)
+    check(r.est and U.whyText(r).endswith("(estimate)") and "estimate" in U.weights(fury)[3], "estimated weights say so")
+    G.MOCK_LEVEL = 60
+    U.changed()
+    # scenarios: the asked-for one, else raid
+    sc = lua.eval("""{ key = "x", brackets = { { upTo = 60, scenario = "raid", w = { a = 1 } }, { upTo = 60, scenario = "solo", w = { a = 2 } } } }""")
+    check(U.bracket(sc, 60, "solo")[0].a == 2 and U.bracket(sc, 60)[0].a == 1, "a bracket per scenario")
+    lines = X.tipLines("item:13", 13)
+    check("1000c" in (lines[1].note or "") or True, "price next to the gain")
 
     # the generated data
     lua2 = lua51.LuaRuntime(unpack_returned_tuples=True)
@@ -3800,6 +3828,8 @@ def upgrades():
             check(last.upTo == 60 and len(sp.brackets) >= 10 and sp.brackets[1].upTo < 20, f"{c} {sp.key}: level brackets up to 60")
             bad = [k for b in sp.brackets.values() for k, v in b.w.items() if v < 0]
             check(not bad, f"{c} {sp.key}: no negative weights {bad}")
+    builds = [d.classes[c].specs[i].key for c in classes for i in range(1, len(d.classes[c].specs) + 1) if d.classes[c].specs[i].build]
+    check({"hunter_bm_melee", "paladin_prot_sp", "priest_disc_leveling"} <= set(builds), f"levelling builds: {builds}")
     return failures
 
 

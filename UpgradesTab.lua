@@ -189,25 +189,51 @@ local function fillOption(b, e, i)
   b:EdbStripe(i % 2 == 0)
 end
 
+-- The spec buttons: the specs and builds you gear for, the one shown, and "Other" to step through the rest of the
+-- class's specs and levelling builds.
+local function layoutSpecs(f)
+  local shown = V.spec()
+  local c = U.char()
+  local x = 0
+  for _, b in ipairs(f.specs) do
+    local on = c.specs[b.spec.key] or (shown and shown.key == b.spec.key) or (not next(c.specs) and not b.spec.build)
+    b:SetShown(on and true or false)
+    if on then
+      b:ClearAllPoints()
+      b:SetPoint("LEFT", x, 0)
+      x = x + b:GetWidth() + 4
+    end
+  end
+  f.other:ClearAllPoints()
+  f.other:SetPoint("LEFT", x, 0)
+  f.specBar:SetWidth(math.max(1, x + f.other:GetWidth()))
+end
+
 local function makeSpecButtons(f)
   f.specs = {}
-  local x = 0
   for _, s in ipairs(U.specs()) do
-    local w = math.max(56, math.min(110, #s.name * 7 + 18))
+    local w = math.max(56, math.min(220, #s.name * 7 + 18))
     local b = UI.button(f.specBar, s.name, w, 20, "small")
-    b:SetPoint("LEFT", x, 0)
-    x = x + w + 4
     b.spec = s
     b:SetScript("OnClick", function(self)
       U.char().shown = self.spec.key
       V.refresh()
     end)
     UI.tip(b, "Upgrades for " .. s.name, function()
-      return U.char().specs[s.key] and "You gear for this spec." or "Shop for this spec (you don't gear for it: tick it in /eah up spec or the settings)."
+      return (s.note and (s.note .. " ") or "") .. (U.char().specs[s.key] and "You gear for this." or "You don't gear for this (tick it in /eah up spec or the settings); shown to shop for it.")
     end)
     f.specs[#f.specs + 1] = b
   end
-  f.specBar:SetWidth(math.max(1, x))
+  f.other = UI.button(f.specBar, "Other...", 64, 20, "quiet")
+  f.other:SetScript("OnClick", function()
+    -- the next spec or build after the shown one
+    local list, cur = U.specs(), V.spec()
+    local i = 0
+    for k, s in ipairs(list) do if cur and s.key == cur.key then i = k end end
+    local nxt = list[i % #list + 1]
+    if nxt then U.char().shown = nxt.key; V.refresh() end
+  end)
+  UI.tip(f.other, "Other specs and levelling builds", "Shows the next spec or build of your class, to shop for it.")
 end
 
 local function make(parent)
@@ -328,6 +354,7 @@ function render()
   local f = F
   if not f or not f:IsShown() then return end
   local spec = V.spec()
+  layoutSpecs(f)
   for _, b in ipairs(f.specs) do b:EdbActive(spec and b.spec.key == spec.key) end
   if not f.max:HasFocus() then f.max:SetText(U.get("max") and U.moneyShort(U.get("max")) or "") end
   if not f.min:HasFocus() then f.min:SetText((tonumber(U.get("min")) or 0) > 0 and tostring(U.get("min")) or "") end
@@ -346,8 +373,10 @@ function render()
   else
     local who = r.source == "shared" and "other players (shared prices)" or "you"
     local busy = not r.done and (" · reading %d%%"):format((r.progress or 0) * 100) or ""
-    f.head:SetText(("Last scan %s by %s · %s gear items · %s upgrades%s"):format(ageText(r), who,
-      ns.num and ns.num(r.gear) or r.gear, ns.num and ns.num(r.upgrades) or r.upgrades, busy))
+    local _, _, from, _, meta = U.weights(spec)
+    local est = (from == "built-in" and meta and meta.src == "estimate") and " · weights: estimates at your level" or ""
+    f.head:SetText(("Last scan %s by %s · %s gear items · %s upgrades%s%s"):format(ageText(r), who,
+      ns.num and ns.num(r.gear) or r.gear, ns.num and ns.num(r.upgrades) or r.upgrades, est, busy))
   end
   for _, g in ipairs(U.ORDER) do fillCard(f.cards[g], r.slots[g]) end
   local sel = V.sel or "head"
@@ -365,7 +394,7 @@ function render()
     local best = slot.best
     local vs = best and best.cmp.vs and best.cmp.vs.link
     note = (U.get("rich") and "Biggest first" or "Most per gold first")
-      .. (best and U.worthText(best.cmp) and (", the best " .. U.worthText(best.cmp)) or "") .. "."
+      .. (best and U.whyText(best.cmp, 2) and (". Best: " .. U.whyText(best.cmp, 2)) or "") .. "."
       .. (vs and ("\nAgainst " .. vs) or (best and best.cmp.note == "empty" and "\nYou wear nothing there." or ""))
   end
   f.optNote:SetText(note or "")

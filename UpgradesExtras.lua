@@ -116,11 +116,16 @@ function X.tipLines(link, id)
       local notes = {}
       if r.vs and r.note ~= "empty" then notes[#notes + 1] = "vs " .. nameOf(r.vs.link) end
       if r.needs then notes[#notes + 1] = "needs level " .. r.needs end
+      local it = ns.itemFor and ns.itemFor(id)
+      if it and it[1] then notes[#notes + 1] = money(it[1]) end   -- the price next to the gain
       line.note = table.concat(notes, " \194\183 ")
+      line.why = U.whyText(r)                                      -- always: why it's better
       line.detail = U.worthText(r)
       local better = X.betterInBags(key, r.group, r.score, spec)
       if better then line.bags = "You have a better one in your bags: " .. nameOf(better.link) end
       out[#out + 1] = line
+    elseif r and r.same then
+      out[#out + 1] = { left = spec.name, right = "About the same", note = "within the weights' margin", why = U.whyText(r) }
     elseif r then
       out[#out + 1] = { left = spec.name, right = "Not an upgrade" }
     end
@@ -144,6 +149,7 @@ local function tooltipLines(t, ctx)
   if not okL or not lines then return end
   for _, l in ipairs(lines) do
     t:Line(l.left, l.good and (GOOD_HEX .. l.right .. "|r") or l.right, { note = l.note ~= "" and l.note or nil, stale = not l.good })
+    if l.why and l.why ~= "" then t:Line("  " .. l.why, "", { stale = true }) end
     if l.detail then t:Detail(l.detail, "") end
     if l.bags then t:Detail(l.bags, "") end
   end
@@ -160,7 +166,9 @@ function ns.upAsk()
   local f = UI.own(CreateFrame("Frame", "EverlookAuctionsUpgradesAsk", UIParent))
   ask = f
   local specs = U.specs()
-  f:SetSize(360, 128 + #specs * 24)
+  local nBuilds = 0
+  for _, s in ipairs(specs) do if s.build then nBuilds = 1 end end
+  f:SetSize(360, 128 + #specs * 24 + nBuilds * 22)
   f:SetPoint("CENTER", 0, 120)
   f:SetFrameStrata("DIALOG")
   f:SetToplevel(true)
@@ -176,7 +184,7 @@ function ns.upAsk()
   if UI.shadow then UI.shadow(f) end
   local head = UI.text(f, "title")
   head:SetPoint("TOPLEFT", 14, -14)
-  head:SetText("Which spec do you gear for?")
+  head:SetText("Which spec or build do you gear for?")
   head:SetTextColor(unpack(T.places.upgrades))
   local body = UI.text(f, "dim")
   body:SetPoint("TOPLEFT", 14, -34)
@@ -184,9 +192,18 @@ function ns.upAsk()
   body:SetWordWrap(true)
   body:SetText("Gear upgrades compare items with what you wear, for the specs you tick. Not sure yet? Tick more than one.")
   local checks = {}
-  for i, s in ipairs(specs) do
+  local y, labelled = -64, false
+  for _, s in ipairs(specs) do
+    if s.build and not labelled then
+      labelled = true
+      local l = UI.label(f, "LEVELLING BUILDS")
+      l:SetPoint("TOPLEFT", 16, y - 6)
+      y = y - 22
+    end
     local b = UI.check(f, s.name)
-    b:SetPoint("TOPLEFT", 16, -64 - (i - 1) * 24)
+    b:SetPoint("TOPLEFT", 16, y)
+    y = y - 24
+    if s.note then UI.tip(b, s.name, s.note) end
     b:EdbChecked(c.specs[s.key])
     b.spec = s
     checks[#checks + 1] = b
@@ -201,6 +218,8 @@ function ns.upAsk()
     local names = {}
     for _, s in ipairs(U.ticked()) do names[#names + 1] = s.name end
     say("gear upgrades for " .. table.concat(names, ", ") .. ". Change it on the Gear upgrades page of /eah, or /eah up spec <name>.")
+    -- at the auction house: straight to the Upgrades tab (shared prices work without a scan of your own)
+    if _G.AuctionHouseFrame and AuctionHouseFrame:IsShown() and ns.upgradesView then ns.upgradesView.open() end
   end)
   local later = UI.button(f, "Not now", 96, 24)
   later:SetPoint("RIGHT", save, "LEFT", -8, 0)
@@ -348,8 +367,9 @@ function X.newUpgradeLine(link, id)
   end
   if not best then return nil end
   local vs = best.note == "empty" and "an empty slot" or (best.vs and best.vs.link or "?")
-  return ("New upgrade in your bags for %s: %s %s vs %s"):format(bestSpec.name, link,
-    best.note == "empty" and "fills" or U.pctText(best), vs)
+  local why = U.whyText(best)
+  return ("New upgrade in your bags for %s: %s %s vs %s%s"):format(bestSpec.name, link,
+    best.note == "empty" and "fills" or U.pctText(best), vs, why and (" (" .. why .. ")") or "")
 end
 
 local function checkNew()

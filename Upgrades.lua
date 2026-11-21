@@ -267,14 +267,37 @@ end
 --                     { tab, tier, col, from, to, pct, name } (pct% of `from` counts as `to`, per rank) }
 -- The built-in weights of a spec at a level: its level bracket (spec.brackets = { { upTo, w, src } }, the first
 -- whose upTo is the level or more), else spec.w. Returns the weights and the bracket.
-function U.bracket(spec, level)
+-- A level can have one bracket per scenario ("raid", "solo", "dungeon"): the one asked for (or the setting), else
+-- "raid", else one without a scenario, else the first.
+function U.bracket(spec, level, scenario)
   level = level or U.level()
-  for _, b in ipairs(spec.brackets or {}) do
-    if level <= b.upTo then return b.w, b end
+  scenario = scenario or U.get("scenario")
+  local list = spec.brackets or {}
+  local upTo
+  for _, b in ipairs(list) do
+    if level <= b.upTo then upTo = b.upTo; break end
   end
-  local last = spec.brackets and spec.brackets[#spec.brackets]
-  if last then return last.w, last end
-  return spec.w or {}, nil
+  upTo = upTo or (list[#list] and list[#list].upTo)
+  if not upTo then return spec.w or {}, nil end
+  local pick
+  for _, want in ipairs({ scenario or false, "raid", false }) do
+    for _, b in ipairs(list) do
+      if b.upTo == upTo and (b.scenario or false) == want then pick = pick or b end
+    end
+  end
+  if not pick then for _, b in ipairs(list) do if b.upTo == upTo then pick = b; break end end end
+  return pick.w, pick
+end
+
+-- How far off one weight may be: its standard error from the sim, else a share of the weight (3% for a sim without
+-- errors, 15% for an estimate). Your own profiles and Pawn scales count as exact (your numbers).
+U.REL_ERR = { simulated = 0.03, estimate = 0.15 }
+function U.weightErr(meta, k, w)
+  if not meta or not meta.src then return 0 end
+  local se = meta.se and meta.se[k]
+  if se and not (meta.est and meta.est[k]) then return se end
+  local rel = (meta.src == "estimate" or (meta.est and meta.est[k])) and U.REL_ERR.estimate or U.REL_ERR.simulated
+  return math.abs(w or 0) * rel
 end
 
 function U.adjusted(spec, classData, rankOf, level)
@@ -314,7 +337,7 @@ end
 function U.bracketText(spec, br)
   local lo = 1
   for _, b in ipairs(spec.brackets or {}) do
-    if b == br then break end
+    if b.upTo >= br.upTo then break end
     lo = b.upTo + 1
   end
   return lo == br.upTo and tostring(lo) or (lo .. "-" .. br.upTo)
@@ -383,7 +406,10 @@ function U.ticked()
   local c = U.char()
   local out = {}
   for _, s in ipairs(U.specs()) do if c.specs[s.key] then out[#out + 1] = s end end
-  if #out == 0 then out = { unpack(U.specs()) } end
+  if #out == 0 then
+    -- none picked: the talent-tree specs (levelling builds only when picked)
+    for _, s in ipairs(U.specs()) do if not s.build then out[#out + 1] = s end end
+  end
   return out
 end
 
@@ -439,8 +465,9 @@ function U.weights(spec)
   if type(spec) == "string" then spec = U.spec(spec) end
   if not spec then return {}, {}, "none" end
   local hit = weightCache[spec.key]
-  if hit then return hit[1], hit[2], hit[3], hit[4] end
+  if hit then return hit[1], hit[2], hit[3], hit[4], hit[5] end
   local w, why, from, label
+  local meta = {}
   local p = U.activeProfile(spec.key)
   if p then
     w, why, from, label = p.w, {}, "profile", p.name
@@ -461,10 +488,14 @@ function U.weights(spec)
       w, why = U.adjusted(spec, U.classData(), ranks, U.level())
       local _, br = U.bracket(spec)
       from, label = "built-in", br and ("Built-in, level " .. U.bracketText(spec, br)) or "Built-in"
+      if br then
+        meta = { src = br.src == "estimate" and "estimate" or "simulated", se = br.se, est = br.est, scenario = br.scenario }
+        if meta.src == "estimate" then label = label .. " (estimate)" end
+      end
     end
   end
-  weightCache[spec.key] = { w, why, from, label }
-  return w, why, from, label
+  weightCache[spec.key] = { w, why, from, label, meta }
+  return w, why, from, label, meta
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -747,8 +778,19 @@ function U.worn()
 end
 function U.wornChanged() wornCache = nil; U.changed() end
 
--- What a candidate of `group` is measured against, for the spec's weights: the worn score, the worn item(s), and a
--- word for the special cases: "empty" (fills an empty slot), "twohand" (an off-hand while a two-hander is worn).
+-- An item's stats by weight key (its weapon DPS as the slot's kind), added into out times sign.
+local function addStats(out, st, group, sign)
+  for k, v in pairs(st or {}) do
+    if type(v) == "number" then
+      local key = k == "dps" and dpsKind(group) or k
+      out[key] = (out[key] or 0) + v * sign
+    end
+  end
+end
+
+-- What a candidate of `group` is measured against, for the spec's weights: the worn score, the worn item, a word
+-- for the special cases ("empty": fills an empty slot, "twohand": an off-hand while a two-hander is worn), and the
+-- worn items it replaces { { item, group } }.
 function U.against(group, equipLoc, w, role, worn)
   worn = worn or U.worn()
   local slots = U.SLOTS[group]
@@ -761,40 +803,58 @@ function U.against(group, equipLoc, w, role, worn)
   if group == "finger" or group == "trinket" then
     local a, ia = sc(slots[1])
     local b, ib = sc(slots[2])
-    if not ia or not ib then return 0, ia or ib, "empty" end
-    if a <= b then return a, ia else return b, ib end
+    if not ia or not ib then return 0, ia or ib, "empty", {} end
+    if a <= b then return a, ia, nil, { { ia, group } } else return b, ib, nil, { { ib, group } } end
   end
   if group == "offhand" then
     local mh = worn[16]
-    if mh and mh.equipLoc == "INVTYPE_2HWEAPON" then return nil, mh, "twohand" end
+    if mh and mh.equipLoc == "INVTYPE_2HWEAPON" then return nil, mh, "twohand", {} end
     local s, it = sc(17)
-    if not it then return 0, nil, "empty" end
-    return s, it
+    if not it then return 0, nil, "empty", {} end
+    return s, it, nil, { { it, group } }
   end
   if group == "mainhand" then
     local s, it = sc(16)
     if equipLoc == "INVTYPE_2HWEAPON" then
       -- a two-hander replaces both hands
       local o, oit = sc(17, "offhand")
-      if not it and not oit then return 0, nil, "empty" end
-      return (s or 0) + (o or 0), it or oit
+      if not it and not oit then return 0, nil, "empty", {} end
+      local parts = {}
+      if it then parts[#parts + 1] = { it, "mainhand" } end
+      if oit then parts[#parts + 1] = { oit, "offhand" } end
+      return (s or 0) + (o or 0), it or oit, nil, parts
     end
-    if not it then return 0, nil, "empty" end
-    return s, it
+    if not it then return 0, nil, "empty", {} end
+    return s, it, nil, { { it, group } }
   end
   local s, it = sc(slots[1])
-  if not it then return 0, nil, "empty" end
-  return s, it
+  if not it then return 0, nil, "empty", {} end
+  return s, it, nil, { { it, group } }
 end
 
--- How a candidate compares, for one spec: { pct (nil for an empty slot), delta (score points), score, vs (worn
--- item), note ("empty" / "twohand"), ref (stat key), worth (delta in that stat) }.
+-- The score of everything worn (the "% of your gear" an upgrade adds).
+function U.wornTotal(w, role, worn)
+  local total = 0
+  for slot, it in pairs(worn or U.worn()) do
+    if slot ~= 4 and slot ~= 19 then
+      local g = U.GROUP_OF[it.equipLoc or ""]
+      if g then total = total + U.score(it.stats, w, g == "mainhand" and slot == 17 and "offhand" or g, it.id, role) end
+    end
+  end
+  return total
+end
+
+-- How a candidate compares, for one spec: { pct (vs the worn item; nil for an empty slot), delta (score points),
+-- score, vs (worn item), note ("empty" / "twohand"), ref (stat key), worth (delta in that stat), gearPct (delta as %
+-- of everything worn), err (the error margin of delta: twice its standard error from the weights' errors), same
+-- (better, but within the margin: "about the same"), est (rests on estimated weights), why ({ {stat, amount} }: the
+-- stat changes that matter most) }.
 function U.compare(st, id, equipLoc, spec, worn)
   local group = U.GROUP_OF[equipLoc or ""]
   if not group then return nil end
-  local w = U.weights(spec)
+  local w, _, _, _, meta = U.weights(spec)
   local s = U.score(st, w, group, id, spec.role)
-  local ws, vs, note = U.against(group, equipLoc, w, spec.role, worn)
+  local ws, vs, note, parts = U.against(group, equipLoc, w, spec.role, worn)
   local ref = U.refStat(w, spec.role)
   local r = { score = s, vs = vs, note = note, ref = ref, group = group }
   if note == "twohand" then return r end
@@ -807,12 +867,35 @@ function U.compare(st, id, equipLoc, spec, worn)
     r.pct = s > 0 and 100 or 0
   end
   r.worth = (w[ref] or 0) > 0 and r.delta / w[ref] or nil
+  -- the stat differences, their error and the ones that matter
+  local d = {}
+  addStats(d, st, group, 1)
+  for _, p in ipairs(parts or {}) do addStats(d, p[1].stats, p[2], -1) end
+  local var, why, estPart, all = 0, {}, 0, 0
+  for k, v in pairs(d) do
+    local wk = w[k] or 0
+    if v ~= 0 and wk ~= 0 then
+      local e = U.weightErr(meta, k, wk) * v
+      var = var + e * e
+      all = all + math.abs(v * wk)
+      if meta and (meta.src == "estimate" or (meta.est and meta.est[k])) then estPart = estPart + math.abs(v * wk) end
+      why[#why + 1] = { k, v, v * wk }
+    end
+  end
+  -- "estimate" when estimated weights carry a good part of the difference (a quarter or more)
+  r.est = all > 0 and estPart >= 0.25 * all or nil
+  table.sort(why, function(a, b) return math.abs(a[3]) > math.abs(b[3]) end)
+  r.why = why
+  r.err = 2 * math.sqrt(var)
+  r.same = r.delta > 0 and r.delta <= r.err
+  local total = U.wornTotal(w, spec.role, worn)
+  r.gearPct = total > 0 and r.delta / total * 100 or nil
   return r
 end
 
 -- Whether a compare result counts as an upgrade with at least minPct.
 function U.isUpgrade(r, minPct)
-  if not r or r.note == "twohand" or not r.delta or r.delta <= 0 then return false end
+  if not r or r.note == "twohand" or not r.delta or r.delta <= 0 or r.same then return false end
   if r.note == "empty" then return r.score > 0 end
   return (r.pct or 0) >= (minPct or 0) and (r.pct or 0) > 0.05
 end
@@ -1034,6 +1117,22 @@ function U.worthText(r)
   local n = r.worth
   local fmt = math.abs(n) >= 10 and "%+.0f" or "%+.1f"
   return ("worth about %s %s"):format(fmt:format(n), U.NAME[r.ref] or r.ref)
+end
+
+-- Why: "+14 Strength, +10 Crit Rating, -5 Stamina ≈ +2.1% of your gear" (the biggest stat changes, by what they're
+-- worth), with "(estimate)" when estimated weights decide it.
+function U.whyText(r, max)
+  if not r or not r.why then return nil end
+  local parts = {}
+  for i = 1, math.min(max or 3, #r.why) do
+    local k, v = r.why[i][1], r.why[i][2]
+    local amount = (math.abs(v) >= 10 or v == math.floor(v)) and ("%+d"):format(math.floor(v + (v > 0 and 0.5 or -0.5))) or ("%+.1f"):format(v)
+    parts[#parts + 1] = amount .. " " .. (U.NAME[k] or k)
+  end
+  local text = table.concat(parts, ", ")
+  if r.gearPct then text = text .. (" \226\137\136 %+.1f%% of your gear"):format(r.gearPct) end
+  if r.est then text = text .. " (estimate)" end
+  return text
 end
 
 -- Money typed the player's way: "25g", "5s", "1g 50s", "2g50s", "7500" (copper). nil when it isn't money.
