@@ -68,7 +68,7 @@ local HELP = {
   { "export", "your weights as a string to share" },
   { "import <string>", "weights from a string, ours or Pawn's ( Pawn: v1: ... )" },
   { "max <price>", "the most an upgrade may cost: 25g, 5s, 1g 50s; /eah up max off" },
-  { "min <percent>", "the smallest upgrade shown: /eah up min 5" },
+  { "min <percent>", "the smallest upgrade shown, in % of your gear: /eah up min 1" },
   { "rich on|off", "on: the biggest upgrade within the max price; off: the most upgrade per gold" },
   { "check", "check every worn item's stats were read" },
   { "stats <item>", "an item's stats and score (a link, an item ID or a name)" },
@@ -157,7 +157,7 @@ function O.stats(rest)
     local score = g and U.score(st, w, g, id, spec.role) or 0
     local verdict = why == "class" and "your class can't use this" or why == "armor" and "not your armor type"
       or (r and r.note == "twohand") and "you wear a two-handed weapon"
-      or (r and U.isUpgrade(r, 0)) and (U.pctText(r) .. (r.vs and r.note ~= "empty" and (" vs " .. r.vs.link) or "")
+      or (r and U.isUpgrade(r, 0)) and (U.pctText(r) .. (r.pct and " of your gear" or "") .. (r.vs and r.note ~= "empty" and (" vs " .. r.vs.link) or "")
         .. (U.whyText(r) and (": " .. U.whyText(r)) or ""))
       or (r and r.same) and ("about the same (within the weights' margin): " .. (U.whyText(r) or ""))
       or "not an upgrade"
@@ -241,8 +241,8 @@ function O.slash(rest)
     end
   elseif word == "min" then
     local n = tonumber((arg:gsub("%%", "")))
-    if not n or n < 0 then say("/eah up min <percent>, like /eah up min 5."); return end
-    U.set("min", n); say(("upgrades of %s%% or more."):format(fmt(n)))
+    if not n or n < 0 then say("/eah up min <percent>, like /eah up min 1."); return end
+    U.set("min", n); say(("upgrades of %s%% of your gear or more."):format(fmt(n)))
   elseif word == "rich" then
     local on = arg:lower()
     if on == "" then on = U.get("rich") and "off" or "on" end
@@ -298,8 +298,8 @@ function ns.upgradesSettings(app, UI)
       local c = U.parseMoney(v)
       if c then U.set("max", c) else app:Print("max price: like 25g, 5s or 1g 50s.") end
     end })
-  app:Setting({ key = "upmin", type = "number", label = "Smallest upgrade (%)", min = 0, max = 50, step = 1,
-    desc = "Upgrades smaller than this aren't shown. /eah up min 5.", keywords = { "min", "percent", "smallest", "threshold" },
+  app:Setting({ key = "upmin", type = "number", label = "Smallest upgrade (% of your gear)", min = 0, max = 10, step = 0.5,
+    desc = "Upgrades smaller than this aren't shown. /eah up min 1.", keywords = { "min", "percent", "smallest", "threshold" },
     get = function() return tonumber(U.get("min")) or 0 end, set = function(v) U.set("min", tonumber(v) or 0) end })
   -- the specs of this class, one switch each
   local specs = U.specs()

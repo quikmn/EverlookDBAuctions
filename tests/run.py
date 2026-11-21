@@ -3694,9 +3694,12 @@ def upgrades():
 
     # rings and trinkets against the weaker one
     r = U.compare(st, 3, "INVTYPE_FINGER", fury)
-    check(r.vs.id == 1 and abs(r.pct - 50) < 0.01, f"a ring beats the weaker worn ring: {r.vs.id} {r.pct}")
+    check(r.vs.id == 1 and abs(r.slotPct - 50) < 0.01, f"a ring beats the weaker worn ring: {r.vs.id} {r.slotPct}")
+    check(abs(r.pct - 5 / 530 * 100) < 0.01 and U.pctText(r) == "+0.9%", f"the gain is a share of the whole gear: {r.pct}")
+    check(U.slotText(r) == "+50% over your worn weaker ring", f"ring in words: {U.slotText(r)}")
     r = U.compare(U.stats("item:6", 6), 6, "INVTYPE_TRINKET", fury)
-    check(r.vs.id == 4 and abs(r.pct - 50) < 0.01, "a trinket against the weaker trinket")
+    check(r.vs.id == 4 and abs(r.slotPct - 50) < 0.01 and U.slotText(r) == "+50% over your worn weaker trinket",
+          "a trinket against the weaker trinket")
     check(U.worthText(r) == "worth about +5.0 Strength", f"worth text: {U.worthText(r)}")
     # an off-hand while a two-hander is worn
     r = U.compare(U.stats("item:16", 16), 16, "INVTYPE_SHIELD", fury)
@@ -3706,7 +3709,13 @@ def upgrades():
     check(r.vs.id == 7 and r.delta < 0, "a one-hander against a two-hander (main hand)")
     # an empty slot
     r = U.compare(U.stats("item:9", 9), 9, "INVTYPE_HEAD", fury)
-    check(r.note == "empty" and U.isUpgrade(r, 0) and U.pctText(r) == "fills an empty slot", "an empty slot is filled")
+    check(r.note == "empty" and U.isUpgrade(r, 0) and U.pctText(r) == "+3.8%" and r.slotPct is None and U.slotText(r) is None,
+          f"an empty slot is filled, measured against the whole gear: {U.pctText(r)}")
+    tl = X.tipLines("item:9", 9)
+    check(tl[1].right == "+3.8% of your gear" and "fills an empty slot" in tl[1].note, f"tooltip: an empty slot: {tl[1].right} / {tl[1].note}")
+    nothing = lua.eval("{}")
+    r = U.compare(U.stats("item:9", 9), 9, "INVTYPE_HEAD", fury, nothing)
+    check(r.pct is None and U.isUpgrade(r, 0) and U.pctText(r) == "fills an empty slot", "nothing worn at all: fills an empty slot")
 
     # the armor-type rule and class rules
     ok_, why = U.usable(11, fury, ns.itemInfo(11))[:2]
@@ -3768,7 +3777,7 @@ def upgrades():
     check(res.slots.chest.best.id == 12 and res.slots.chest.overMax == 1, "the max price is a ceiling in rich mode too")
     U.set("max", None)
     U.set("rich", False)
-    U.set("min", 10)
+    U.set("min", 0.5)
     res = U.collect(fury, None, True)
     ids = [res.slots.chest.list[i].id for i in range(1, len(res.slots.chest.list) + 1)]
     check(14 not in ids and 12 in ids, f"the smallest upgrade filter: {ids}")
@@ -3808,23 +3817,24 @@ def upgrades():
 
     # specs
     O.slash("spec protection")
-    ticked = U.ticked()
+    ticked = U.ticked()[0]
     check(len(ticked) == 1 and ticked[1].key == "protection", "/eah up spec protection")
     O.slash("spec all")
-    check(len(U.ticked()) == 2, "/eah up spec all")
+    check(len(U.ticked()[0]) == 2, "/eah up spec all")
     O.slash("spec fury")
     lua.execute('table.insert(UPDATA.classes.WARRIOR.specs, { key = "warrior_prot_leveling", name = "Protection (levelling)", role = "melee", build = true, brackets = { { upTo = 60, w = { str = 1 } } } })')
     G.EverlookAuctionsCharDB.up.specs = lua.table()
-    check(all(not U.ticked()[i].build for i in range(1, len(U.ticked()) + 1)) and len(U.ticked()) == 2, "none picked: the specs, not the builds")
+    none, all_ = U.ticked()
+    check(all(not none[i].build for i in range(1, len(none) + 1)) and len(none) == 2 and all_ is True, "none picked: the specs, not the builds")
     O.slash("spec warrior_prot_leveling")
-    check(U.ticked()[1].key == "warrior_prot_leveling", "a build is picked like a spec")
+    check(U.ticked()[0][1].key == "warrior_prot_leveling" and U.ticked()[1] is False, "a build is picked like a spec")
     O.slash("spec fury")
 
     # quest rewards
     choices = lua.eval("""{ { link = "item:12", id = 12 }, { link = "item:13", id = 13 }, { link = "item:11", id = 11 } }""")
     marks, best, lines = X.questPick(choices)
-    check(best == 2 and marks[2].text == "+200%" and marks[1].text == "+20%", f"the best quest reward gets the star: {best}")
-    check(lines[1].startswith("Best quest reward for Fury: item:13 +200% vs item:10"), f"chat line: {lines[1]}")
+    check(best == 2 and marks[2].text == "+7.5%" and marks[1].text == "+0.8%", f"the best quest reward gets the star: {best} {marks[2].text}")
+    check(lines[1].startswith("Best quest reward for Fury: item:13 +7.5% of your gear vs item:10"), f"chat line: {lines[1]}")
     G.MOCK_PRICES = T({14: 5000})
     gear(14, "INVTYPE_CHEST", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 1}), "Tiny Chest", 2, 1, 300)
     U.forgetStats()
@@ -3840,7 +3850,9 @@ def upgrades():
 
     # tooltip lines
     lines = X.tipLines("item:13", 13)
-    check(lines and lines[1].right == "+200%" and lines[1].left == "Upgrade for Fury", "tooltip: the upgrade for the spec")
+    check(lines and lines[1].right == "+7.5% of your gear" and lines[1].left == "Upgrade for Fury", f"tooltip: the upgrade for the spec: {lines[1].right}")
+    check("(+200% over your worn chest)" in lines[1].why and "of your gear" not in lines[1].why, f"tooltip: the slot change only in words: {lines[1].why}")
+    check(X.badgeText("item:13", 13) == "+7.5%", f"bag badge: the same measure as the tooltip: {X.badgeText('item:13', 13)}")
     lines = X.tipLines("item:11", 11)
     check(lines and lines[1].right == "Not your armor type", "tooltip: not your armor type")
     lines = X.tipLines("item:18", 18)
@@ -3851,7 +3863,7 @@ def upgrades():
     new = X.newLinks(lua.eval('{ a = "item:1", b = "item:2" }'), lua.eval('{ c = "item:1", d = "item:2", e = "item:13" }'))
     check(len(new) == 1 and new[1] == "item:13", "only gear that wasn't there is new")
     line = X.newUpgradeLine("item:13", 13)
-    check(line.startswith("New upgrade in your bags for Fury: item:13 +200% vs item:10 (+20 Strength"), f"new upgrade chat: {line}")
+    check(line.startswith("New upgrade in your bags for Fury: item:13 +7.5% of your gear vs item:10 (+20 Strength"), f"new upgrade chat: {line}")
 
     # the error margin: a swap of Strength for Crit that the weights can't tell apart is "about the same"
     gear(21, "INVTYPE_CHEST", 4, 4, T({"ITEM_MOD_CRIT_RATING_SHORT": 14}), "Crit Chest")
@@ -3861,7 +3873,7 @@ def upgrades():
     check(lines and lines[1].right == "About the same" and lines[1].why, "tooltip: about the same, and why")
     r = U.compare(U.stats("item:13", 13), 13, "INVTYPE_CHEST", fury)
     why = U.whyText(r)
-    check(not r.same and why.startswith("+20 Strength") and "of your gear" in why and "(estimate)" not in why,
+    check(not r.same and why.startswith("+20 Strength") and "(+200% over your worn chest)" in why and "(estimate)" not in why,
           f"why it's better: {why}")
     G.MOCK_LEVEL = 25
     U.changed()
@@ -3874,6 +3886,42 @@ def upgrades():
     check(U.bracket(sc, 60, "solo")[0].a == 2 and U.bracket(sc, 60)[0].a == 1, "a bracket per scenario")
     lines = X.tipLines("item:13", 13)
     check("1000c" in (lines[1].note or "") or True, "price next to the gain")
+
+    # an item the game hasn't loaded: one line, whatever the number of specs, and read again when it arrives
+    O.slash("spec all")
+    G.EverlookAuctionsCharDB.up.specs = lua.table()
+    lua.execute("UNCACHED = { [13] = true }; C_Item.IsItemDataCachedByID = function(id) return not UNCACHED[id] end")
+    U.forgetStats()
+    lines = X.tipLines("item:13", 13)
+    check(len(lines) == 1 and lines[1].right == "reading the item\u2026" and X.waiting == 13,
+          f"loading: one line for the item, not one per spec: {[lines[i].right for i in range(1, len(lines) + 1)]}")
+    lua.execute("UNCACHED = {}")
+    lines = X.tipLines("item:13", 13)
+    check(X.waiting is None and all("reading" not in (lines[i].right or "") for i in range(1, len(lines) + 1)), "loaded: read again")
+    # every spec counted: the best two and "+N more"
+    lua.execute('''for _, k in ipairs({ "arms", "berserker" }) do
+      table.insert(UPDATA.classes.WARRIOR.specs, { key = k, name = k, role = "melee", brackets = { { upTo = 60, w = { str = 1 } } } })
+    end''')
+    U.changed()
+    check(len(U.ticked()[0]) == 4 and U.ticked()[1] is True, "four specs counted")
+    lines = X.tipLines("item:13", 13)
+    check(len(lines) == 3 and lines[1].good and lines[2].good and lines[1].rank >= lines[2].rank and lines[3].left == "+2 more specs",
+          f"all specs: the best two and +N more: {[lines[i].left for i in range(1, len(lines) + 1)]}")
+    # the same verdict for every spec is one line
+    gear(22, "INVTYPE_CHEST", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 1}), "Rag Chest")
+    lines = X.tipLines("item:22", 22)
+    check(len(lines) == 1 and lines[1].left == "All specs" and lines[1].right == "Not an upgrade", f"one line when all agree: {len(lines)}")
+    # one ticked spec: no trimming
+    O.slash("spec fury")
+    lines = X.tipLines("item:13", 13)
+    check(len(lines) == 1 and lines[1].left == "Upgrade for Fury", "a ticked spec: its own line")
+    # a sandbox or client without GetItemStats still reads the item (no endless "reading the item")
+    lua.execute("SAVED_GIS = C_Item.GetItemStats; C_Item.GetItemStats = nil")
+    U.forgetStats()
+    lines = X.tipLines("item:22", 22)
+    check(lines and all("reading" not in (lines[i].right or "") for i in range(1, len(lines) + 1)), "no GetItemStats: still a verdict")
+    lua.execute("C_Item.GetItemStats = SAVED_GIS")
+    U.forgetStats()
 
     # the generated data
     lua2 = lua51.LuaRuntime(unpack_returned_tuples=True)

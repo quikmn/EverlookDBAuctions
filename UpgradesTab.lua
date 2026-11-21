@@ -75,8 +75,8 @@ end
 
 local function upText(e)
   if not e then return "" end
-  if e.cmp.note == "empty" then return "new slot" end
-  return ("%+.0f%%"):format(e.cmp.pct or 0)
+  if not e.cmp.pct then return e.cmp.note == "empty" and "new slot" or "" end
+  return U.pctText(e.cmp)
 end
 
 -- What a slot without a pick says.
@@ -284,7 +284,7 @@ local function make(parent)
     box:HookScript("OnEditFocusLost", saveFilters)
   end
   UI.tip(f.max, "Max price per item", "Upgrades that cost more aren't suggested. 25g, 5s or 1g 50s; empty for any price.")
-  UI.tip(f.min, "Smallest upgrade", "Upgrades smaller than this many percent aren't shown.")
+  UI.tip(f.min, "Smallest upgrade", "Upgrades smaller than this many percent of your gear aren't shown.")
 
   -- slots, two columns like the character window
   f.cards = {}
@@ -390,7 +390,7 @@ function render()
   elseif slot then
     local best = slot.best
     local vs = best and best.cmp.vs and best.cmp.vs.link
-    note = (U.get("rich") and "Biggest first" or "Most per gold first")
+    note = (U.get("rich") and "Biggest first" or "Most per gold first") .. ", gains in % of your gear"
       .. (best and U.whyText(best.cmp, 2) and (". Best: " .. U.whyText(best.cmp, 2)) or "") .. "."
       .. (vs and ("\nAgainst " .. vs) or (best and best.cmp.note == "empty" and "\nYou wear nothing there." or ""))
   end

@@ -3,7 +3,7 @@
 --                   gears for (Save, or Not now; later on the settings page or /eah up spec)
 --   Tooltips        on gear: how big an upgrade it is for each ticked spec, or why it isn't one (the auction price
 --                   lines stay EverlookDBAuctions.lua's; nothing is shown twice)
---   Bags            a small "+23%" on bag slots holding an upgrade (Blizzard's bags, Bagnon), and one chat line when
+--   Bags            a small "+6.5%" (of your gear) on bag slots holding an upgrade (Blizzard's bags, Bagnon), and one chat line when
 --                   new gear in the bags is an upgrade
 --   Quest rewards   the upgrade on each choice, a star on the best, and a chat line
 --   Vendors         sell grey (poor quality) items when a vendor opens (off by default), or /eah up junk
@@ -91,6 +91,9 @@ function X.betterInBags(key, group, score, spec)
 end
 
 -- The tooltip's lines: { { left, right, note, detail, good } }. Pure apart from reading the game's item data.
+-- While the game hasn't loaded the item: one "reading the item..." line, and X.waiting = its ID (the tooltip is read
+-- again when GET_ITEM_INFO_RECEIVED brings it). With every spec counted (none picked): the best two and "+N more".
+X.waiting = nil
 function X.tipLines(link, id)
   local okI, _, _, _, equipLoc, _, classID, subID = pcall(C_Item.GetItemInfoInstant, id)
   if not okI or not U.GROUP_OF[equipLoc or ""] then return nil end
@@ -100,20 +103,26 @@ function X.tipLines(link, id)
   if not U.canUse(U.class(), classID, subID, equipLoc, 60) or (equipLoc == "INVTYPE_WEAPONOFFHAND" and not U.canDualWield(U.class())) then
     return { { left = "Gear upgrades", right = "Your class can't use this" } }
   end
+  if not U.stats(link, id) then
+    X.waiting = id
+    return { { left = "Gear upgrades", right = "reading the item…" } }
+  end
+  if X.waiting == id then X.waiting = nil end
+  local specs, all = U.ticked()
   local out = {}
-  for _, spec in ipairs(U.ticked()) do
+  for _, spec in ipairs(specs) do
     local r, why = X.forSpec(link, id, spec, worn)
     if why == "armor" then
       out[#out + 1] = { left = spec.name, right = "Not your armor type" }
     elseif why == "class" then
       out[#out + 1] = { left = spec.name, right = "Your class can't use this" }
-    elseif why == "stats" then
-      out[#out + 1] = { left = spec.name, right = "reading the item…" }
     elseif r and r.note == "twohand" then
-      out[#out + 1] = { left = spec.name, right = "Not an upgrade", note = "you wear a two-handed weapon" }
+      out[#out + 1] = { left = spec.name, right = "Not an upgrade", note = "you wear a two-handed weapon", rank = 1 }
     elseif r and U.isUpgrade(r, 0) then
-      local line = { left = "Upgrade for " .. spec.name, right = U.pctText(r), good = true }
+      local line = { left = "Upgrade for " .. spec.name, right = r.pct and (U.pctText(r) .. " of your gear") or U.pctText(r),
+        good = true, rank = 3 + (r.pct or 1000) }
       local notes = {}
+      if r.note == "empty" and r.pct then notes[#notes + 1] = "fills an empty slot" end
       if r.vs and r.note ~= "empty" then notes[#notes + 1] = "vs " .. nameOf(r.vs.link) end
       if r.needs then notes[#notes + 1] = "needs level " .. r.needs end
       local it = ns.itemFor and ns.itemFor(id)
@@ -125,12 +134,31 @@ function X.tipLines(link, id)
       if better then line.bags = "You have a better one in your bags: " .. nameOf(better.link) end
       out[#out + 1] = line
     elseif r and r.same then
-      out[#out + 1] = { left = spec.name, right = "About the same", note = "within the weights' margin", why = U.whyText(r) }
+      out[#out + 1] = { left = spec.name, right = "About the same", note = "within the weights' margin", why = U.whyText(r), rank = 2 }
     elseif r then
-      out[#out + 1] = { left = spec.name, right = "Not an upgrade" }
+      out[#out + 1] = { left = spec.name, right = "Not an upgrade", rank = 1 }
     end
   end
+  if all and #out > 1 then out = X.trimAll(out) end
   return out
+end
+
+-- Every spec counted: the same verdict for all of them is one line; else the best two and "+N more specs".
+function X.trimAll(out)
+  local same = true
+  for _, l in ipairs(out) do
+    if l.good or l.why or l.right ~= out[1].right or (l.note or "") ~= (out[1].note or "") then same = false; break end
+  end
+  if same then return { { left = "All specs", right = out[1].right, note = out[1].note } } end
+  if #out <= 2 then return out end
+  for i, l in ipairs(out) do l.i = i end
+  table.sort(out, function(a, b)
+    if (a.rank or 0) ~= (b.rank or 0) then return (a.rank or 0) > (b.rank or 0) end
+    return a.i < b.i
+  end)
+  local n = #out - 2
+  return { out[1], out[2],
+    { left = ("+%d more %s"):format(n, n == 1 and "spec" or "specs"), right = "", note = "pick yours: /eah up spec" } }
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -236,7 +264,8 @@ end
 
 local badgeCache = {}   -- link -> text ("" when not an upgrade)
 
--- The badge of a bag item: "+23%" (its biggest upgrade over the ticked specs), "new" for an empty slot, or "".
+-- The badge of a bag item: "+6.5%" (its biggest gain over the ticked specs, as % of your gear), "new" for an empty
+-- slot when nothing worn scores, or "".
 function X.badgeText(link, id)
   local hit = badgeCache[link]
   if hit then return hit end
@@ -244,12 +273,12 @@ function X.badgeText(link, id)
   for _, spec in ipairs(U.ticked()) do
     local r = X.forSpec(link, id, spec)
     if r and not r.needs and U.isUpgrade(r, 0) then
-      if r.note == "empty" then empty = true
+      if not r.pct then empty = true
       elseif not best or r.pct > best then best = r.pct end
     end
   end
-  local text = best and ("+%d%%"):format(math.floor(best + 0.5)) or (empty and "new" or "")
-  if text ~= "" or U.stats(link, id) then badgeCache[link] = text end
+  local text = best and U.shortPct(best) or (empty and "new" or "")
+  if text ~= "" or U.stats(link, id) then badgeCache[link] = text else X.badgePending = true end
   return text
 end
 
@@ -369,7 +398,7 @@ function X.newUpgradeLine(link, id)
   local vs = best.note == "empty" and "an empty slot" or (best.vs and best.vs.link or "?")
   local why = U.whyText(best)
   return ("New upgrade in your bags for %s: %s %s vs %s%s"):format(bestSpec.name, link,
-    best.note == "empty" and "fills" or U.pctText(best), vs, why and (" (" .. why .. ")") or "")
+    best.pct and (U.pctText(best) .. " of your gear") or "fills", vs, why and (" (" .. why .. ")") or "")
 end
 
 local function checkNew()
@@ -428,16 +457,17 @@ function X.questPick(choices)
     for i, ch in ipairs(choices) do
       local r = ch.link and X.forSpec(ch.link, ch.id, spec)
       if r and U.isUpgrade(r, 0) then
-        local v = r.note == "empty" and 1000 or r.pct
+        local v = r.pct or 1000
         local m = marks[i]
-        if not m or v > m.v then marks[i] = { text = r.note == "empty" and "new" or ("+%d%%"):format(math.floor(r.pct + 0.5)), v = v } end
+        if not m or v > m.v then marks[i] = { text = r.pct and U.shortPct(r.pct) or "new", v = v } end
         if not sb or v > sb.v then sb, si = { v = v, r = r }, i end
       end
     end
     if sb then
       local ch = choices[si]
-      lines[#lines + 1] = sb.r.note == "empty" and ("Best quest reward for %s: %s fills an empty slot"):format(spec.name, ch.link)
-        or ("Best quest reward for %s: %s %s vs %s"):format(spec.name, ch.link, U.pctText(sb.r), sb.r.vs and sb.r.vs.link or "?")
+      lines[#lines + 1] = sb.r.note == "empty" and ("Best quest reward for %s: %s fills an empty slot%s"):format(spec.name, ch.link,
+          sb.r.pct and (" (" .. U.pctText(sb.r) .. " of your gear)") or "")
+        or ("Best quest reward for %s: %s %s of your gear vs %s"):format(spec.name, ch.link, U.pctText(sb.r), sb.r.vs and sb.r.vs.link or "?")
       if not bestV or sb.v > bestV then bestI, bestV = si, sb.v end
     else
       -- none is an upgrade: the one that sells for the most (vendor or auction house)
@@ -574,7 +604,7 @@ end
 if CreateFrame then
   local ev = CreateFrame("Frame")
   for _, e in ipairs({ "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "BAG_UPDATE_DELAYED", "PLAYER_EQUIPMENT_CHANGED",
-      "QUEST_COMPLETE", "MERCHANT_SHOW", "MERCHANT_CLOSED", "AUCTION_HOUSE_SHOW" }) do
+      "QUEST_COMPLETE", "MERCHANT_SHOW", "MERCHANT_CLOSED", "AUCTION_HOUSE_SHOW", "GET_ITEM_INFO_RECEIVED" }) do
     pcall(ev.RegisterEvent, ev, e)
   end
   local pending = false
@@ -606,6 +636,19 @@ if CreateFrame then
       if U.get("junk") then C_Timer.After(0.3, function() X.sellJunk(false) end) end
     elseif e == "MERCHANT_CLOSED" then
       merchantOpen, selling = false, nil
+    elseif e == "GET_ITEM_INFO_RECEIVED" then
+      -- the one item a tooltip waits for: read that tooltip again
+      if arg and arg == X.waiting then
+        X.waiting = nil
+        local tip = _G.GameTooltip
+        if tip and tip:IsShown() and tip.RefreshData then pcall(tip.RefreshData, tip) end
+      end
+      -- bag badges that waited for their item: one update for a burst of them
+      if X.badgePending and not pending then
+        X.badgePending = nil
+        pending = true
+        C_Timer.After(0.5, function() pending = false; X.updateBags() end)
+      end
     end
   end)
   if QuestInfo_Display then hooksecurefunc("QuestInfo_Display", function() pcall(X.markQuest, false) end) end

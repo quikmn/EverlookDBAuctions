@@ -401,7 +401,8 @@ function U.level()
   return okL and tonumber(l) or 60
 end
 
--- The specs this character gears for: the ones ticked, or every spec of the class until one is picked.
+-- The specs this character gears for: the ones ticked, or every spec of the class until one is picked (then the
+-- second return is true: all of them are counted).
 function U.ticked()
   local c = U.char()
   local out = {}
@@ -409,8 +410,9 @@ function U.ticked()
   if #out == 0 then
     -- none picked: the talent-tree specs (levelling builds only when picked)
     for _, s in ipairs(U.specs()) do if not s.build then out[#out + 1] = s end end
+    return out, true
   end
-  return out
+  return out, false
 end
 
 function U.setSpecs(keys)
@@ -635,13 +637,13 @@ function U.stats(link, id, opts)
   id = id or tonumber(tostring(link):match("item:(%d+)"))
   if not id then return nil end
   local getStats = (C_Item and C_Item.GetItemStats) or GetItemStats
-  if not getStats then return nil end
   if C_Item and C_Item.IsItemDataCachedByID and not C_Item.IsItemDataCachedByID(id) then
     if C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, id) end
     return nil
   end
   local full = tostring(link):find("|H", 1, true) and link or link
-  local okS, t = pcall(getStats, full)
+  local okS, t = false, nil
+  if getStats then okS, t = pcall(getStats, full) end
   local st = {}
   if okS and type(t) == "table" then
     for mod, v in pairs(t) do
@@ -844,9 +846,10 @@ function U.wornTotal(w, role, worn)
   return total
 end
 
--- How a candidate compares, for one spec: { pct (vs the worn item; nil for an empty slot), delta (score points),
--- score, vs (worn item), note ("empty" / "twohand"), ref (stat key), worth (delta in that stat), gearPct (delta as %
--- of everything worn), err (the error margin of delta: twice its standard error from the weights' errors), same
+-- How a candidate compares, for one spec: { pct (the gain as a % of everything worn: "% of your gear", the one
+-- measure every view shows; nil when nothing worn scores), slotPct (the gain over the worn item of that slot; nil for
+-- an empty slot), delta (score points), score, vs (worn item), note ("empty" / "twohand"), ref (stat key), worth
+-- (delta in that stat), err (the error margin of delta: twice its standard error from the weights' errors), same
 -- (better, but within the margin: "about the same"), est (rests on estimated weights), why ({ {stat, amount} }: the
 -- stat changes that matter most) }.
 function U.compare(st, id, equipLoc, spec, worn)
@@ -859,13 +862,8 @@ function U.compare(st, id, equipLoc, spec, worn)
   local r = { score = s, vs = vs, note = note, ref = ref, group = group }
   if note == "twohand" then return r end
   r.delta = s - (ws or 0)
-  if note == "empty" then
-    r.pct = nil
-  elseif (ws or 0) > 0 then
-    r.pct = r.delta / ws * 100
-  else
-    r.pct = s > 0 and 100 or 0
-  end
+  if note ~= "empty" and (ws or 0) > 0 then r.slotPct = r.delta / ws * 100 end
+  r.parts = parts and #parts or 0
   r.worth = (w[ref] or 0) > 0 and r.delta / w[ref] or nil
   -- the stat differences, their error and the ones that matter
   local d = {}
@@ -889,15 +887,16 @@ function U.compare(st, id, equipLoc, spec, worn)
   r.err = 2 * math.sqrt(var)
   r.same = r.delta > 0 and r.delta <= r.err
   local total = U.wornTotal(w, spec.role, worn)
-  r.gearPct = total > 0 and r.delta / total * 100 or nil
+  r.pct = total > 0 and r.delta / total * 100 or nil
   return r
 end
 
--- Whether a compare result counts as an upgrade with at least minPct.
+-- Whether a compare result counts as an upgrade with at least minPct (% of your gear).
 function U.isUpgrade(r, minPct)
   if not r or r.note == "twohand" or not r.delta or r.delta <= 0 or r.same then return false end
-  if r.note == "empty" then return r.score > 0 end
-  return (r.pct or 0) >= (minPct or 0) and (r.pct or 0) > 0.05
+  if not r.pct then return true end   -- nothing worn scores yet: any gain is one
+  if r.note == "empty" then return r.pct >= (minPct or 0) end
+  return r.pct >= (minPct or 0) and r.pct > 0.01
 end
 
 -- The checks before scoring: can the class use it, is it the armor type, is the level there. Returns ok, why
@@ -1103,12 +1102,30 @@ function U.changed()
 end
 function U.onChange(fn) U.listeners[#U.listeners + 1] = fn end
 
--- "+23%", or "new slot" for an empty one.
+-- A gain in % of your gear, short: "+6.5%", "+12%".
+function U.shortPct(p)
+  if not p then return "" end
+  if math.abs(p) >= 9.95 then return ("%+.0f%%"):format(p) end
+  return ("%+.1f%%"):format(p)
+end
+
+-- The gain as "% of your gear" ("+6.5%"); "fills an empty slot" when nothing worn scores to measure it against.
 function U.pctText(r)
   if not r then return "" end
-  if r.note == "empty" then return "fills an empty slot" end
-  if not r.pct then return "" end
-  return ("%+.0f%%"):format(r.pct)
+  if not r.pct then return r.note == "empty" and "fills an empty slot" or "" end
+  return U.shortPct(r.pct)
+end
+
+-- What the worn item of a group is called in "(+136% over your worn helm)".
+U.WORN_WORD = { head = "helm", neck = "necklace", shoulder = "shoulders", back = "cloak", chest = "chest",
+  wrist = "bracers", hands = "gloves", waist = "belt", legs = "legs", feet = "boots", finger = "weaker ring",
+  trinket = "weaker trinket", mainhand = "weapon", offhand = "off-hand", ranged = "ranged weapon" }
+
+-- The slot-relative change in words: "+136% over your worn helm" (nil for an empty slot).
+function U.slotText(r)
+  if not r or not r.slotPct or not r.delta or r.delta <= 0 then return nil end
+  local word = (r.group == "mainhand" and (r.parts or 0) > 1) and "weapons" or U.WORN_WORD[r.group] or "item"
+  return ("%+.0f%% over your worn %s"):format(r.slotPct, word)
 end
 
 -- "worth about +12 Strength"
@@ -1119,8 +1136,8 @@ function U.worthText(r)
   return ("worth about %s %s"):format(fmt:format(n), U.NAME[r.ref] or r.ref)
 end
 
--- Why: "+14 Strength, +10 Crit Rating, -5 Stamina ≈ +2.1% of your gear" (the biggest stat changes, by what they're
--- worth), with "(estimate)" when estimated weights decide it.
+-- Why: "+14 Strength, +10 Crit Rating, -5 Stamina (+136% over your worn helm)" (the biggest stat changes, by what
+-- they're worth, and the slot-relative change in words), with "(estimate)" when estimated weights decide it.
 function U.whyText(r, max)
   if not r or not r.why then return nil end
   local parts = {}
@@ -1130,7 +1147,8 @@ function U.whyText(r, max)
     parts[#parts + 1] = amount .. " " .. (U.NAME[k] or k)
   end
   local text = table.concat(parts, ", ")
-  if r.gearPct then text = text .. (" \226\137\136 %+.1f%% of your gear"):format(r.gearPct) end
+  local slot = U.slotText(r)
+  if slot then text = text .. " (" .. slot .. ")" end
   if r.est then text = text .. " (estimate)" end
   return text
 end
