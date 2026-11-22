@@ -3,7 +3,7 @@
 -- comparison shows only while the game's compare key (Shift) is held: GameTooltip.suppressAutomaticCompareItem
 -- (honoured by Blizzard's TooltipUtil.ShouldDoItemComparison) is set while our tooltip is up and put back the moment
 -- it hides or someone else takes the tooltip. The game's alwaysCompareItems setting is never changed, and tooltips
--- outside our windows (Blizzard's own auction list too) keep the game's behaviour.
+-- outside the auction house window keep the game's behaviour (Blizzard's own auction list gets the same: see the end).
 -- Pressing or letting go of Shift (or Ctrl) while hovering fills the tooltip again, so the comparison comes and goes
 -- at once. Setting db.compareShift (General: "Compare with what I wear: only while holding Shift", default on): off
 -- leaves the comparison to the game.
@@ -52,7 +52,9 @@ function ns.itemTipOwner(owner, refresh)
   hook(gt)
   local prev = tip.active and tip.prev or gt.suppressAutomaticCompareItem
   restore()
+  tip.ours = true
   gt:SetOwner(owner, "ANCHOR_CURSOR_RIGHT", 16, 0)
+  tip.ours = false
   tip.prev = prev
   tip.owner = owner
   tip.refresh = refresh or (owner.GetScript and owner:GetScript("OnEnter")) or nil
@@ -76,3 +78,42 @@ function ns.itemTooltip(owner, item, fill)
   gt:Show()
   return ok
 end
+
+-- Blizzard's own auction list too (user 2026-11-23: "I see my equipped item first, then off to the side the thing I'm
+-- hovering"): its rows put the tooltip at the far end of the row, so the "Equipped" comparison lands nearer the mouse
+-- and is read first. A tooltip owned by anything inside the auction house window opens next to the mouse like ours,
+-- and (with the setting) compares only while Shift is held.
+local function inAH(owner)
+  local ah = _G.AuctionHouseFrame
+  local f, n = owner, 0
+  while ah and type(f) == "table" and n < 15 do
+    if f == ah then return true end
+    local ok, parent = pcall(function() return f:GetParent() end)
+    f = ok and type(parent) == "table" and parent or nil
+    n = n + 1
+  end
+  return false
+end
+tip.inAH = inAH
+
+local function blizzardRow(gt, owner)
+  if tip.ours or not owner or tip.active or not inAH(owner) then return end
+  if gt.SetAnchorType then gt:SetAnchorType("ANCHOR_CURSOR_RIGHT", 16, 0) end
+  if not onlyWithShift() then return end
+  tip.prev = gt.suppressAutomaticCompareItem
+  tip.owner = owner
+  tip.refresh = owner.GetScript and owner:GetScript("OnEnter") or nil
+  tip.active = true
+  gt.suppressAutomaticCompareItem = true
+  tip.events:RegisterEvent("MODIFIER_STATE_CHANGED")
+end
+
+local function hookBlizzard()
+  local gt = _G.GameTooltip
+  if not gt or tip.blizzardHooked or not hooksecurefunc then return end
+  tip.blizzardHooked = true
+  hook(gt)
+  hooksecurefunc(gt, "SetOwner", blizzardRow)
+end
+tip.hookBlizzard = hookBlizzard
+hookBlizzard()

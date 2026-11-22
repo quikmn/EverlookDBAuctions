@@ -5474,6 +5474,25 @@ def item_tip():
     check(gt.suppressAutomaticCompareItem == "game", "setting off: no change to the comparison")
     gt.Hide(gt)
     check(gt.suppressAutomaticCompareItem == "game", "setting off: still the game's after hide")
+    # Blizzard's own auction list: a row inside the auction house window gets the tooltip next to the mouse and the
+    # comparison only with Shift; a tooltip elsewhere keeps the game's anchor and comparison
+    G.DB.compareShift = None
+    lua.execute("""
+        function GameTooltip:SetAnchorType(a, x, y) self.anchor = { a, x, y } end
+        AuctionHouseFrame = CreateFrame("Frame")
+        AH_LIST = CreateFrame("Frame", nil, AuctionHouseFrame)
+        AH_ROW = CreateFrame("Button", nil, AH_LIST)
+    """)
+    ns.itemTip.hookBlizzard()
+    gt.SetOwner(gt, G.AH_ROW, "ANCHOR_RIGHT")
+    check(gt.anchor[1] == "ANCHOR_CURSOR_RIGHT", f"Blizzard's auction row: next to the mouse: {gt.anchor[1]}")
+    check(gt.suppressAutomaticCompareItem is True, "Blizzard's auction row: comparison only with Shift")
+    gt.Hide(gt)
+    check(gt.suppressAutomaticCompareItem == "game", "Blizzard's auction row: put back on hide")
+    elsewhere = lua.eval('CreateFrame("Button")')
+    gt.SetOwner(gt, elsewhere, "ANCHOR_RIGHT")
+    check(gt.anchor[1] == "ANCHOR_RIGHT" and gt.suppressAutomaticCompareItem == "game", "outside the auction house: the game's way")
+    gt.Hide(gt)
     return failures
 
 
