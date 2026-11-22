@@ -7,6 +7,8 @@
 --   fallback prices.
 --   Shopping: the picked recipes and how many crafts of each become what to buy, with the materials cheaper to craft
 --   broken down into their own materials, minus what is in your bags and bank.
+--   Also the list's sorting and filters, money split into gold/silver/copper cells for its columns, the money boxes'
+--   parsing, and the saved settings' migration (all without frames, for the tests).
 local _, ns = ...
 local Pr = {}
 ns.profit = Pr
@@ -116,14 +118,46 @@ function Pr.row(ctx, out, r)
   return row
 end
 
--- Every recipe that passes the filter, best profit first. filter = { from, to (skill), min (copper) }. A recipe whose
--- skill isn't known passes only while the skill range is the whole 1-300. Returns the rows and the counts:
+-- Can a crafter make one craft of r now? count(id) -> how many of the material they have.
+function Pr.canMake(r, count)
+  if not r or count == nil then return false end
+  for _, m in ipairs(r.mats or {}) do
+    if (tonumber(count(m[1])) or 0) < (m[2] or 1) then return false end
+  end
+  return true
+end
+
+-- The recipes of several crafters as one: sources = { { key, name, class, me, recipes = { [item made] = recipe } } },
+-- you first. The first source with a recipe for an item gives its materials. Returns the recipes and who knows each:
+-- { [item made] = { source, ... } } in the sources' order.
+function Pr.merge(sources)
+  local recipes, who = {}, {}
+  for _, src in ipairs(sources or {}) do
+    for id, r in pairs(src.recipes or {}) do
+      if not recipes[id] then recipes[id] = r end
+      who[id] = who[id] or {}
+      who[id][#who[id] + 1] = src
+    end
+  end
+  return recipes, who
+end
+
+local function lower(s) return tostring(s or ""):lower() end
+
+-- Every recipe that passes the filter, best profit first. filter = { from, to (skill), min (copper), q (words in the
+-- name, any case; nameOf(row) gives it when row.name is nil), minMargin (whole percent), maxCost (copper), who
+-- ({ [item] = { crafter } } from Pr.merge), canMake (fn(crafter, recipe) -> true when that crafter has the materials
+-- now: only those crafters are kept, and a row nobody can make now is left out) }. A recipe whose skill isn't known
+-- passes only while the skill range is the whole 1-300. A row with an unpriced material has no real margin, so a
+-- margin filter leaves it out. Rows get who = the crafters that pass. Returns the rows and the counts:
 -- { known = recipes known, noSale = recipes whose result has no AH price, approx = rows with an unpriced material }.
 function Pr.list(ctx, filter)
   filter = filter or {}
   local from, to = tonumber(filter.from) or 1, tonumber(filter.to) or 300
   local whole = from <= 1 and to >= 300
   local min = tonumber(filter.min)
+  local minMargin, maxCost = tonumber(filter.minMargin), tonumber(filter.maxCost)
+  local q = filter.q and lower(filter.q):gsub("^%s+", ""):gsub("%s+$", "") or ""
   local out, counts = {}, { known = 0, noSale = 0, approx = 0 }
   for id, r in pairs(ctx.recipes) do
     counts.known = counts.known + 1
@@ -132,9 +166,24 @@ function Pr.list(ctx, filter)
     local inRange = s and s >= from and s <= to or (not s and whole)
     if not row.sale then
       if inRange then counts.noSale = counts.noSale + 1 end
-    elseif inRange and (not min or row.profit >= min) then
-      out[#out + 1] = row
-      if row.approx then counts.approx = counts.approx + 1 end
+    elseif inRange and (not min or row.profit >= min)
+      and (not maxCost or row.cost <= maxCost)
+      and (not minMargin or (row.margin and not row.approx and row.margin * 100 >= minMargin - 1e-9))
+      and (q == "" or lower(row.name or (filter.nameOf and filter.nameOf(row))):find(q, 1, true)) then
+      local who = filter.who and filter.who[id]
+      local keep = true
+      if filter.canMake then
+        -- without a who list the crafter is you ({})
+        local can = {}
+        for _, c in ipairs(who or { {} }) do if filter.canMake(c, r) then can[#can + 1] = c end end
+        keep = #can > 0
+        if who then who = can end
+      end
+      row.who = who
+      if keep then
+        out[#out + 1] = row
+        if row.approx then counts.approx = counts.approx + 1 end
+      end
     end
   end
   table.sort(out, function(a, b)
@@ -213,6 +262,158 @@ function Pr.info(id)
   local crafted = math.floor(d[1] / 2) % 2 == 1   -- source bit 2: crafted
   if not crafted or not d[3] or d[3] <= 0 then return nil end
   return d[3], ns.PROFESSIONS and ns.PROFESSIONS[d[2] or 0]
+end
+
+---------------------------------------------------------------------------------------------------------------------
+-- Sorting the list by a column
+
+-- The columns the list sorts by, and which way a first click sorts (true: high to low).
+Pr.SORTS = { name = false, skill = false, cost = false, sale = true, profit = true, margin = true, crafts = true }
+
+-- Sorts rows in place by a column (Pr.SORTS; anything else is profit), desc = high to low. A row without a value
+-- (unknown skill, no real margin) goes last either way; ties go by profit, high first, then name. opt = { nameOf(row),
+-- crafts = { [item] = planned crafts } }.
+function Pr.sort(rows, key, desc, opt)
+  opt = opt or {}
+  if Pr.SORTS[key] == nil then key = "profit" end
+  local names = {}
+  local function name(r)
+    local n = names[r]
+    if not n then
+      n = lower(r.name or (opt.nameOf and opt.nameOf(r)) or r.id)
+      names[r] = n
+    end
+    return n
+  end
+  local function value(r)
+    if key == "name" then return name(r) end
+    if key == "margin" then return (not r.approx) and r.margin or nil end
+    if key == "crafts" then return (opt.crafts and opt.crafts[r.id]) or 0 end
+    return r[key]
+  end
+  table.sort(rows, function(a, b)
+    local va, vb = value(a), value(b)
+    if va ~= vb then
+      if va == nil then return false end
+      if vb == nil then return true end
+      if desc then return va > vb end
+      return va < vb
+    end
+    if a.profit ~= b.profit then return (a.profit or 0) > (b.profit or 0) end
+    return name(a) < name(b)
+  end)
+  return rows
+end
+
+---------------------------------------------------------------------------------------------------------------------
+-- Money in columns: gold, silver and copper each in a cell of its own, so the coins line up down the list
+
+Pr.COIN = {
+  "|TInterface\\MoneyFrame\\UI-GoldIcon:0:0:2:0|t",
+  "|TInterface\\MoneyFrame\\UI-SilverIcon:0:0:2:0|t",
+  "|TInterface\\MoneyFrame\\UI-CopperIcon:0:0:2:0|t",
+}
+
+local function group(n)
+  local s = tostring(n):reverse():gsub("(%d%d%d)", "%1,"):reverse()
+  return (s:gsub("^,", ""))
+end
+
+-- Copper as its parts: gold, silver, copper (whole, of the amount without its sign) and whether it is below 0.
+function Pr.coinParts(c)
+  c = tonumber(c) or 0
+  local neg = c < 0
+  c = math.floor(math.abs(c) + 0.5)
+  return math.floor(c / 10000), math.floor(c / 100) % 100, c % 100, neg and c > 0
+end
+
+-- The three cells of an amount: { gold, silver, copper } texts with their coin icons, "" for a part that is 0 (0 itself
+-- is "0" copper). The text in front (opt.prefix, "≈ "; then "-" below 0, or "+" above 0 with opt.sign) goes on the
+-- biggest part shown, so every part stays in its column. nil copper is "?" in the copper cell.
+function Pr.coinCells(c, opt)
+  opt = opt or {}
+  if c == nil then return { "", "", "?" } end
+  local g, s, cc, neg = Pr.coinParts(c)
+  local cells = { g > 0 and (group(g) .. Pr.COIN[1]) or "", s > 0 and (s .. Pr.COIN[2]) or "", cc > 0 and (cc .. Pr.COIN[3]) or "" }
+  if g == 0 and s == 0 and cc == 0 then cells[3] = "0" .. Pr.COIN[3] end
+  local lead = (opt.prefix or "") .. (neg and "-" or ((opt.sign and tonumber(c) > 0) and "+" or ""))
+  if lead ~= "" then
+    for i = 1, 3 do
+      if cells[i] ~= "" then cells[i] = lead .. cells[i]; break end
+    end
+  end
+  return cells
+end
+
+-- Copper as text for a box: "1g 20s 5c", "15s", "0c" (no icons, parts that are 0 left out).
+function Pr.moneyText(c)
+  if not tonumber(c) then return "" end
+  local g, s, cc, neg = Pr.coinParts(c)
+  local out = {}
+  if g > 0 then out[#out + 1] = g .. "g" end
+  if s > 0 then out[#out + 1] = s .. "s" end
+  if cc > 0 or #out == 0 then out[#out + 1] = cc .. "c" end
+  return (neg and "-" or "") .. table.concat(out, " ")
+end
+
+-- What a money box says, as copper: "1g 20s", "1g20s5c", "120s", "1.2g", "1,000g", or a plain number, which is silver
+-- (the box was silver before). Returns copper, true; nil, true for an empty box; nil, false when it isn't money.
+function Pr.parseMoney(text)
+  local t = lower(text):gsub(",", ""):gsub("^%s+", ""):gsub("%s+$", "")
+  if t == "" then return nil, true end
+  local plain = tonumber(t:match("^(%d*%.?%d+)$") or "")
+  if plain then return math.floor(plain * 100 + 0.5), true end
+  local total, seen = 0, {}
+  local rest = t:gsub("(%d*%.?%d+)%s*([gsc])", function(n, unit)
+    if seen[unit] then seen.twice = true end
+    seen[unit] = true
+    total = total + tonumber(n) * (unit == "g" and 10000 or unit == "s" and 100 or 1)
+    return ""
+  end)
+  if seen.twice or not rest:match("^%s*$") or not next(seen) then return nil, false end
+  return math.floor(total + 0.5), true
+end
+
+---------------------------------------------------------------------------------------------------------------------
+-- The window's saved settings (db.profit)
+
+Pr.SETTINGS_VERSION = 2
+
+-- Puts saved settings right, once: v1 (before the column filters) had from, to and min (copper, from the silver box
+-- and the "profitmin" setting, which stays silver); anything that isn't a number in range is dropped. Sort and the
+-- new filters start empty (profit, high to low). Returns s.
+function Pr.migrate(s)
+  if type(s) ~= "table" then return s end
+  if (tonumber(s.v) or 1) >= Pr.SETTINGS_VERSION then return s end
+  local function whole(v, lo, hi)
+    v = tonumber(v)
+    if not v then return nil end
+    v = math.floor(v + 0.5)
+    if v < lo or v > hi then return nil end
+    return v
+  end
+  s.from, s.to = whole(s.from, 1, 300), whole(s.to, 1, 300)
+  s.min = whole(s.min, 1, 1e9)
+  s.maxCost = whole(s.maxCost, 1, 1e9)
+  s.minMargin = whole(s.minMargin, 0, 100000)
+  if type(s.q) ~= "string" or s.q == "" then s.q = nil end
+  s.canMake = s.canMake == true or nil
+  if Pr.SORTS[s.sort] == nil then s.sort, s.desc = nil, nil end
+  s.v = Pr.SETTINGS_VERSION
+  return s
+end
+
+-- Clear filters: every filter and the sort back to the start (alts and the window's place stay).
+function Pr.clearFilters(s)
+  for _, k in ipairs({ "from", "to", "min", "maxCost", "minMargin", "q", "canMake", "sort", "desc" }) do s[k] = nil end
+  return s
+end
+
+-- Whether any filter is set (for the "Clear filters" link and the empty list's words).
+function Pr.filtered(s)
+  s = s or {}
+  return ((s.from and s.from > 1) or (s.to and s.to < 300) or s.min or s.maxCost or s.minMargin or (s.q and s.q ~= "")
+    or s.canMake) and true or false
 end
 
 -- Copper as short text for tight columns: 12g 34s, 5s 20c, 80c (no coin icons).

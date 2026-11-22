@@ -14,7 +14,7 @@ Auction house prices, selling and shopping lists for WoW Forever, from the maker
 - **Below vendor price:** lists auctions that cost less than a vendor pays, with the profit each, biggest first. Such auctions also get a green mark in the auction house lists.
 - **Shopping tab:** named lists of searches. Run a whole list in one click. Lists import and export as plain text.
 - **Crafting cost:** beside the profession window, for the recipe you pick: each material's price, the total, what the result sells for, and the profit after the cut. The Shopping list button turns a recipe's materials into a shopping list.
-- **Crafting profit:** `/eah profit` lists every recipe you know that sells for more than its materials cost, best first.
+- **Crafting profit:** `/eah profit` lists every recipe you know that sells for more than its materials cost, best first, with gold, silver and copper in lined-up columns. Click a heading to sort; filter by name, skill, profit, margin, cost and what you can make right now. With EverlookDB Crafting, tick your alts to add the recipes they know.
 - **Prices anywhere:** `/eah prices` (or Home's search box) searches your last full scan away from the auction house.
 - **AH log:** Bought (`/eah bought`), For sale (`/eah forsale`), Income (`/eah income`) and Looted (`/eah loot`). Income is a ledger of real gains: auction sales after the cut, vendor sales, looted money and quest rewards, with gold from players and your alts kept apart, and every auction you posted followed to sold, expired or cancelled.
 - **Loot cards and Hurray!:** a short card at the top of the screen for each loot, with roughly what it's worth, and a card with fireworks when one of your auctions sells. Both can be turned off.

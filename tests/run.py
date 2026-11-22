@@ -4066,8 +4066,172 @@ def profit():
     check(R.saveCounts(lists, "Y", lua.eval("{}"), lambda i: "x")[1] == "no items", "no items refused")
     check(len(lists) == 1, "refused calls save nothing")
 
+    failures += profit_columns(lua, Pr, ctxOf, seq)
     failures += profit_api()
     failures += profit_window()
+    return failures
+
+
+def profit_columns(lua, Pr, ctxOf, seq):
+    """Crafting profit's columns (Profit.lua, no frames): money as gold/silver/copper cells that line up, the money
+    boxes' parsing, sorting by each column, the filters (name, margin, cost, can make now, crafters) and the saved
+    settings' migration."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("profit columns: " + what)
+
+    G_, S_, C_ = Pr.COIN[1], Pr.COIN[2], Pr.COIN[3]
+
+    def cells(c, opt=None):
+        t = Pr.coinCells(c, lua.table_from(opt or {}))
+        return [t[1], t[2], t[3]]
+
+    # the parts
+    g, s, c, neg = Pr.coinParts(123456)
+    check((g, s, c, neg) == (12, 34, 56, False), f"coin parts: {(g, s, c, neg)}")
+    g, s, c, neg = Pr.coinParts(-350)
+    check((g, s, c, neg) == (0, 3, 50, True), f"negative parts: {(g, s, c, neg)}")
+    check(Pr.coinParts(0)[3] is False, "0 isn't negative")
+    # cells: every part in its own column (gold, silver, copper), parts that are 0 left empty
+    check(cells(123456) == ["12" + G_, "34" + S_, "56" + C_], f"gold, silver, copper: {cells(123456)}")
+    check(cells(350, {"sign": True}) == ["", "+3" + S_, "50" + C_], f"+ on the biggest part: {cells(350, {'sign': True})}")
+    check(cells(-350, {"sign": True}) == ["", "-3" + S_, "50" + C_], f"negative: {cells(-350, {'sign': True})}")
+    check(cells(-350) == ["", "-3" + S_, "50" + C_], "a minus even without sign")
+    check(cells(0, {"sign": True}) == ["", "", "0" + C_], f"zero: one copper cell, no sign: {cells(0, {'sign': True})}")
+    check(cells(10000, {"sign": True}) == ["+1" + G_, "", ""], f"1g: silver and copper dropped: {cells(10000, {'sign': True})}")
+    check(cells(10005) == ["1" + G_, "", "5" + C_], f"1g 5c: the silver cell stays empty, copper stays in its column: {cells(10005)}")
+    check(cells(12345678901) == ["1,234,567" + G_, "89" + S_, "1" + C_], f"large: grouped gold: {cells(12345678901)}")
+    check(cells(520, {"prefix": "≈ "}) == ["", "≈ 5" + S_, "20" + C_], f"approx: ≈ in front: {cells(520, {'prefix': '≈ '})}")
+    check(cells(None) == ["", "", "?"], "no amount: ?")
+    check(cells(99.6) == ["", "1" + S_, ""], "rounded to whole copper")
+    # alignment: cell i only ever holds coin i, for any amount
+    icons = [G_, S_, C_]
+    for amount in [1, 99, 100, 101, 9999, 10000, 10099, 999999, -1, -10101, 123456789]:
+        cs = cells(amount, {"sign": True})
+        for i in range(3):
+            check(cs[i] == "" or cs[i].endswith(icons[i]) and sum(cs[i].count(x) for x in icons) == 1,
+                  f"{amount}: cell {i + 1} holds only its own coin: {cs}")
+
+    # box text and parsing
+    check(Pr.moneyText(12050) == "1g 20s 50c" and Pr.moneyText(300) == "3s" and Pr.moneyText(0) == "0c"
+          and Pr.moneyText(-5) == "-5c" and Pr.moneyText(None) == "", "money text for the boxes")
+    for text, want in [("1g 20s", 12000), ("120s", 12000), ("1.2g", 12000), ("3", 300), ("1g20s5c", 12005), ("50c", 50),
+                       ("1,000g", 10000000), (" 2.5 ", 250), ("1G 5S", 10500), ("0.5s", 50)]:
+        got = Pr.parseMoney(text)
+        check(got == (want, True), f"parse {text!r}: {got}")
+    for text in ["abc", "1g 2", "1g 1g", "g", "-5s"]:
+        check(Pr.parseMoney(text) == (None, False), f"not money: {text!r}: {Pr.parseMoney(text)}")
+    check(Pr.parseMoney("") == (None, True) and Pr.parseMoney("  ") == (None, True), "empty: cleared")
+    for amount in [1, 300, 12050, 10000000, 105]:
+        check(Pr.parseMoney(Pr.moneyText(amount))[0] == amount, f"round trip {amount}")
+
+    # sorting by each column
+    lua.execute("""
+      SROWS = function() return {
+        { id = 1, name = "Bravo", skill = 50, cost = 300, sale = 900, profit = 600, margin = 2 },
+        { id = 2, name = "alpha", skill = 10, cost = 100, sale = 200, profit = 100, margin = 1 },
+        { id = 3, name = "Charlie", skill = nil, cost = 50, sale = 1000, profit = 950, margin = 19, approx = true },
+        { id = 4, name = "Delta", skill = 30, cost = 200, sale = 150, profit = -50, margin = -0.25 },
+      } end
+    """)
+    G = lua.globals()
+
+    def order(key, desc, crafts=None):
+        rows = G.SROWS()
+        opt = lua.table_from({"crafts": lua.table_from(crafts or {})})
+        Pr.sort(rows, key, desc, opt)
+        return [r.id for r in seq(rows)]
+
+    check(order("profit", True) == [3, 1, 2, 4], f"profit high first: {order('profit', True)}")
+    check(order("profit", False) == [4, 2, 1, 3], f"profit low first: {order('profit', False)}")
+    check(order("name", False) == [2, 1, 3, 4], f"name A-Z, any case: {order('name', False)}")
+    check(order("name", True) == [4, 3, 1, 2], f"name Z-A: {order('name', True)}")
+    check(order("skill", False) == [2, 4, 1, 3], f"skill low first, unknown last: {order('skill', False)}")
+    check(order("skill", True) == [1, 4, 2, 3], f"skill high first, unknown still last: {order('skill', True)}")
+    check(order("cost", False) == [3, 2, 4, 1], f"cost cheapest first: {order('cost', False)}")
+    check(order("cost", True) == [1, 4, 2, 3], f"cost dearest first: {order('cost', True)}")
+    check(order("sale", True) == [3, 1, 2, 4], f"sells for, high first: {order('sale', True)}")
+    check(order("sale", False) == [4, 2, 1, 3], f"sells for, low first: {order('sale', False)}")
+    check(order("margin", True) == [1, 2, 4, 3], f"margin high first; ≈ has none, so last: {order('margin', True)}")
+    check(order("margin", False) == [4, 2, 1, 3], f"margin low first, ≈ last: {order('margin', False)}")
+    check(order("crafts", True, {4: 5, 2: 1}) == [4, 2, 3, 1], f"planned crafts first, then by profit: {order('crafts', True, {4: 5, 2: 1})}")
+    check(order("bogus", False) == [4, 2, 1, 3] and order("bogus", True) == [3, 1, 2, 4], "an unknown column sorts by profit")
+    check(Pr.SORTS.name is False and Pr.SORTS.cost is False and Pr.SORTS.profit is True and Pr.SORTS.margin is True,
+          "first click: names A-Z, cost cheapest first, profit and margin high first")
+
+    # the filters (over the Linen recipes of profit())
+    def names(flt):
+        rows, _ = Pr.list(ctxOf(Pr), lua.table_from(flt))
+        return sorted(r.name for r in seq(rows))
+
+    check(names({"q": "linen"}) == ["Bolt of Linen Cloth", "Linen Bag", "Linen Shirt"], f"search: {names({'q': 'linen'})}")
+    check(names({"q": "  SHIRT "}) == ["Linen Shirt"], "search: any case, spaces trimmed")
+    check(names({"q": "nothing like it"}) == [], "search: no match")
+    # margins: bag 350/144 = 243%, shirt 85/48 = 177%, bolt 54/36 = 150%; the wand is ≈ (no real margin)
+    check(names({"minMargin": 177}) == ["Linen Bag", "Linen Shirt", "Two at a time"], f"margin at least: {names({'minMargin': 177})}")
+    check("Lesser Magic Wand" not in names({"minMargin": 0}), "margin filter leaves ≈ rows out")
+    check(names({"maxCost": 48}) == ["Bolt of Linen Cloth", "Linen Shirt"], f"cost at most 48c: {names({'maxCost': 48})}")
+    check(names({"maxCost": 48, "q": "bolt"}) == ["Bolt of Linen Cloth"], "filters add up")
+    # can make now: you have 2 cloth (a bolt), and the bag needs 3 bolts and 3 thread
+    bags = {2589: 2}
+    can_me = lambda c, r: Pr.canMake(r, lambda i: bags.get(i, 0))
+    check(names({"canMake": can_me}) == ["Bolt of Linen Cloth"], f"only what you can make now: {names({'canMake': can_me})}")
+    check(Pr.canMake(G.RECIPES[2996], lambda i: 2) is True and Pr.canMake(G.RECIPES[2996], lambda i: 1) is False, "canMake counts")
+    # crafters: Bob knows the bag and has its materials; you know everything and have cloth
+    G.PRMERGE = Pr.merge
+    lua.execute("""
+      ME = { me = true, name = "Me", recipes = RECIPES }
+      BOB = { key = "Player-1-Bob", name = "Bob", recipes = { [4238] = RECIPES[4238], [77] = { mats = { { 2589, 1 } }, makes = 1, name = "Bob's own" } },
+        bags = { [2996] = 3, [2320] = 3 } }
+      MRECIPES, MWHO = PRMERGE({ ME, BOB })
+    """)
+    check(G.MRECIPES[77] is not None and lua.eval("function(a, b) return a == b end")(G.MRECIPES[4238], G.RECIPES[4238]), "merge: every crafter's recipes")
+    check([c.name for c in seq(G.MWHO[4238])] == ["Me", "Bob"] and [c.name for c in seq(G.MWHO[77])] == ["Bob"],
+          "merge: who knows each, you first")
+    mctx = Pr.context(lua.table_from({"recipes": G.MRECIPES, "price": G.PRICE, "cut": 0.05, "info": G.INFO}))
+    G.PRICES[77] = 500
+    per = lua.eval("""function(Pr, ctx, who, canOn)
+      local can = canOn and function(c, r)
+        local bags = c.bags or { [2589] = 2 }
+        return Pr.canMake(r, function(id) return bags[id] or 0 end)
+      end or nil
+      local rows = Pr.list(ctx, { who = who, canMake = can })
+      local out = {}
+      for _, r in ipairs(rows) do
+        local w = {}
+        for _, c in ipairs(r.who or {}) do w[#w + 1] = c.name end
+        out[r.name] = table.concat(w, "+")
+      end
+      return out
+    end""")
+    allw = per(Pr, mctx, G.MWHO, False)
+    check(allw["Linen Bag"] == "Me+Bob" and allw["Bob's own"] == "Bob" and allw["Linen Shirt"] == "Me", f"rows say who: {dict(allw.items())}")
+    mctx = Pr.context(lua.table_from({"recipes": G.MRECIPES, "price": G.PRICE, "cut": 0.05, "info": G.INFO}))
+    noww = per(Pr, mctx, G.MWHO, True)
+    check(dict(noww.items()) == {"Linen Bag": "Bob", "Bolt of Linen Cloth": "Me"},
+          f"can make now, per crafter (Bob has the bag's materials, you only cloth): {dict(noww.items())}")
+    G.PRICES[77] = None
+
+    # settings: migration of v1 (from, to, min in copper from the silver box / profitmin) and Clear filters
+    old = lua.eval("{ from = '40', to = 500, min = 300, noCraft = true, pos = { 'CENTER', 'CENTER', 0, 0 } }")
+    Pr.migrate(old)
+    check(old.v == 2 and old['from'] == 40 and old.to is None and old.min == 300 and old.noCraft is True and old.pos is not None,
+          "migrate v1: numbers kept (min stays copper), a skill out of range dropped, the rest untouched")
+    bad = lua.eval("{ min = -5, from = 'x', sort = 'bogus', desc = true, q = '', canMake = 'yes' }")
+    Pr.migrate(bad)
+    check(bad.min is None and bad['from'] is None and bad.sort is None and bad.desc is None and bad.q is None and bad.canMake is None,
+          "migrate: nonsense dropped")
+    cur = lua.eval("{ v = 2, min = -5, sort = 'cost', desc = false }")
+    Pr.migrate(cur)
+    check(cur.min == -5 and cur.sort == "cost", "already v2: left alone")
+    s = lua.eval("{ v = 2, from = 10, to = 200, min = 100, maxCost = 5000, minMargin = 20, q = 'bag', canMake = true, sort = 'name', desc = false, noCraft = true }")
+    check(Pr.filtered(s) is True, "filtered")
+    Pr.clearFilters(s)
+    check(all(s[k] is None for k in ["from", "to", "min", "maxCost", "minMargin", "q", "canMake", "sort", "desc"]) and s.noCraft is True,
+          "Clear filters: every filter and the sort go, other settings stay")
+    check(Pr.filtered(s) is False and Pr.filtered(lua.eval("{ from = 1, to = 300 }")) is False, "the whole range isn't a filter")
     return failures
 
 
@@ -4113,8 +4277,10 @@ def profit_api():
     return failures
 
 
-def profit_window():
-    """The window over a few recipes: rows best first, planned crafts, Make shopping list, the minimum profit box."""
+def profit_window_setup(profit=None, char_db=None, craft_api=False):
+    """A fresh game with the Linen recipes, prices, and the window loaded; profit = db.profit as saved (Lua source),
+    char_db = EverlookAuctionsCharDB (Lua source), craft_api = a fake EverlookDB Crafting API v6 with an alt, Bob.
+    Returns lua, ns, W, DB and the settings the window registered (by key)."""
     lua = lua51.LuaRuntime(unpack_returned_tuples=True)
     lua.execute(source_of("tests/mock.lua"))
     lua.execute("""
@@ -4124,36 +4290,78 @@ def profit_window():
       wipe = wipe or function(t) for k in pairs(t) do t[k] = nil end return t end
       GetRealmName = GetRealmName or function() return "Realm" end
       UnitFactionGroup = UnitFactionGroup or function() return "Alliance" end
+      RAID_CLASS_COLORS = { MAGE = { r = 0.25, g = 0.78, b = 0.92 } }
       MOCK_ITEMS[2589], MOCK_ITEMS[2996], MOCK_ITEMS[2320] = "Linen Cloth", "Bolt of Linen Cloth", "Coarse Thread"
-      MOCK_ITEMS[4238], MOCK_ITEMS[2570] = "Linen Bag", "Linen Shirt"
+      MOCK_ITEMS[4238], MOCK_ITEMS[2570], MOCK_ITEMS[4307] = "Linen Bag", "Linen Shirt", "Heavy Linen Gloves"
+      MOCK_BAGS = {}
     """)
+    if char_db:
+        lua.execute("EverlookAuctionsCharDB = " + char_db)
+    if craft_api:
+        lua.execute("""
+          CRAFT_CHARS = {
+            { key = "Player-1-Me", name = "Me", class = "WARRIOR", me = true, profs = { { skill = 197, name = "Tailoring", rank = 75, known = 3 } } },
+            { key = "Player-1-Bob", name = "Bob", class = "MAGE", profs = { { skill = 197, name = "Tailoring", rank = 210, known = 2 },
+              { skill = 333, name = "Enchanting", rank = 150, known = 1 } } },
+          }
+          CRAFT_RECIPES = { ["Player-1-Me"] = {},
+            ["Player-1-Bob"] = { { spell = 3755, name = "Linen Bag", skill = 197, creates = 4238, yield = 1, mats = { { 2996, 3 }, { 2320, 3 } } },
+              { spell = 3843, name = "Heavy Linen Gloves", skill = 197, creates = 4307, yield = 1, mats = { { 2996, 2 } } } } }
+          CRAFT_BAGS = { ["Player-1-Bob"] = { [2996] = 2 } }
+          EverlookCraftAPI = { version = 6, characters = function() return CRAFT_CHARS end,
+            recipesOf = function(k) return CRAFT_RECIPES[k] end, bagsOf = function(k) return CRAFT_BAGS[k] or {} end }
+        """)
     ns = lua.table()
     realm = lua.eval("GetRealmName()") + "-" + lua.eval("UnitFactionGroup('player')")
     lua.globals().MOCK_HOUSE = realm
     DB = lua.eval("""{ houses = { [MOCK_HOUSE] = { scanned = 99000, items = {
         [2589] = { 18, 1, 1, 99000 }, [2996] = { 95, 1, 1, 99000 }, [2320] = { 12, 1, 1, 99000 }, [4238] = { 520, 1, 1, 99000 },
-        [2570] = { 140, 1, 1, 99000 } } } },
+        [2570] = { 140, 1, 1, 99000 }, [4307] = { 400, 1, 1, 99000 } } } },
       crafts = {
         [2996] = { mats = { { 2589, 2 } }, makes = 1, rid = 1, name = "Bolt of Linen Cloth" },
         [4238] = { mats = { { 2996, 3 }, { 2320, 3 } }, makes = 1, rid = 2, name = "Linen Bag" },
         [2570] = { mats = { { 2996, 1 }, { 2320, 1 } }, makes = 1, rid = 3, name = "Linen Shirt" },
       } }""")
+    if profit:
+        DB.profit = lua.eval(profit)
     lua.globals().MOCK_DB = DB
     ns.db = lua.eval("function() return MOCK_DB end")
     ns.money = lua.eval("function(c) return tostring(c) .. 'c' end")
     ns.ago = lua.eval("function() return '17 min ago' end")
     ns.itemFor = lua.eval("function(id) return MOCK_DB.houses[MOCK_HOUSE].items[id] end")
+    # a fake /eah app that keeps what the window registers
+    lua.execute("""
+      APP_SETTINGS = {}
+      FAKE_APP = { Setting = function(self, def) APP_SETTINGS[def.key] = def end, Command = function() end,
+        Section = function(self, id, title, build) APP_SECTION = build end, GetSetting = function() end, Widget = function() end }
+    """)
     run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
     run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
     for name in ["Libs/EverlookUI/EverlookUI.lua", "RecipeList.lua", "Profit.lua", "ProfitWindow.lua"]:
         run(source_of(name), name, "EverlookDBAuctions", ns)
-    W = ns.profitWindow
+    ns.app = lua.globals().FAKE_APP
+    # ADDON_LOADED: the window adds its settings to the app
+    lua.execute("""
+      for _, f in ipairs(MOCK_FRAMES) do
+        local h = f.scripts and f.scripts.OnEvent
+        if h then pcall(h, f, "ADDON_LOADED", "EverlookDBAuctions") end
+      end
+    """)
+    return lua, ns, ns.profitWindow, DB, lua.globals().APP_SETTINGS
+
+
+def profit_window():
+    """The window over a few recipes: rows best first, money in coin columns, planned crafts, Make shopping list, the
+    filter boxes, sorting by the headings, Clear filters, saved filters and sort, the old minimum profit, alts."""
     failures = []
 
     def check(cond, what):
         if not cond:
             failures.append("profit window: " + what)
 
+    lua, ns, W, DB, settings = profit_window_setup()
+    Pr = ns.profit
+    G_, S_, C_ = Pr.COIN[1], Pr.COIN[2], Pr.COIN[3]
     W.open()
     f = W.frame
     check(f is not None and f.shown, "the window opens")
@@ -4163,9 +4371,31 @@ def profit_window():
     def shown_names():
         return [f.rows[i].data.name for i in range(1, len(f.rows) + 1) if f.rows[i].shown]
 
+    def cells(cell):
+        return [cell.p[1].text, cell.p[2].text, cell.p[3].text]
+
+    def typed(box, text):
+        box.SetText(box, text)
+        box.scripts.OnTextChanged(box, True)
+
     check(shown_names() == ["Linen Bag", "Linen Shirt", "Bolt of Linen Cloth"], f"best profit first: {shown_names()}")
-    check(f.rows[1].profit.text == "+3s 50c", f"bag profit text: {f.rows[1].profit.text}")
+    # money in coin columns: gold, silver, copper each in its own cell, right-aligned at fixed places
+    check(cells(f.rows[1].profit) == ["", "+3" + S_, "50" + C_], f"bag profit cells: {cells(f.rows[1].profit)}")
+    check(cells(f.rows[1].cost) == ["", "1" + S_, "44" + C_], f"bag cost cells: {cells(f.rows[1].cost)}")
+    check(cells(f.rows[1].sale) == ["", "4" + S_, "94" + C_], f"bag sale cells: {cells(f.rows[1].sale)}")
+    check(cells(f.rows[3].profit) == ["", "", "+54" + C_], f"bolt profit: only copper, in the copper column: {cells(f.rows[3].profit)}")
+    pts = [f.rows[1].profit.p[i].point for i in (1, 2, 3)]
+    check([p[4] for p in pts] == [-60, -30, 0] and all(p[1] == "RIGHT" for p in pts),
+          f"coin cells right-aligned 30 px apart: {[(p[1], p[4]) for p in pts]}")
+    check(f.rows[1].profit.p[3].color[2] > 0.7, "profit is green")
     check(f.rows[1].margin.text == "+243%", f"bag margin: {f.rows[1].margin.text}")
+    check(f.pos.text == "3 recipes", f"the count under the list: {f.pos.text}")
+    check(f.heads.profit.arrow.shown and f.heads.profit.desc is True and not f.heads.name.arrow.shown,
+          "the profit heading has the arrow, high to low")
+    check(f.heads.name.label.text == "RECIPE", f"the recipe heading: {f.heads.name.label.text}")
+    check(not f.alts.shown, "no Alts list without EverlookDB Crafting")
+    check(not f.clearFilters.shown, "no Clear filters while nothing is filtered")
+
     W.crafts[4238] = 4
     W.footer()
     check("4 crafts" in f.sum.text, f"the plan line: {f.sum.text}")
@@ -4177,10 +4407,148 @@ def profit_window():
         check(want['name is "Linen Cloth"'] == 24 and want['name is "Coarse Thread"'] == 12 and want['name is "Bolt of Linen Cloth"'] is None,
               f"bolts broken down into cloth: {[(k, want[k]) for k in want]}")
     check(W.status is not None and "Saved as" in W.status[1], "says it was saved")
-    f.min.SetText(f.min, "3")
-    f.min.scripts.OnTextChanged(f.min, True)
+    W.crafts[4238] = None
+
+    # sorting: click a heading, again for the other way; remembered
+    def click(key):
+        h = f.heads[key]
+        h.scripts.OnClick(h)
+
+    click("name")
+    check(shown_names() == ["Bolt of Linen Cloth", "Linen Bag", "Linen Shirt"], f"by name A-Z: {shown_names()}")
+    check(DB.profit.sort == "name" and DB.profit.desc is False, "the sort is saved")
+    check(f.heads.name.arrow.shown and f.heads.name.desc is False and not f.heads.profit.arrow.shown, "the arrow moves to Recipe")
+    click("name")
+    check(shown_names() == ["Linen Shirt", "Linen Bag", "Bolt of Linen Cloth"], f"again: Z-A: {shown_names()}")
+    click("cost")
+    check(shown_names() == ["Bolt of Linen Cloth", "Linen Shirt", "Linen Bag"], f"by cost, cheapest first: {shown_names()}")
+    click("sale")
+    check(shown_names() == ["Linen Bag", "Linen Shirt", "Bolt of Linen Cloth"], f"by sells for, high first: {shown_names()}")
+    click("sale")
+    check(shown_names() == ["Bolt of Linen Cloth", "Linen Shirt", "Linen Bag"], f"sells for, low first: {shown_names()}")
+    click("margin")
+    check(shown_names() == ["Linen Bag", "Linen Shirt", "Bolt of Linen Cloth"], f"by margin: {shown_names()}")
+    click("skill")
+    check(shown_names() == ["Linen Bag", "Linen Shirt", "Bolt of Linen Cloth"], f"by skill (none known: by profit): {shown_names()}")
+    W.crafts[2996] = 2
+    click("crafts")
+    check(shown_names()[0] == "Bolt of Linen Cloth", f"by planned crafts: {shown_names()}")
+    W.crafts[2996] = None
+    click("profit")
+    check(shown_names() == ["Linen Bag", "Linen Shirt", "Bolt of Linen Cloth"], f"back to profit: {shown_names()}")
+    check(DB.profit.sort is None and DB.profit.desc is None, "profit high to low is the default: nothing saved")
+    click("profit")
+    check(shown_names() == ["Bolt of Linen Cloth", "Linen Shirt", "Linen Bag"] and DB.profit.sort == "profit" and DB.profit.desc is False,
+          f"profit low to high: {shown_names()}")
+    check(f.clearFilters.shown, "a sort other than the default can be cleared")
+    click("profit")
+
+    # filters
+    typed(f.search, "shirt")
+    check(shown_names() == ["Linen Shirt"] and DB.profit.q == "shirt", f"search: {shown_names()}")
+    check(f.pos.text == "1 recipe", f"the count follows the filters: {f.pos.text}")
+    check(f.clearFilters.shown, "Clear filters shows")
+    typed(f.search, "")
+    check(len(shown_names()) == 3 and DB.profit.q is None, "search cleared")
+    typed(f.margin, "160")
+    check(shown_names() == ["Linen Bag", "Linen Shirt"] and DB.profit.minMargin == 160, f"margin at least 160%: {shown_names()}")
+    typed(f.margin, "")
+    typed(f.maxCost, "1s")
+    check(shown_names() == ["Linen Shirt", "Bolt of Linen Cloth"] and DB.profit.maxCost == 100, f"cost at most 1s: {shown_names()}")
+    typed(f.maxCost, "1g 2")
+    check(DB.profit.maxCost == 100 and shown_names() == ["Linen Shirt", "Bolt of Linen Cloth"], "not money: the filter stays")
+    f.maxCost.scripts.OnEditFocusLost(f.maxCost)
+    check(f.maxCost.text == "1s", f"leaving the box writes the amount back: {f.maxCost.text}")
+    typed(f.maxCost, "")
+    typed(f.min, "85c")
+    check(shown_names() == ["Linen Bag", "Linen Shirt"] and DB.profit.min == 85, f"profit at least 85c: {shown_names()}")
+    typed(f.min, "")
+    typed(f['from'], "50")
+    check(shown_names() == [], "a narrowed skill range leaves out recipes whose skill isn't known")
+    check("filters" in f.empty.text, f"the empty list says why: {f.empty.text}")
+    typed(f['from'], "1")
+    lua.execute("MOCK_BAGS = { [2589] = 2 }")
+    f.canMake.scripts.OnClick(f.canMake)
+    check(shown_names() == ["Bolt of Linen Cloth"] and DB.profit.canMake is True and f.canMake.on, f"only what I can make now: {shown_names()}")
+    lua.execute("MOCK_BAGS = { [2589] = 2, [2996] = 3, [2320] = 3 }")
+    W.refresh()
+    check(len(shown_names()) == 3, f"follows the bags: {shown_names()}")
+
+    # Clear filters
+    typed(f.search, "linen")
+    typed(f.margin, "10")
+    click("cost")
+    f.clearFilters.scripts.OnClick(f.clearFilters)
+    p = DB.profit
+    check(all(p[k] is None for k in ["q", "minMargin", "maxCost", "min", "canMake", "sort", "desc", "from", "to"]), "Clear filters clears them")
+    check(f.search.text == "" and f.margin.text == "" and f['from'].text == "1" and f.to.text == "300" and not f.canMake.on,
+          "and empties the boxes")
+    check(shown_names() == ["Linen Bag", "Linen Shirt", "Bolt of Linen Cloth"], f"every recipe, best profit first: {shown_names()}")
+
+    # the old minimum profit box: a plain number is silver
+    typed(f.min, "3")
     check(shown_names() == ["Linen Bag"], f"profit at least 3 silver: {shown_names()}")
     check(DB.profit.min == 300, "the minimum is kept in copper")
+
+    # the settings: profitmin is still silver, and the settings search finds the new filters
+    pm = settings["profitmin"]
+    check(pm is not None and pm.get() == 3, "profitmin reads the box's minimum in silver")
+    pm.set(5)
+    check(DB.profit.min == 500 and f.min.text == "5s", f"profitmin 5 is 5 silver, and the box says so: {f.min.text}")
+    kw = [pm.keywords[i] for i in range(1, len(pm.keywords) + 1)]
+    for word in ["margin", "cost", "search", "sort", "alts", "can make", "gold"]:
+        check(word in kw, f"settings search word {word!r}")
+
+    # saved filters and sort come back in a new session; the old v1 settings are migrated
+    lua2, ns2, W2, DB2, settings2 = profit_window_setup(
+        "{ v = 2, sort = 'cost', desc = false, q = 'linen', minMargin = 160, maxCost = 20000, pos = { 'CENTER', 'CENTER', 1, 2 } }")
+    W2.open()
+    f2 = W2.frame
+    names2 = [f2.rows[i].data.name for i in range(1, len(f2.rows) + 1) if f2.rows[i].shown]
+    check(names2 == ["Linen Shirt", "Linen Bag"], f"saved sort and filters: {names2}")
+    check(f2.search.text == "linen" and f2.margin.text == "160" and f2.maxCost.text == "2g", "saved filters in their boxes")
+    check(f2.heads.cost.arrow.shown and f2.heads.cost.desc is False, "the saved sort's arrow")
+    lua3, ns3, W3, DB3, settings3 = profit_window_setup("{ from = 1, to = 300, min = 300 }")
+    W3.open()
+    f3 = W3.frame
+    names3 = [f3.rows[i].data.name for i in range(1, len(f3.rows) + 1) if f3.rows[i].shown]
+    check(DB3.profit.v == 2 and DB3.profit.min == 300, "v1 settings migrated, the minimum kept")
+    check(names3 == ["Linen Bag"] and f3.min.text == "3s", f"the old 3 silver minimum still filters, as money: {names3} {f3.min.text}")
+    check(settings3["profitmin"].get() == 3, "and profitmin still says 3")
+
+    # alts (EverlookDB Crafting API v6), ticked per character
+    lua4, ns4, W4, DB4, _ = profit_window_setup(craft_api=True)
+    W4.open()
+    f4 = W4.frame
+
+    def names4():
+        return [f4.rows[i].data.name for i in range(1, len(f4.rows) + 1) if f4.rows[i].shown]
+
+    check(f4.alts.shown and f4.altsText.text == "Alts: none", f"the Alts list with Crafting: {f4.altsText.text}")
+    check(names4() == ["Linen Bag", "Linen Shirt", "Bolt of Linen Cloth"], f"without alts: your recipes (Crafting has none for you: this addon's) {names4()}")
+    check(all(f4.rows[i].tag.text == "" for i in (1, 2, 3)), "no name tags without alts")
+    W4.toggleAlt("Player-1-Bob")
+    G4 = lua4.globals()
+    check(G4.EverlookAuctionsCharDB.profitAlts["Player-1-Bob"] is True, "the tick is saved per character")
+    check(f4.altsText.text == "Alts: Bob", f"the list says who: {f4.altsText.text}")
+    check(names4() == ["Linen Bag", "Heavy Linen Gloves", "Linen Shirt", "Bolt of Linen Cloth"],
+          f"Bob's recipes join: {names4()}")
+    tags = {f4.rows[i].data.name: f4.rows[i].tag.text for i in range(1, len(f4.rows) + 1) if f4.rows[i].shown}
+    check("you" in tags["Linen Bag"] and "+ 1" in tags["Linen Bag"], f"both know the bag: you + 1: {tags['Linen Bag']}")
+    check("Bob" in tags["Heavy Linen Gloves"] and "you" not in tags["Heavy Linen Gloves"], f"only Bob: {tags['Heavy Linen Gloves']}")
+    check("you" in tags["Linen Shirt"] and "+" not in tags["Linen Shirt"], f"only you: {tags['Linen Shirt']}")
+    check(W4.profText(G4.CRAFT_CHARS[2].profs) == "Tailoring 210, Enchanting 150", "an alt's professions with skill")
+    # can make now, per crafter: Bob has 2 bolts (the gloves), you have nothing
+    f4.canMake.scripts.OnClick(f4.canMake)
+    check(names4() == ["Heavy Linen Gloves"], f"only Bob can make the gloves now: {names4()}")
+    W4.toggleAlt("Player-1-Bob")
+    check(G4.EverlookAuctionsCharDB.profitAlts["Player-1-Bob"] is None and f4.altsText.text == "Alts: none", "untick")
+    # remembered: a new session on this character has Bob ticked
+    lua5, ns5, W5, DB5, _ = profit_window_setup(char_db="{ profitAlts = { ['Player-1-Bob'] = true } }", craft_api=True)
+    W5.open()
+    check(W5.frame.altsText.text == "Alts: Bob" and W5.multi, "the ticked alts come back")
+    # the alts popup lists you (always in) and Bob with a tick box
+    W5.openAlts(W5.frame.alts)
     return failures
 
 
