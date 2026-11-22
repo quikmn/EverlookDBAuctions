@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.22.1 (2026-11-23)
 - The auction house's own list: the item you hover opens next to the mouse and comes first; what you wear shows next to it while you hold Shift.
 
 ## v0.22.0 (2026-11-22)
