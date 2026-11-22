@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.19.0 (2026-11-22)
 - Merchant's Favor in the main window now shows every crate with its filters and "Send missing to Auctions", right on the page (needs the latest EverlookDB Crafting).
 - DisenchantValue is now part of EverlookDB Auctions: every disenchant on all your characters is logged, tooltips show your own results (hold Shift for each material), and the new Disenchanting page lists them with a search. `/dv` still works, and your old log comes along.
 - Disenchant values now use what players really got from their disenchants (from the Price Feed) when there are enough; the tooltip says "players' disenchants" or "estimate".
