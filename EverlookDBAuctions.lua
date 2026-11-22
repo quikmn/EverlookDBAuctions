@@ -1340,8 +1340,10 @@ local function disenchantLine(t, id)
   local value, oldest, _, source = ns.disenchantValue(id)
   if value then
     -- where the chances are from, and how old the oldest material price is, so an old estimate doesn't pass for today's
-    t:Line("Disenchant", Tip.Money(value), { note = join((source == "item" or source == "kind") and "players' disenchants" or "estimate",
-      tago(time() - (oldest or 0))), stale = (oldest or 0) >= STALE })
+    local from = (source == "item" or source == "kind") and "players' disenchants" or source == "measured" and "measured in vanilla" or "estimate"
+    t:Line("Disenchant", Tip.Money(value), { note = join(from, tago(time() - (oldest or 0))), stale = (oldest or 0) >= STALE })
+  elseif source == "unmeasured" then
+    t:Line("Disenchant", "not measured yet", { stale = true })
   end
 end
 
@@ -1988,18 +1990,18 @@ end
 
 -- What disenchanting an item is worth: the sum over its materials of chance x average count x the material's
 -- lowest saved price. The chances are players' disenchants when there are enough of them (DisenchantOdds.lua, from the
--- Price Feed), else classic-db's (Disenchant.lua). Returns the value in copper, the age in seconds of the oldest
--- material price, the materials { { itemID, chance %, min, max, price }, ... }, where the chances are from ("item":
--- players' disenchants of this item, "kind": of items like it, "estimate": classic-db) and how many disenchants
--- they are from (nil for "estimate"); nil when the item can't be disenchanted or a material has no price yet (a
--- players' material under 5% without a price is left out).
+-- Price Feed), else vanilla's measured ones, else classic-db's (Disenchant.lua). Returns the value in copper, the age
+-- in seconds of the oldest material price, the materials { { itemID, chance %, min, max, price }, ... }, where the
+-- chances are from ("item": players' disenchants of this item, "kind": of items like it, "measured": measured in
+-- vanilla, "estimate": classic-db) and how many disenchants they are from (nil for a bracket's); nil when the item
+-- can't be disenchanted or a material has no price yet (a measured material under 5% without a price is left out).
+-- An item that can be disenchanted but that nobody has measured gives nil, nil, nil, "unmeasured".
 function ns.disenchantValue(id, side)
   local mats, source, n
   if ns.deOdds then mats, source, n = ns.deOdds(id) end
-  if not mats then
-    local kind = ns.DE_ITEMS and ns.DE_ITEMS[id]
-    mats = kind and ns.DE_GROUPS[kind]
-    source, n = "estimate", nil
+  if not mats and ns.deFallback then
+    mats, source, n = ns.deFallback(id)
+    if source == "unmeasured" then return nil, nil, nil, source end
   end
   if not mats then return nil end
   local value, oldest, out = 0, 0, {}

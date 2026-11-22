@@ -3592,7 +3592,7 @@ Enum = { TooltipDataType = { Item = 0, Unit = 2 } }
 HOOKS = {}
 TooltipDataProcessor = { AddTooltipPostCall = function(t, fn) HOOKS[t] = fn end }
 date = os.date
--- 727: an uncommon armor item of item level 20 (classic-db kind 21: 80% 1-2 Lesser Magic Essence, 20% 1-2 Strange Dust)
+-- 727: an uncommon armor item of item level 20 (the test gives its bracket 16-20 classic-db's 80% 1-2 Lesser Magic Essence, 20% 1-2 Strange Dust)
 SWORD = "|cff1eff00|Hitem:727::::::::20:::::|h[Test Sword]|h|r"
 ITEMS = {
   [727] = { "Test Sword", SWORD, 2, 20, 15, "Armor", "Cloth", 1, "INVTYPE_CHEST", 0, 0, 4, 1 },
@@ -3630,8 +3630,10 @@ h.items[10940] = { 1000, 5, 1, MOCK_TIME - 600 }
 
 
 def disenchanting():
-    """Disenchanting (DisenchantOdds.lua, DisenchantLog.lua, ns.disenchantValue): the three sources of the odds
-    (this item's players' disenchants, its kind's summed over its item-level bracket, classic-db), the lesser essence
+    """Disenchanting (Disenchant.lua, DisenchantOdds.lua, DisenchantLog.lua, ns.disenchantValue): the generated data
+    (the client's brackets, a shield as armor, the new rare brackets not measured), the sources of the odds (this
+    item's players' disenchants, its kind's summed over its item-level bracket, vanilla's measured ones for the item
+    and its bracket, classic-db's; a bracket nobody measured), the lesser essence
     cap, logging a disenchant in the fixed log format, taking over DisenchantValue's log once without names, the cap,
     the tooltip lines (where the odds come from, your results, the Shift breakdown), an older DisenchantValue still
     loaded, the page's search and /dv."""
@@ -3659,6 +3661,38 @@ def disenchanting():
     fire = lua.eval("function(f, ...) f.scripts.OnEvent(f, ...) end")
     core = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent and f ~= DEFRAME then pcall(f.scripts.OnEvent, f, e, a) end end end")
     core("ADDON_LOADED", "EverlookDBAuctions")
+
+    # the generated data (Disenchant.lua): the client's brackets and items, vanilla's measured odds, classic-db's
+    K, I = ns.DE_KINDS, ns.DE_ITEMS
+    n_items = lua.eval("function(t) local n = 0 for _ in pairs(t) do n = n + 1 end return n end")
+    check(n_items(I) > 8000 and n_items(K) == 54, f"data: {n_items(I)} items, {n_items(K)} brackets")
+    shield = K[I[9764]] if I[9764] else None   # Cadet Shield, uncommon, item level 11
+    check(shield is not None and shield[1] == 4 and shield[3] == 5 and shield[5] == "m" and shield[6][1] == 10940,
+          "a shield disenchants as armor: Strange Dust first, measured")
+    w21 = K[7]
+    check(w21[1] == 2 and w21[2] == 2 and w21[3] == 21 and w21[6][1] == 10939
+          and all(w21[i][1] not in (10998, 11082) for i in range(6, len(w21) + 1)),
+          "uncommon weapons 21-25: Greater Magic Essence, no Astral")
+    check(all(K[k][5] is False and len(K[k]) == 5 for k in (335, 336, 337, 338)), "the new rare brackets: not measured yet")
+    check(any(v == 336 for v in I.values()), "items in a new rare bracket can be disenchanted")
+    check(K[54][5] == "e" and K[54][6][1] == 20725, "epic 61-99: classic-db's Nexus Crystal (vanilla's era left out)")
+    check(I[9764] and not I[6948], "the hearthstone can't be disenchanted")
+
+    # from here, small brackets of our own: 727 (armor, uncommon, item level 20) in 16-20 with classic-db's odds
+    ns.DE_KINDS = lua.eval("""{
+      [5] = { 4, 2, 16, 20, "e", { 10938, 80, 1, 2 }, { 10940, 20, 1, 2 } },
+      [8] = { 4, 2, 21, 25, "m", { 10938, 100, 9, 9 } },
+      [6] = { 2, 2, 16, 20, "m", { 10938, 100, 9, 9 } },
+      [336] = { 4, 3, 16, 20, false },
+    }""")
+    ns.DE_ITEMS = lua.eval("{ [727] = 5, [900] = 336, [901] = 5 }")
+    ns.DE_ITEM_ODDS = lua.eval("{}")
+    lua.execute("""
+      ITEMS[900] = { "Low Rare", "|cff0070dd|Hitem:900::::::::18:::::|h[Low Rare]|h|r", 3, 18, 15, "Armor", "Cloth", 1, "INVTYPE_CHEST", 0, 0, 4, 1 }
+      ITEMS[901] = { "Test Shield", "|cff1eff00|Hitem:901::::::::20:::::|h[Test Shield]|h|r", 2, 20, 15, "Armor", "Shields", 1, "INVTYPE_SHIELD", 0, 0, 4, 6 }
+    """)
+    lo, hi, lid = ns.deBracket(4, 2, 20)
+    check(lo == 16 and hi == 20 and lid == 5, f"the bracket of armor, uncommon, 20: {lo}-{hi} ({lid})")
 
     # the old addon's saved log: names, realms and links that must not come over
     lua.execute("""
@@ -3785,6 +3819,45 @@ def disenchanting():
     text = show(727, G.SWORD)
     check("80%  1-2x Lesser Magic Essence  each = 15s" in text, f"Shift: the breakdown: {text}")
     G.SHIFT = False
+
+    # 4. measured in vanilla: the bracket's, then the item's own; players' still come first
+    ns.DE_KINDS[5] = lua.eval('{ 4, 2, 16, 20, "m", { 10940, 100, 2, 2 } }')
+    value, _, out, source, n = ns.disenchantValue(727)
+    check(value == 2000 and source == "measured" and n is None, f"the bracket measured in vanilla: {value} {source} {n}")
+    check("Disenchant  measured in vanilla" in show(727, G.SWORD), "the tooltip says measured in vanilla")
+    check(G.EverlookDBAuctionsAPI.disenchant(727)[2] == "measured", "the API says measured")
+    ns.DE_ITEM_ODDS[727] = lua.eval("{ 500, 10940, 50, 2, 10938, 50, 1 }")
+    value, _, out, source, n = ns.disenchantValue(727)
+    check(value == 1000 + 750 and source == "measured" and n == 500, f"the item's own measured odds: {value} {source} {n}")
+    G.SHIFT = True
+    text = show(727, G.SWORD)
+    check("50%  2x Strange Dust" in text and "50%  1x Lesser Magic Essence" in text, f"measured: average counts: {text}")
+    G.SHIFT = False
+    lua.execute("""
+      EverlookDB_DEOdds = { v = 1, items = { [727] = { n = 10, mats = { [10940] = { p = 1, c = 1 } } } }, kinds = {
+        ["4:2:20"] = { n = 40, mats = { [10938] = { p = 1, c = 1 } } },
+        ["2:2:20"] = { n = 500, mats = { [10940] = { p = 1, c = 9 } } } } }
+    """)
+    value, _, _, source, n = ns.disenchantValue(727)
+    check(value == 1000 and source == "item" and n == 10, f"players' item odds win over vanilla's: {value} {source}")
+    # a shield is armor: its players' kind is armor's, not the weapons'
+    value, _, _, source, n = ns.disenchantValue(901)
+    check(value == 1500 and source == "kind" and n == 40, f"a shield: armor's players' odds: {value} {source} {n}")
+    lua.execute("EverlookDB_DEOdds = nil")
+    value, _, _, source, _ = ns.disenchantValue(901)
+    check(value == 2000 and source == "measured", f"a shield: armor's bracket: {value} {source}")
+    lo, hi, lid = ns.deBracket(4, 2, 20, 6, "INVTYPE_SHIELD")
+    check(lid == 5, "a shield's bracket is armor's")
+    # 5. a bracket nobody measured: it can be disenchanted, but no value
+    value, _, _, source = ns.disenchantValue(900)
+    check(value is None and source == "unmeasured", f"a new rare bracket: not measured: {value} {source}")
+    text = show(900, G.ITEMS[900][2])
+    check("Disenchant = not measured yet" in text, f"the tooltip says so: {text}")
+    check(G.EverlookDBAuctionsAPI.disenchant(900) is None, "the API has no value for it")
+    check(ns.disenchantValue(5000) is None, "an item that can't be disenchanted: nothing")
+    ns.DE_ITEM_ODDS[727] = None
+    ns.DE_KINDS[5] = lua.eval('{ 4, 2, 16, 20, "e", { 10938, 80, 1, 2 }, { 10940, 20, 1, 2 } }')
+
     lua.execute("""
       local log = EverlookDBAuctionsDB.deLog
       log[#log + 1] = { t = 1, item = 727, ilvl = 20, q = 2, cls = 4, mats = { [10940] = 2 } }
@@ -4022,7 +4095,7 @@ def profit_api():
         if not cond:
             failures.append("profit api: " + what)
 
-    check(api.version == 5, "version 5")
+    check(api.version == 6, "version 6")
     ok_add, new = api.addShoppingList("Linen Bags", lua.eval("{ { 2589, 24 }, { 2320, 12 } }"))
     check(ok_add is True and new is True and len(DB.lists) == 1 and DB.lists[1].want['name is "Linen Cloth"'] == 24,
           "addShoppingList saves a list")
@@ -5314,7 +5387,7 @@ def ledger():
 
     # --- the AH API door ----------------------------------------------------------------------------------------------
     api = G.EverlookDBAuctionsAPI
-    check(api.version == 5 and api.mail.version == 1 and lua.eval("rawequal")(api.mail.classifier(), C), "API version 5 with mail")
+    check(api.version == 6 and api.mail.version == 1 and lua.eval("rawequal")(api.mail.classifier(), C), "API version 6 with mail")
     check(api.mail.scanned(lua.eval("{ { cat = 'player', subject = 'x', sender = 'y', exp = 1 } }")) is True, "scanned answers")
     check(api.mail.taken(lua.eval("{ }"), "money") is True, "taken ignores a mail without a category quietly")
     okW = lua.eval("function(a) return (pcall(function() a.mail.version = 2 end)) end")(api)

@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Better disenchant values where players haven't measured an item yet: real disenchant counts from vanilla ("measured in vanilla"), Greater Magic Essence from uncommon weapons of item level 21-30, and shields and off-hands count as armor.
+
 ## v0.19.0 (2026-11-22)
 - Merchant's Favor in the main window now shows every crate with its filters and "Send missing to Auctions", right on the page (needs the latest EverlookDB Crafting).
 - DisenchantValue is now part of EverlookDB Auctions: every disenchant on all your characters is logged, tooltips show your own results (hold Shift for each material), and the new Disenchanting page lists them with a search. `/dv` still works, and your old log comes along.

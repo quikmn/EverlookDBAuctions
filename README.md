@@ -6,7 +6,7 @@ Auction house prices, selling and shopping lists for WoW Forever, from the maker
 - **Minimap button:** click for the main window, right-click for the settings, drag it around the minimap. Its tooltip has today's income and how old your prices are. Hide it on the General page or with `/eah minimap`.
 - **Price updates:** a bar along the bottom of the auction house shows which house you're at, how many items have prices and how old they are. Prices update by themselves a few seconds after you open the auction house and every 30 minutes while it's open (the server allows one update about every 15 minutes). An update takes about 30 seconds, with a progress bar, and you can keep buying and selling meanwhile. Normal auction house searches save prices too.
 - **Prices in tooltips:** lowest buyout, how many are up, how old the price is, and the 30-day low and median. Hold Shift for a full stack, Ctrl for the stack under the mouse. Also what a vendor pays, what crafting one costs, and whether the auction house or a vendor pays more after the cut. Each line can be turned off on the Tooltips page.
-- **Disenchant value:** for gear that can be disenchanted, what the materials are worth on your auction house, from what players really got when there are enough of their disenchants, else an estimate. Hold Shift for each material.
+- **Disenchant value:** for gear that can be disenchanted, what the materials are worth on your auction house, from what players really got when there are enough of their disenchants, else from disenchants measured in vanilla, else an estimate. Hold Shift for each material.
 - **Disenchant log:** every disenchant on all your characters, your own results on tooltips (for the item and for items like it), and a Disenchanting page with a search. `/dv` opens it.
 - **Quick sell tab:** everything in your bags you can sell, with a filter, favourites (right-click) and hidden items (Shift+right-click). Pick one and the price is set just under the cheapest auction someone else has up (1 silver by default; your own auctions are never undercut), or your last price for it. Quantity, unit price, duration, deposit and total work like Blizzard's Sell tab, with a 30-day price chart and a warning when the deposit is more than the sale brings. One click on Post posts once.
 - **Your auctions:** each one is marked Undercut, Lowest or Sold, with a Cancel button. The undercut button cancels your next undercut auction, one per click.
@@ -81,4 +81,6 @@ Alerts when a shopping list has a match under your price.
 
 GPL-3.0-or-later (see LICENSE). Not affiliated with Blizzard Entertainment.
 
-Credits: disenchant chances from classic-db by the CMaNGOS community (GPL-3.0); stat weights from our own simulations on wowsims/forever (MIT), with the Forever Leveling BiS v0.12.0-beta model (MIT, Copyright (c) 2026 Thunder) for some levels.
+Disenchant odds: Enchantrix (Norganna's AddOns, GPL-2.0-or-later) and classic-db (CMaNGOS, GPL-3.0); brackets from the WoW Forever client.
+
+Credits: stat weights from our own simulations on wowsims/forever (MIT), with the Forever Leveling BiS v0.12.0-beta model (MIT, Copyright (c) 2026 Thunder) for some levels.

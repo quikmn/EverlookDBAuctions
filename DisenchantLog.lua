@@ -316,7 +316,8 @@ D.showBreakdown = showBreakdown
 
 local function tipOn() return not ns.tipOn or ns.tipOn("disenchant") end
 
--- "20%  1-2x Lesser Magic Essence" (classic-db) or "37%  1.4x Strange Dust" (players' average), price each right.
+-- "20%  1-2x Lesser Magic Essence" (classic-db) or "37%  1.4x Strange Dust" (an average: players', or measured in
+-- vanilla), price each right.
 function D.breakdownRows(out, source)
   local list = {}
   for _, m in ipairs(out or {}) do
@@ -363,19 +364,19 @@ local function observedLine(t, which, obs)
   end
 end
 
--- The item behind a tooltip, as the bracket needs it: cls, q, ilvl, subclass, equipLoc.
+-- The item behind a tooltip, as the bracket needs it: cls, q, ilvl.
 local function itemInfo(ctx)
-  local okI, _, _, q, baseLevel, _, _, _, _, equipLoc, _, _, cls, sub = pcall(C_Item.GetItemInfo, ctx.link or ctx.id)
+  local okI, _, _, q, baseLevel, _, _, _, _, _, _, _, cls = pcall(C_Item.GetItemInfo, ctx.link or ctx.id)
   if not okI or not ns.deCanDisenchant(cls, q) then return nil end
   local ilvl = (ctx.link and itemLevel(ctx.link)) or baseLevel
-  return cls, q, ilvl, sub, equipLoc
+  return cls, q, ilvl
 end
 
 local function addObserved(t, ctx)
   if not ctx.id or not tipOn() or D.oldAddon() or opt("observed") == false then return end
-  local cls, q, ilvl, sub, equipLoc = itemInfo(ctx)
+  local cls, q, ilvl = itemInfo(ctx)
   if not cls then return end
-  local low, high = ns.deBracket(cls, q, ilvl, sub, equipLoc)
+  local low, high = ns.deBracket(cls, q, ilvl)
   local mine, bracket = D.observed(ctx.id, cls, q, low, high)
   if mine then observedLine(t, "this item", mine) end
   if bracket and (not mine or bracket.count > mine.count) then
@@ -419,11 +420,11 @@ end
 -- Where the odds on tooltips come from.
 function D.oddsLine()
   local o = ns.deOddsTable and ns.deOddsTable()
-  if not o then return "Estimates from the classic odds. The Price Feed (from the EverlookDB App) brings players' disenchants." end
+  if not o then return "Odds measured in vanilla, else estimates. The Price Feed (from the EverlookDB App) brings players' disenchants" end
   local n = 0
   for _ in pairs(type(o.items) == "table" and o.items or {}) do n = n + 1 end
   local at = tonumber(o.updated)
-  return ("Players' disenchants (%d items%s), the classic odds where there are too few"):format(n,
+  return ("Players' disenchants (%d items%s), odds measured in vanilla where there are too few"):format(n,
     at and (", updated " .. date("%Y-%m-%d", at)) or "")
 end
 

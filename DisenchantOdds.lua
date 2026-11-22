@@ -6,23 +6,17 @@
 --          kinds = { ["<cls>:<q>:<ilvl>"] = { n = <disenchants>, mats = { [<mat id>] = { p = <chance 0-1>, c = <avg count when it drops> } } } },
 --          items = { [<item id>] = { n = ..., mats = { same } } } }
 --      - this item's own entry when it has 10 disenchants or more;
---      - else every kinds entry of the item's class and quality whose item level falls in the item's classic-db
---        bracket (DE_BRACKETS below), summed, when they have 30 disenchants together or more;
---   2. else classic-db's chances (Disenchant.lua).
--- The brackets, the lesser -> greater essences and the material names are classic-db's (CMaNGOS, GPL-3.0,
--- https://github.com/cmangos/classic-db), as DisenchantValue's tools/gen_data.py worked them out.
+--      - else every kinds entry of the item's class and quality whose item level falls in the item's bracket (the
+--        client's, Disenchant.lua's DE_KINDS), summed, when they have 30 disenchants together or more;
+--   2. else measured in vanilla (Enchantrix, Disenchant.lua): this item's own odds (DE_ITEM_ODDS), else its
+--      bracket's when they are measured;
+--   3. else classic-db's chances for its bracket (an estimate);
+--   4. a bracket with none of these (rare item levels 5-20, new in WoW Forever) can be disenchanted, but nobody has
+--      measured what it gives yet.
+-- The brackets, which items can be disenchanted and their class (shields and off-hands are armor) are the WoW Forever
+-- client's. The lesser -> greater essences and the material names are classic-db's (CMaNGOS, GPL-3.0,
+-- https://github.com/cmangos/classic-db).
 local _, ns = ...
-
--- [table class: 2 weapons, shields and held-in-off-hand items, 4 other armor][quality] = { { low, high }, ... }
-local UNCOMMON = { { 5, 15 }, { 16, 20 }, { 21, 25 }, { 26, 30 }, { 31, 35 }, { 36, 40 }, { 41, 45 }, { 46, 50 },
-  { 51, 55 }, { 56, 60 }, { 61, 65 } }
-local RARE = { { 5, 25 }, { 26, 30 }, { 31, 35 }, { 36, 40 }, { 41, 45 }, { 46, 50 }, { 51, 55 }, { 56, 65 },
-  { 66, 70 }, { 71, 74 } }
-local EPIC = { { 5, 45 }, { 46, 50 }, { 51, 55 }, { 56, 60 }, { 61, 92 } }
-ns.DE_BRACKETS = {
-  [2] = { [2] = UNCOMMON, [3] = RARE, [4] = EPIC },
-  [4] = { [2] = UNCOMMON, [3] = RARE, [4] = EPIC },
-}
 
 -- lesser essence -> greater essence (3 lesser combine into 1 greater)
 ns.DE_LESSER = { [10938] = 10939, [10998] = 11082, [11134] = 11135, [11174] = 11175, [16202] = 16203 }
@@ -42,18 +36,12 @@ ns.DE_NAMES = {
 ns.DE_ITEM_MIN = 10   -- an item's own disenchants needed to use them
 ns.DE_KIND_MIN = 30   -- disenchants of its kind (class, quality, item-level bracket) needed
 
--- Shields and held-in-off-hand items use the weapon tables (classic-db); subclass and equipLoc may be nil.
-function ns.deTableClass(cls, subclass, equipLoc)
-  if cls == 4 and (subclass == 6 or equipLoc == "INVTYPE_HOLDABLE") then return 2 end
-  return cls
-end
-
--- The classic-db item-level bracket of an item: low, high; nil when there is none.
-function ns.deBracket(cls, quality, ilvl, subclass, equipLoc)
+-- The client's item-level bracket for an item of this class, quality and item level: low, high and its loot ID; nil
+-- when there is none. Shields and off-hands are armor (class 4) like any other armor.
+function ns.deBracket(cls, quality, ilvl)
   if type(ilvl) ~= "number" then return nil end
-  local byClass = ns.DE_BRACKETS[ns.deTableClass(cls, subclass, equipLoc)]
-  for _, b in ipairs(byClass and byClass[quality] or {}) do
-    if ilvl >= b[1] and ilvl <= b[2] then return b[1], b[2] end
+  for id, k in pairs(ns.DE_KINDS or {}) do
+    if k[1] == cls and k[2] == quality and ilvl >= k[3] and ilvl <= k[4] then return k[3], k[4], id end
   end
 end
 
@@ -104,10 +92,17 @@ local function odds()
 end
 ns.deOddsTable = odds
 
+-- The bracket an item disenchants by: its DE_KINDS entry and loot ID; nil when it can't be disenchanted.
+local function kindOf(id)
+  local lid = ns.DE_ITEMS and ns.DE_ITEMS[id]
+  local k = lid and ns.DE_KINDS and ns.DE_KINDS[lid]
+  if k then return k, lid end
+end
+ns.deKindOf = kindOf
+
 -- Players' odds for an item: rows (as Disenchant.lua's), "item" or "kind", and how many disenchants they are from;
--- nil when there aren't enough (then classic-db's are used). info = { cls, q, ilvl, sub, equipLoc } when the caller
--- has them (else they are read from the game's item cache).
-function ns.deOdds(id, info)
+-- nil when there aren't enough (then ns.deFallback's are used).
+function ns.deOdds(id)
   local o = odds()
   if not o or not id then return nil end
   local it = type(o.items) == "table" and o.items[id]
@@ -116,19 +111,10 @@ function ns.deOdds(id, info)
     if r then return r, "item", it.n end
   end
   if type(o.kinds) ~= "table" then return nil end
-  -- the kinds only stand in for items classic-db knows can be disenchanted
-  if not (ns.DE_ITEMS and ns.DE_ITEMS[id]) then return nil end
-  local cls, q, ilvl, sub, equipLoc
-  if info then
-    cls, q, ilvl, sub, equipLoc = info.cls, info.q, info.ilvl, info.sub, info.equipLoc
-  else
-    local okI, _, _, quality, level, _, _, _, _, loc, _, _, classID, subclassID = pcall(C_Item.GetItemInfo, id)
-    if not okI then return nil end
-    cls, q, ilvl, sub, equipLoc = classID, quality, level, subclassID, loc
-  end
-  if not ns.deCanDisenchant(cls, q) then return nil end
-  local low, high = ns.deBracket(cls, q, ilvl, sub, equipLoc)
-  if not low then return nil end
+  -- the kinds only stand in for items the client says can be disenchanted
+  local k = kindOf(id)
+  if not k then return nil end
+  local cls, q, low, high = k[1], k[2], k[3], k[4]
   local entries, total = {}, 0
   for l = low, high do
     local e = o.kinds[cls .. ":" .. q .. ":" .. l]
@@ -141,6 +127,26 @@ function ns.deOdds(id, info)
   local mats, n = combine(entries)
   local r = rows(mats)
   if r then return r, "kind", n end
+end
+
+-- Without enough players' disenchants: rows, "measured" (vanilla's disenchants: this item's own, else its
+-- bracket's) or "estimate" (classic-db's), and for this item's own the disenchants they are from. nil, "unmeasured"
+-- for an item that can be disenchanted but whose bracket nobody has measured; nil when it can't be disenchanted.
+function ns.deFallback(id)
+  local k = kindOf(id)
+  if not k then return nil end
+  local own = ns.DE_ITEM_ODDS and ns.DE_ITEM_ODDS[id]
+  if own then
+    local out = {}
+    for i = 2, #own - 2, 3 do out[#out + 1] = { own[i], own[i + 1], own[i + 2], own[i + 2] } end
+    if #out > 0 then return out, "measured", own[1] end
+  end
+  if k[5] == "m" or k[5] == "e" then
+    local out = {}
+    for i = 6, #k do out[#out + 1] = k[i] end
+    if #out > 0 then return out, k[5] == "m" and "measured" or "estimate" end
+  end
+  return nil, "unmeasured"
 end
 
 -- A material's name: the game's, else the bundled one, else "item 12345".

@@ -26,6 +26,7 @@ end
 - `api.disenchant(item)` returns, or `nil` when the item can't be disenchanted or a material has no price yet:
   - the estimated auction house value of disenchanting it, in copper
   - the age in seconds of the oldest material price it used
+  - (version 5) where the chances are from: `"players"` (players' disenchants, from the Price Feed), `"measured"` (version 6: disenchants counted in vanilla) or `"estimate"`
 
 - `api.addShoppingList(name, items)` (version 2) saves a shopping list in the auction house's Shopping tab: `items = { { itemID, count }, ... }`. A list with the same name is replaced, so pushing it again updates it. Returns `true` and whether the list is new, or `false` and why: `"no name"`, `"no items"`, `"loading"` (the game hasn't loaded every item's name yet: call again in a moment) or `"not ready"` (the addon hasn't loaded its saved data yet). It is the one call that writes, and it only adds or replaces a list.
 
