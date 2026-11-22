@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.22.0 (2026-11-22)
 - New: Buy this list. At the auction house, a small panel goes through a shopping list one item at a time: "Buy 60 Light Leather?", then the cheapest way to get them with the total, and one Buy button with the exact price on it. Then the next item, until you see what you bought, skipped and spent. It warns when a price is far above the usual one or fewer are listed than you want, takes off what you already have, and ticks off what you bought. Nothing is bought until you press Buy. `/eah buy [list]` starts it too.
 - Import a list: paste what you want to buy, one item per line, in almost any form ("60 Light Leather", "Light Leather x60", "Light Leather, 60", item links, "2318 60"). Add "max 25s" to a line to pay at most that for one. Lines it can't read are shown and stay in the box to fix. `/eah import` opens it.
 - Export now writes a list's amounts too, so a shared list imports with them.
