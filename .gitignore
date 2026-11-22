@@ -2,3 +2,4 @@
 *.zip
 .release/
 curseforge/live/
+__pycache__/
