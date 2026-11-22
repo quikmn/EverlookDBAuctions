@@ -3,8 +3,10 @@
 --   (slot is trinket and price lt 5g, "*of the eagle", ...). Run a list to see every search's results one after
 --   another in Advanced search, each under its query, with live prices; run a single search the same way.
 --   Save in Advanced search adds the search you just ran to the picked list.
---   Lists go in and out as plain text (Import / Export), one list per "# name" line and one search per line, so
---   they can be shared in chat or on a forum.
+--   Lists go in and out as plain text (Import / Export), one list per "# name" line and one item or search per line,
+--   so they can be shared in chat or on a forum. Import reads items to buy in any common form ("60 Light Leather",
+--   "Light Leather x60", item links, "2318 60", everlookdb.com's copy; ListImport.lua) and says which lines it
+--   couldn't use. Buy this list walks through a list's items one at a time (BuyList.lua).
 -- db.lists = { { name = "...", queries = { "...", ... }, want = { [query] = how many to buy } }, ... },
 -- db.listSel = index of the picked list. want is there for lists made from a recipe (Crafting.lua, RecipeList.lua).
 -- Searching never buys anything: buy from the results as usual.
@@ -56,29 +58,7 @@ end
 -- Plain text: "# name" starts a list, every other line that isn't empty is a search.
 
 local function exportText(l)
-  local out = { "# " .. l.name }
-  for _, q in ipairs(l.queries) do out[#out + 1] = q end
-  return table.concat(out, "\n")
-end
-
-local function importText(text)
-  local made, cur = {}, nil
-  for raw in (text or ""):gsub("\r", ""):gmatch("[^\n]+") do
-    local line = raw:match("^%s*(.-)%s*$"):gsub("||", "|")
-    local name = line:match("^#%s*(.+)$")
-    if name then
-      cur = { name = name, queries = {} }
-      made[#made + 1] = cur
-    elseif line ~= "" then
-      if not cur then
-        cur = { name = "Imported", queries = {} }
-        made[#made + 1] = cur
-      end
-      cur.queries[#cur.queries + 1] = line
-    end
-  end
-  for _, l in ipairs(made) do newList(l.name, l.queries) end
-  return #made
+  return ns.listImport.export(l, ns.listImport.moneyText)
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -168,7 +148,12 @@ local function fillQueryRow(b, q)
   b.text:SetText(C_GOOD .. plain(q) .. "|r")
   local l = picked()
   local n = l and l.want and l.want[q]
-  b.want:SetText(n and ("buy " .. num(n)) or "")
+  local g = l and l.got and l.got[q]
+  if n and g and g.n > 0 then
+    b.want:SetText((g.n >= n and C_GOOD or "") .. ("%s of %s bought"):format(num(g.n), num(n)) .. (g.n >= n and "|r" or ""))
+  else
+    b.want:SetText(n and ((l.countHave and "need " or "buy ") .. num(n)) or "")
+  end
 end
 
 function render()
@@ -188,6 +173,12 @@ function render()
   f.del:SetText(SH.deleteArmed and "Sure?" or "Delete")
   f.del:EdbActive(SH.deleteArmed and true or false)
   f.count:SetText(("%s searches"):format(num(#l.queries)))
+  -- Buy this list is the gold button for a list with amounts to buy; Run list is then a plain one
+  local items = ns.buyList and #ns.buyList.entries(l, ns.listImport.idOf) or 0
+  f.buyBtn:SetShown(items > 0)
+  f.runPrimary:SetShown(items == 0)
+  f.runBtn:SetShown(items > 0)
+  f.reset:SetShown(l.got ~= nil and next(l.got) ~= nil)
   -- the search being changed: still in this list?
   local e = SH.editing
   if e and e.list ~= l then SH.editing, e = nil, nil end
@@ -219,12 +210,91 @@ local function showText(mode)
   local f = SH.frame
   local l = picked()
   f.io.mode = mode
-  f.io.title:SetText(mode == "export" and "Export: copy this text (Ctrl+C)" or "Import: paste lists (Ctrl+V), then press Import")
+  f.io.title:SetText(mode == "export" and "Export: copy this text (Ctrl+C)" or "Import: paste items to buy (Ctrl+V), one per line")
   f.io.box:SetText(mode == "export" and l and plain(exportText(l)) or "")   -- Import turns || back into |
   f.io.go:SetShown(mode == "import")
+  for _, w in ipairs(f.io.importOnly) do w:SetShown(mode == "import") end
+  f.io.report:SetText(mode == "import" and SH.HOW or "")
+  f.io.report:SetTextColor(unpack(T.dim))
+  if mode == "import" then f.io.saveAs:SetText("") end
   f.io:Show()
   f.io.box:SetFocus()
   if mode == "export" then f.io.box:HighlightText() end
+end
+
+SH.HOW = 'One item per line: "60 Light Leather", "Light Leather x60", "Light Leather, 60", item links, or an item ID and '
+  .. 'how many ("2318 60"). Add "max 25s" to pay at most that for one. A line like "slot is trinket" stays a search.'
+
+local WHY = {
+  unknown = "no item by that name (check the spelling, or paste its item link)",
+  loading = "the game didn't send this item's name",
+  ["nothing to read"] = "no item in it",
+}
+
+-- Import: reads the box, waits a moment for item names the game hasn't sent yet, saves, and says what it did. Lines
+-- it couldn't use stay in the box (with the list's name in Save as), to fix and import again.
+function SH.import(text, saveAs, countHave, tries)
+  local f = SH.frame
+  local I = ns.listImport
+  local res = I.read(text, I.lookup, saveAs)
+  local io = f and f.io
+  if #res.loading > 0 and (tries or 0) < 5 then
+    for _, id in ipairs(res.loading) do
+      if C_Item and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, id) end
+    end
+    if io then io.report:SetText("Waiting for the game to send some item names...") end
+    C_Timer.After(1, function() SH.import(text, saveAs, countHave, (tries or 0) + 1) end)
+    return res
+  end
+  local done = I.save(lists(), res, countHave)
+  if done[1] and done[1].index then ns.db().listSel = done[1].index end
+  local parts = {}
+  for _, d in ipairs(done) do
+    local what = {}
+    if d.items > 0 then what[#what + 1] = ("%d item%s"):format(d.items, d.items == 1 and "" or "s") end
+    if d.searches > 0 then what[#what + 1] = ("%d search%s"):format(d.searches, d.searches == 1 and "" or "es") end
+    parts[#parts + 1] = ("%s %s %s"):format(table.concat(what, " and "), d.new and "in the new list" or "added to", plain(d.list.name))
+  end
+  local lines = {}
+  if #parts > 0 then lines[1] = C_GOOD .. "Saved " .. table.concat(parts, "; ") .. ".|r" end
+  if res.asSearch then
+    lines[#lines + 1] = "Kept as searches (no item by that name, and no amount): " .. plain(table.concat(res.asSearch, ", "))
+  end
+  for _, line in ipairs(res.maxBad) do
+    lines[#lines + 1] = ('"%s": the max price needs g, s or c (like 25s), so it has none.'):format(plain(line))
+  end
+  local left = {}
+  if #res.bad > 0 then
+    lines[#lines + 1] = UI.hex(T.bad) .. ("%d line%s couldn't be used and %s still in the box: fix %s and press Import again."):format(
+      #res.bad, #res.bad == 1 and "" or "s", #res.bad == 1 and "is" or "are", #res.bad == 1 and "it" or "them") .. "|r"
+    for k, b in ipairs(res.bad) do
+      if k <= 4 then lines[#lines + 1] = ("  %s: %s"):format(plain(b.line), WHY[b.why] or b.why) end
+      left[#left + 1] = b.line
+    end
+    if #res.bad > 4 then lines[#lines + 1] = ("  and %d more"):format(#res.bad - 4) end
+  end
+  if #parts == 0 and #res.bad == 0 then lines[1] = UI.hex(T.bad) .. "Nothing to import: paste one item per line.|r" end
+  if io then
+    io.report:SetText(table.concat(lines, "\n"))
+    io.report:SetTextColor(unpack(T.dim))
+    if #res.bad > 0 then
+      -- the lines to fix, saved into the same list when imported again
+      local first = res.lists[1] and res.lists[1].name or saveAs
+      io.saveAs:SetText(plain(first or ""))
+      io.box:SetText(plain(table.concat(left, "\n")))
+    elseif #parts > 0 then
+      io:Hide()
+      setStatus(table.concat(lines, "  "), T.good)
+    end
+  end
+  render()
+  return res, done
+end
+
+-- /eah import: the Shopping tab with the import box open.
+function SH.openImport()
+  if ns.openShopping then ns.openShopping() end
+  if SH.frame then showText("import") end
 end
 
 local function makeFrame()
@@ -317,7 +387,7 @@ local function makeFrame()
 
   local nl = needs(UI.label(R, "LIST NAME"))
   nl:SetPoint("TOPLEFT", 12, -10)
-  f.name = needs(UI.input(R, 220, 24, { max = 60 }))
+  f.name = needs(UI.input(R, 170, 24, { max = 60 }))
   f.name:SetPoint("TOPLEFT", 12, -24)
   -- the name is kept when you press Enter or click elsewhere (New list puts you straight in here, and the next
   -- thing you do is type a search below); Escape puts the old name back
@@ -363,10 +433,26 @@ local function makeFrame()
   local exp = needs(UI.button(R, "Export", 64, 24, "small"))
   exp:SetPoint("RIGHT", f.del, "LEFT", -4, 0)
   exp:SetScript("OnClick", function() showText("export") end)
+  -- Run list: gold while the list has nothing to buy item by item; else a plain Run, and Buy this list is the gold one
   local run = needs(UI.button(R, "Run list", 96, 24, "primary"))
   run:SetPoint("RIGHT", exp, "LEFT", -8, 0)
   run:SetScript("OnClick", function() runList(picked()) end)
   UI.tip(run, "Run every search in this list", "Results show in Advanced search, one search after another.")
+  f.runPrimary = run
+  local runPlain = UI.button(R, "Run", 56, 24, "small")
+  runPlain:SetPoint("RIGHT", exp, "LEFT", -4, 0)
+  runPlain:SetScript("OnClick", function() runList(picked()) end)
+  UI.tip(runPlain, "Run every search in this list", "Results show in Advanced search, one search after another.")
+  runPlain:Hide()
+  f.runBtn = runPlain
+  local buy = UI.button(R, "Buy this list", 110, 24, "primary")
+  buy:SetPoint("RIGHT", runPlain, "LEFT", -8, 0)
+  buy:SetScript("OnClick", function()
+    if ns.buyList then ns.buyList.begin(picked()) end
+  end)
+  UI.tip(buy, "Buy this list, item by item", "Asks about each item in turn, shows the cheapest way to get it, and buys it when you press Buy.")
+  buy:Hide()
+  f.buyBtn = buy
 
   local div = needs(UI.line(R, true))
   div:SetPoint("TOPLEFT", 1, -60)
@@ -415,6 +501,16 @@ local function makeFrame()
   bd:SetPoint("TOPRIGHT", -1, -118)
   local ql = UI.label(bd, UI.hex(PLACE) .. "SEARCHES|r   click one to edit it in the box above")
   ql:SetPoint("LEFT", 12, 0)
+  f.reset = UI.button(bd, "Reset bought", 90, 16, "small quiet")
+  f.reset:SetPoint("RIGHT", -6, 0)
+  f.reset:SetScript("OnClick", function()
+    local l = picked()
+    if l then l.got = nil end
+    setStatus("What was bought is no longer counted: Buy this list asks for the whole amounts again.", T.dim)
+    render()
+  end)
+  UI.tip(f.reset, "Forget what was bought", "Buy this list counts what it bought, so it never buys the same twice. This starts the list over.")
+  f.reset:Hide()
   f.queries = needs(UI.list(R, ROW, buildQueryRow, fillQueryRow))
   f.queries:SetPoint("TOPLEFT", 1, -138)
   f.queries:SetPoint("BOTTOMRIGHT", -3, 4)
@@ -434,9 +530,28 @@ local function makeFrame()
   close:SetScript("OnClick", function() io:Hide() end)
   io.go = UI.button(io, "Import", 80, 24, "primary")
   io.go:SetPoint("RIGHT", close, "LEFT", -6, 0)
+  local saveLabel = UI.label(io, "SAVE AS")
+  saveLabel:SetPoint("TOPLEFT", 12, -42)
+  io.saveAs = UI.input(io, 170, 22, { hint = "Shopping list", max = 60 })
+  io.saveAs:SetPoint("LEFT", saveLabel, "RIGHT", 8, 0)
+  UI.tip(io.saveAs, "The list to save into", 'A list with this name gets these items added (the same item adds up). A "# Name" line in the text starts a list of that name.')
+  io.countHave = UI.check(io, "Count what I already have", function(_, on)
+    local d = ns.db()
+    if d then d.importCountHave = on end
+  end)
+  io.countHave:SetPoint("LEFT", io.saveAs, "RIGHT", 14, 0)
+  UI.tip(io.countHave, "Count what I already have", "On: amounts are what you want in all, and what is in your bags and bank (and on your alts, when EverlookDB Crafting counts them) is taken off when buying. Off: amounts are what to buy.")
+  io.importOnly = { saveLabel, io.saveAs, io.countHave }
+  io.report = UI.text(io, "dim")
+  io.report:SetPoint("BOTTOMLEFT", 12, 44)
+  io.report:SetPoint("RIGHT", io, "RIGHT", -12, 0)
+  io.report:SetWordWrap(true)
+  io.report:SetJustifyV("BOTTOM")
+  if io.report.SetMaxLines then io.report:SetMaxLines(6) end
   local well = UI.panel(CreateFrame("Frame", nil, io), T.input, T.edge)
-  well:SetPoint("TOPLEFT", 10, -36)
-  well:SetPoint("BOTTOMRIGHT", -10, 44)
+  io.well = well
+  well:SetPoint("TOPLEFT", 10, -70)
+  well:SetPoint("BOTTOMRIGHT", -10, 124)
   local scroll
   local box = CreateFrame("EditBox")
   box:SetMultiLine(true)
@@ -464,10 +579,7 @@ local function makeFrame()
   well:SetScript("OnMouseDown", function() box:SetFocus() end)
   io.box = box
   io.go:SetScript("OnClick", function()
-    local n = importText(box:GetText())
-    io:Hide()
-    setStatus(n > 0 and ("Imported %d list%s."):format(n, n == 1 and "" or "s") or "Nothing to import.", n > 0 and T.good or T.bad)
-    render()
+    SH.import(box:GetText(), (io.saveAs:GetText():gsub("||", "|")), io.countHave.checked)
   end)
   f.io = io
 
@@ -477,6 +589,8 @@ local function makeFrame()
 
   f:SetScript("OnShow", function()
     f.io:Hide()
+    local d = ns.db()
+    f.io.countHave:EdbChecked(not (d and d.importCountHave == false))
     render()
   end)
   return f
@@ -546,12 +660,18 @@ ev:SetScript("OnEvent", function(_, e)
 end)
 
 ns.shoppingStore = SH.store   -- for tests/run.py
+ns.shopping = SH
 
 -- A list made elsewhere (the profession window's Shopping list) shows at once if the tab is open.
 function ns.shoppingRefresh() render() end
 
 local prevSlash, prevHelp = ns.slash, ns.help
 function ns.slash(msg)
+  if msg == "import" then
+    if _G.AuctionHouseFrame and AuctionHouseFrame:IsShown() then SH.openImport()
+    else ns.say("open the auction house first, then /eah import (or press Import on its Shopping tab).") end
+    return true
+  end
   if msg == "shop" or msg == "shopping" or msg == "lists" then
     if _G.AuctionHouseFrame and AuctionHouseFrame:IsShown() then openShopping() else ns.say("open the auction house first.") end
     return true

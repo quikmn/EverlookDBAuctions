@@ -5,5 +5,9 @@
   "releaseType": "release",
   "relations": [],
   "screenshots": "screenshots",
-  "syncOnRelease": false
+  "syncOnRelease": false,
+  "categories": {
+    "primary": "Auction & Economy",
+    "additional": []
+  }
 }

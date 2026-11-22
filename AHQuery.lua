@@ -10,7 +10,8 @@
 --   * "nobody is selling" is only believed from a complete answer (HasFull...Results) to the same search Blizzard's
 --     own Search button sends: a browse by name. The ItemKeys come from that browse, never built by hand: random-stat
 --     gear has one ItemKey per suffix ("Dwarven Magestaff of the Bear"), and a hand-made key finds nothing;
---   * our background searches (live prices) wait while the buy panel is open or Blizzard's own search is running.
+--   * our background searches (live prices) wait while the buy panel or Buy this list is open, or Blizzard's own
+--     search is running.
 
 local _, ns = ...
 
@@ -94,7 +95,7 @@ end
 Q.blizzardSelling = blizzardSelling
 
 local function allowed(job)
-  return not (job.background and (ns.buyOpen or Q.blizzard or blizzardSelling()))
+  return not (job.background and (ns.buyOpen or ns.listBuying or Q.blizzard or blizzardSelling()))
 end
 
 -- A post is going out: nothing of ours is sent for a few seconds, so the server answers the post first.

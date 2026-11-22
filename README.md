@@ -13,6 +13,8 @@ Auction house prices, selling and shopping lists for WoW Forever, from the maker
 - **Advanced search:** the Advanced search button on the Buy tab searches your last full scan with the same query language as EverlookDB.com: stats, random-stat versions, slot, level, price, effects. For example `type has wand and reqlevel le 29 sort by price` or `slot is feet and effect has "speed"`. Click a result to see its live auctions and buy.
 - **Below vendor price:** lists auctions that cost less than a vendor pays, with the profit each, biggest first. Such auctions also get a green mark in the auction house lists.
 - **Shopping tab:** named lists of searches. Run a whole list in one click. Lists import and export as plain text.
+- **Import a list:** paste what you want to buy, one item per line, in any common form: `60 Light Leather`, `Light Leather x60`, `Light Leather, 60`, item links, or an item ID and how many (`2318 60`). Add `max 25s` to a line to pay at most that for one. The same item twice adds up, and lines it can't read stay in the box to fix. The leveling guides on everlookdb.com have a "Copy for the addon" button.
+- **Buy this list:** at the auction house, a small panel goes through the list one item at a time: "Buy 60 Light Leather?", Yes, then the cheapest way to get them (how many at which price, the total), a warning when that's far above the usual price or fewer are listed than you want, and one Buy button with the price on it. What you already have in your bags and bank is taken off first, and what you buy is ticked off the list. At the end it shows what you bought, skipped and spent. Nothing is bought until you press Buy.
 - **Crafting cost:** beside the profession window, for the recipe you pick: each material's price, the total, what the result sells for, and the profit after the cut. The Shopping list button turns a recipe's materials into a shopping list.
 - **Crafting profit:** `/eah profit` lists every recipe you know that sells for more than its materials cost, best first, with gold, silver and copper in lined-up columns. Click a heading to sort; filter by name, skill, profit, margin, cost and what you can make right now. With EverlookDB Crafting, tick your alts to add the recipes they know.
 - **Prices anywhere:** `/eah prices` (or Home's search box) searches your last full scan away from the auction house.
@@ -60,6 +62,7 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 - `/eah status` shows the version and how old your prices are
 - `/eah scan` updates prices now while the auction house is open
 - `/eah sell` opens Quick sell, `/eah shop` Shopping, `/eah run <list>` runs a shopping list
+- `/eah import` pastes a list of items to buy; `/eah buy [list]` buys a shopping list item by item
 - `/eah up` opens Gear upgrades; `/eah up help` lists its commands
 - `/eah prices` searches your last full scan anywhere; `/eah profit` the crafting profit list
 - `/eah bought`, `/eah forsale`, `/eah income`, `/eah loot` open the AH log on that tab

@@ -244,6 +244,12 @@ local function build()
   app:Command("run", "run <list>", "run a shopping list (auction house open)", function(rest)
     ns.slash(rest == "" and "run" or ("run " .. rest))
   end)
+  app:Command("buy", "buy [list]", "buy a shopping list item by item: it asks about each one, you press Buy (auction house open)", function(rest)
+    ns.slash(rest == "" and "buy" or ("buy " .. rest))
+  end, { "buylist" })
+  app:Command("import", "import", "paste a list of items to buy into a shopping list (auction house open)", function()
+    ns.slash("import")
+  end, { "paste" })
   -- "/eah undercut 1s" keeps its own reply (it names the step); "/eah set undercut 1s" works as for any setting
   app:Command("undercut", "undercut", "", function(rest) ns.slash("undercut " .. rest) end).hidden = true
   -- for bug reports and testing: they work, but help doesn't list them

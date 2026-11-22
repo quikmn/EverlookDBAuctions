@@ -76,7 +76,8 @@ def main() -> int:
     check(qs == ['name is "Copper Bar"', 'name is "Weak Flux"'], f"ticked items only: {qs}")
     check(l.want['name is "Copper Bar"'] == 3 and l.want['name is "Weak Flux"'] == 1, "how many to buy of each")
     keys = sorted(k for k in l.keys())
-    check(keys == ["name", "queries", "want"], f"saved fields: {keys}")
+    check(keys == ["items", "name", "queries", "want"], f"saved fields: {keys}")
+    check(l["items"]['name is "Copper Bar"'] == 2840, "the item ID is kept for Buy this list")
     for k in l.keys():
         v = l[k]
         check(isinstance(v, str) or lua.eval("type")(v) == "table", f"field {k} is text or a table")
@@ -137,6 +138,8 @@ def main() -> int:
     failures += health()
     failures += hub()
     failures += disenchanting()
+    failures += list_import()
+    failures += buy_list()
 
     if failures:
         for f in failures:
@@ -5795,6 +5798,367 @@ def ledger():
     # the hub's numbers come from the ledger
     t, w, waiting, est = L.hubNumbers(s2, None, 100)
     check(t == 140 and waiting == 1 and est == 900, f"hub: today {t}, waiting {waiting} ~{est}")
+    return failures
+
+def list_import():
+    """Pasting a list of items (ListImport.lua): every common form of a line, item links and IDs, max prices,
+    amounts added up, lines it can't use returned (never dropped), searches kept, merging into a list, Export read
+    back, and the Shopping tab's Import leaving the lines to fix in the box."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    G = lua.globals()
+    G.NS = ns
+    lua.execute("""
+      local ns = NS
+      MOCK_ITEMS[2318] = "Light Leather"; MOCK_ITEMS[2320] = "Coarse Thread"
+      local db = ns.db()
+      db.itemInfo[2318] = "1^10^0^Trade Goods^Leather^^134400^15^20^Light Leather"
+      db.itemInfo[2320] = { "Coarse Thread", 1, 10, 0, "Trade Goods", "Parts", "", 1, 2, 20 }
+      ns.itemInfo = function(id) local c = db.itemInfo[id]; if type(c) == "string" then return { c:match("([^^]*)$") } end return c end
+    """)
+    run(source_of("ListImport.lua"), "ListImport.lua", "EverlookDBAuctions", ns)
+    I = ns.listImport
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("list import: " + what)
+
+    def parsed(line):
+        e = I.parseLine(line)
+        return None if e is None else {k: e[k] for k in e.keys() if k != "line"}
+
+    forms = {
+        "60 Light Leather": {"name": "Light Leather", "n": 60},
+        "60x Light Leather": {"name": "Light Leather", "n": 60},
+        "60 x Light Leather": {"name": "Light Leather", "n": 60},
+        "Light Leather x60": {"name": "Light Leather", "n": 60},
+        "Light Leather x 60": {"name": "Light Leather", "n": 60},
+        "Light Leather, 60": {"name": "Light Leather", "n": 60},
+        "Light Leather: 60": {"name": "Light Leather", "n": 60},
+        "Light Leather - 60": {"name": "Light Leather", "n": 60},
+        "Light Leather (60)": {"name": "Light Leather", "n": 60},
+        "Light Leather\t60": {"name": "Light Leather", "n": 60},
+        "  - 60 Light Leather  ": {"name": "Light Leather", "n": 60},
+        "1. 20 Light Leather": {"name": "Light Leather", "n": 20},
+        "[ ] 5 Light Leather": {"name": "Light Leather", "n": 5},
+        "[Light Leather] x60": {"name": "Light Leather", "n": 60},
+        "60 [Light Leather]": {"name": "Light Leather", "n": 60},
+        "|cffffffff|Hitem:2318::::::::|h[Light Leather]|h|r x60": {"id": 2318, "name": "Light Leather", "n": 60},
+        "2318 60": {"id": 2318, "n": 60},
+        "2318": {"id": 2318},
+        "item:2318 x5": {"id": 2318, "n": 5},
+        "60 Light Leather #2318": {"id": 2318, "name": "Light Leather", "n": 60},
+        'name is "Light Leather" buy 60': {"name": "Light Leather", "n": 60},
+        "60 Light Leather max 25s": {"name": "Light Leather", "n": 60, "max": 2500},
+        "12 Coarse Thread (max 1g 50s)": {"name": "Coarse Thread", "n": 12, "max": 15000},
+        "Light Leather x60 under 30s": {"name": "Light Leather", "n": 60, "max": 3000},
+        "60 Light Leather max 25": {"name": "Light Leather", "n": 60, "maxBad": True},
+        "Box 60": {"name": "Box", "n": 60},
+        "Light Leather": {"name": "Light Leather"},
+        "# Bags": {"header": "Bags"},
+        "slot is trinket and price lt 5g": {"search": "slot is trinket and price lt 5g"},
+    }
+    for line, want in forms.items():
+        got = parsed(line)
+        check(got == want, f"{line!r} -> {got}, expected {want}")
+    check(parsed("") is None and parsed("   ") is None and parsed("// note") is None, "empty lines and comments")
+    check(parsed("60×Light Leather") == {"name": "Light Leather", "n": 60}, "the times sign")
+    check(I.money("1g 50s") == 15000 and I.money("25s") == 2500 and I.money("2.5g") == 25000 and I.money("75") is None,
+          "money in g, s and c")
+    check(I.moneyText(15000) == "1g50s" and I.moneyText(2505) == "25s5c", "money as typed text")
+    unpacked = I.unpack('Bags^"Light Leather";;0;0;0;0;0;0;0;0;;#;;60^"Coarse Thread";;0;0;0;0;0;0;0;0;;#;;12')
+    check(unpacked.split("\n") == ["# Bags", "60 Light Leather", "12 Coarse Thread"], f"another addon's export: {unpacked!r}")
+
+    # a whole paste: amounts added up, IDs and names, a name nobody knows, an ID still loading, searches
+    text = "\n".join([
+        "60 Light Leather", "Light Leather x10 max 20s", "2318 5", "12 Coarse Thread max 30s", "Coarse Thread, 3 max 10s",
+        "40 Light Leathr", "[Mystery Thing] x2", "999999 4", "slot is trinket", "Silk Clot",
+        "# Second", "2 Coarse Thread"])
+    res = I.read(text, I.lookup, "Leatherworking")
+    names = [res.lists[k].name for k in range(1, len(res.lists) + 1)]
+    check(names == ["Leatherworking", "Second"], f"lists: {names}")
+    first = res.lists[1]
+    items = {first["items"][k].id: (first["items"][k].n, first["items"][k].max) for k in range(1, len(first["items"]) + 1)}
+    check(items == {2318: (75, 2000), 2320: (15, 1000)}, f"amounts added up, the lowest max kept: {items}")
+    bad = {res.bad[k].line: res.bad[k].why for k in range(1, len(res.bad) + 1)}
+    check(bad == {"40 Light Leathr": "unknown", "[Mystery Thing] x2": "unknown", "999999 4": "loading"},
+          f"lines it couldn't use are returned with why: {bad}")
+    check(list(res.loading.values()) == [999999], "the ID still loading is asked for")
+    check([first.searches[k] for k in range(1, len(first.searches) + 1)] == ["slot is trinket", "Silk Clot"],
+          "a search stays a search; a bare unknown name is kept as one")
+    check(res.asSearch is not None and res.asSearch[1] == "Silk Clot", "and that is said")
+    check(I.idOf("light leathers") == 2318, "names are found whatever the case, plural too")
+
+    # saving: a new list, then the same name again adds up
+    lists = lua.table()
+    done = I.save(lists, res, True)
+    l = lists[1]
+    check(len(lists) == 2 and l.name == "Leatherworking" and done[1].new is True, "saved as named lists")
+    q = 'name is "Light Leather"'
+    check(l.want[q] == 75 and l["items"][q] == 2318 and l.max[q] == 2000 and l.countHave is True,
+          "amount, item ID, max price and count-what-you-have saved")
+    check([l.queries[k] for k in range(1, len(l.queries) + 1)] ==
+          [q, 'name is "Coarse Thread"', "slot is trinket", "Silk Clot"], "items first, then the searches, in order")
+    again = I.read("5 Light Leather", I.lookup, "Leatherworking")
+    I.save(lists, again, True)
+    check(len(lists) == 2 and lists[1].want[q] == 80, "importing into the same list adds up")
+
+    # Export reads back the same
+    out = I.export(l, I.moneyText)
+    check(out.split("\n")[1] == "80 Light Leather #2318 max 20s", f"export line: {out.split(chr(10))[1]!r}")
+    back = I.read(out, I.lookup)
+    bl = back.lists[1]
+    check(bl.name == "Leatherworking" and bl["items"][1].n == 80 and bl["items"][1].max == 2000 and len(back.bad) == 0,
+          "Export imports back the same")
+
+    # the Shopping tab: Import saves, says what it did, and leaves the lines to fix in the box
+    run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
+    run(source_of("BuyList.lua"), "BuyList.lua", "EverlookDBAuctions", ns)
+    run(source_of("Shopping.lua"), "Shopping.lua", "EverlookDBAuctions", ns)
+    lua.execute("AuctionHouseFrame = CreateFrame('Frame', 'AuctionHouseFrame'); C_Timer = { After = function() end }")
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    db = ns.db()
+    db.lists = lua.table()
+    lua.execute("C_Timer = { After = function(_, fn) fn() end }")
+    fire("AUCTION_HOUSE_SHOW")
+    f = G.EverlookAuctionsShopping
+    lua.eval("function(f) f.lists.SetItems = function() end; f.queries.SetItems = function() end end")(f)
+    f.Show(f)
+    ns.shopping.openImport()
+    io = f.io
+    check(io.shown and io.go.shown, "/eah import opens the import box")
+    io.box.text = "60 Light Leather\n40 Light Leathr"
+    io.saveAs.text = "Bags"
+    io.go.scripts.OnClick(io.go)
+    check(len(db.lists) == 1 and db.lists[1].name == "Bags" and db.lists[1].want[q] == 60, "saved as Bags")
+    check(io.shown and io.box.text == "40 Light Leathr" and io.saveAs.text == "Bags",
+          f"the line to fix stays in the box, for the same list: {io.box.text!r}")
+    check("1 item in the new list Bags" in io.report.text and "Light Leathr: no item by that name" in io.report.text,
+          f"the report: {io.report.text!r}")
+    io.box.text = "40 Light Leather"
+    io.go.scripts.OnClick(io.go)
+    check(db.lists[1].want[q] == 100 and not io.shown, f"fixed and imported again: added up, box closed")
+    check(f.buyBtn.shown and not f.runPrimary.shown, "a list with amounts: Buy this list is the one gold button")
+    return failures
+
+
+BUYLIST_SETUP = """
+local ns = ...
+AuctionHouseFrame = CreateFrame("Frame", "AuctionHouseFrame")
+ns.itemInfo = function(id) return ns.db().itemInfo[id] end
+MOCK_ITEMS[2589] = "Linen Cloth"; MOCK_ITEMS[2592] = "Wool Cloth"; MOCK_ITEMS[3000] = "Old Sword"
+SAID = {}
+ns.say = function(m) SAID[#SAID + 1] = m end
+USUAL = {}
+ns.scanRowFor = function(key) local id = tonumber(key:match("^(%d+)")); return USUAL[id] and { med = USUAL[id] } end
+"""
+
+
+def buy_list():
+    """Buy this list (BuyList.lua) against a fake auction house: it asks about each item, shows the cheapest way to
+    get the amount still needed (what you have and what was bought before count), asks for the exact price without
+    buying, buys only on the Buy click, counts what was bought, handles fewer listed than wanted, a max price, a price
+    far above the usual one, a refused or failed purchase, a price that is gone, Skip, the auction house closing,
+    and ends with what was bought, skipped and spent."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    lua.execute(BUY_SETUP)
+    run(AHQ_FAKE, "ahq", ns)
+    run(BUYLIST_SETUP, "buylist", ns)
+    for name in ["Skin.lua", "ListImport.lua", "BuyList.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    G = lua.globals()
+    W = ns.buyList
+    I = ns.listImport
+    tbl = lua.eval("function(...) return { ... } end")
+    browse_answer = lua.eval("function(id) return { ok = true, full = true, entries = { { itemKey = { itemID = id } } } } end")
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("buy list: " + what)
+
+    def fire(e, *args):
+        W.events[e](*args)
+
+    def calls(name):
+        return [G.CALLS[i] for i in range(1, len(G.CALLS) + 1) if G.CALLS[i][1] == name]
+
+    def answer(item_id):
+        G.AHQ.browse(browse_answer(item_id))
+        G.AHQ["items"](G.AHQ.key, True, True)
+
+    def click(b):
+        b.scripts.OnClick(b)
+
+    def auction(aid, buyout, qty=1):
+        return lua.table(auctionID=aid, buyoutAmount=buyout, quantity=qty, containsOwnerItem=False, timeLeft=3)
+
+    def comm(unit, qty, mine=0):
+        return lua.table(unitPrice=unit, quantity=qty, numOwnerItems=mine)
+
+    # the pure parts: what is still needed
+    l0 = lua.eval('{ want = { a = 30 }, got = { a = { n = 25, base = 5 } }, countHave = true }')
+    check(W.need(l0, "a", 5)[0] == 0, "bought 25 with 5 in the bags: nothing more")
+    check(W.need(l0, "a", 30)[0] == 0, "and none once the mail is collected")
+    check(W.need(l0, "a", 2)[0] == 0, "nor after using some of what you had")
+    l1 = lua.eval('{ want = { a = 30 }, got = { a = { n = 10 } } }')
+    check(W.need(l1, "a", 99)[0] == 20, "a list of what to buy: what you have doesn't count, what was bought does")
+    rows = tbl(lua.table(unit=10, others=20), lua.table(unit=12, others=10), lua.table(unit=40, others=50))
+    p = W.plan(rows, 25, True, 15)
+    check(p.got == 25 and p.cost == 260 and p.overMax == 50 and p.avg == 10, f"plan under the max: {p.got} {p.cost} {p.overMax}")
+    w = W.warnings(W.plan(rows, 100, True, 15), 100, None, 15)
+    check(w[1] == "Only 30 under your max of 15c (you want 100).", f"short under the max: {w[1]}")
+    w = W.warnings(W.plan(rows, 100, True, None), 100, None, None)
+    check(w[1] == "Only 80 listed (you want 100).", f"short: {w[1]}")
+
+    # a list: 30 Linen Cloth (5 in the bags, max 15c), 2 Old Swords, 5 Wool Cloth; a search is left out
+    G.MOCK_BAGS[2589] = 5
+    res = I.read("30 Linen Cloth max 15c\n2 Old Sword\n5 Wool Cloth\nslot is trinket", I.lookup, "Mats")
+    lists = ns.db().lists = lua.table()
+    I.save(lists, res, True)
+    l = lists[1]
+    check(len(W.entries(l)) == 3, "three items to buy, the search left out")
+    G.AuctionHouseFrame.IsShown = lua.eval("function() return false end")
+    W.begin(l)
+    check("open the auction house first" in (G.SAID[len(G.SAID)] or ""), "the auction house must be open")
+    G.AuctionHouseFrame.IsShown = lua.eval("function() return true end")
+    check(W.begin(l) is True, "it starts")
+    f = W.frame
+    check(f is not None and f.shown, "the panel shows beside the auction house")
+    check(f.head.text == "Buy 25 Linen Cloth?" and f.go.text == "Yes", f"first question: {f.head.text} / {f.go.text}")
+    check("wants 30, you have 5" in f.sub.text, f"have and want: {f.sub.text}")
+    check(f.max.text == "15c" and f.max.shown, f"the max price from the import: {f.max.text}")
+
+    # Yes: it looks, plans the cheapest 25 under 15c each, and asks for the exact price (buying nothing)
+    G.IS_COMMODITY = True
+    G.COMMS = tbl(comm(10, 20), comm(12, 10), comm(40, 50))
+    click(f.go)
+    check(f.go.text == "Looking...", f"while looking: {f.go.text}")
+    answer(2589)
+    check(calls("Start") and calls("Start")[0][2] == 2589 and calls("Start")[0][3] == 25, "the price of 25 is asked for")
+    check(len(calls("Confirm")) == 0, "nothing bought without the Buy click")
+    check("20 at 10c each" in f.body.text and "5 at 12c each" in f.body.text and "Total 260c" in f.body.text,
+          f"how many from which price: {f.body.text!r}")
+    check(f.go.text == "Getting the price...", f.go.text)
+    fire("COMMODITY_PRICE_UPDATED", 10, 260)
+    check(f.go.text == "Buy for 260c", f"the exact price on the button: {f.go.text}")
+    G.MONEY = 100
+    ns.buyList.render()
+    check("Not enough money" in f.warn.text, f"too little money: {f.warn.text}")
+    click(f.go)
+    check(len(calls("Confirm")) == 0, "not bought without the money")
+    G.MONEY = 100000
+    ns.buyList.render()
+    click(f.go)
+    conf = calls("Confirm")
+    check(len(conf) == 1 and conf[0][2] == 2589 and conf[0][3] == 25, "one click on Buy buys the 25")
+    check(f.go.text == "Buying...", f.go.text)
+    click(f.go)
+    check(len(calls("Confirm")) == 1, "a second click while it buys does nothing")
+    fire("COMMODITY_PURCHASE_SUCCEEDED")
+    q = 'name is "Linen Cloth"'
+    check(l.got[q].n == 25 and l.got[q].base == 5, "the 25 are ticked off the list")
+    check("Bought 25 Linen Cloth for 260c" in f.status.text, f"said: {f.status.text}")
+
+    # Old Sword: one auction at a time, far above the usual price, one refused
+    check(f.head.text == "Buy 2 Old Sword?", f"next: {f.head.text}")
+    G.USUAL[3000] = 150
+    G.IS_COMMODITY = False
+    G.ITEMS = tbl(auction(1, 300), auction(2, 600))
+    G.CALLS = lua.table()
+    click(f.go)
+    answer(3000)
+    check(len(calls("Start")) == 0, "single items need no price quote")
+    check(f.go.text == "Buy 1 for 300c", f.go.text)
+    check("Far above the usual price" in f.warn.text and "150c" in f.warn.text, f"price warning: {f.warn.text!r}")
+    click(f.go)
+    bids = calls("PlaceBid")
+    check(len(bids) == 1 and bids[0][2] == 1 and bids[0][3] == 300, "Buy buys the cheapest one")
+    fire("AUCTION_HOUSE_PURCHASE_COMPLETED", 1)
+    check(f.go.text == "Buy 1 for 600c" and l.got['name is "Old Sword"'].n == 1, f"then the next one: {f.go.text}")
+    click(f.go)
+    fire("AUCTION_HOUSE_SHOW_ERROR", 1)
+    check("refused" in f.status.text and "Nothing was paid" in f.status.text, f"refused: {f.status.text}")
+    G.ITEMS = tbl()
+    G.advance(1)           # it looks again
+    answer(3000)
+    check("None for sale" in f.warn.text and f.go.text == "Next item", f"gone: {f.warn.text} / {f.go.text}")
+    click(f.go)
+
+    # Wool Cloth: only 3 listed; the price is gone once, then Skip
+    check(f.head.text == "Buy 5 Wool Cloth?", f.head.text)
+    G.IS_COMMODITY = True
+    G.COMMS = tbl(comm(50, 3))
+    G.CALLS = lua.table()
+    click(f.go)
+    answer(2592)
+    check("Only 3 listed (you want 5)." in f.warn.text, f"partly available: {f.warn.text!r}")
+    check(calls("Start")[0][3] == 3, "the price of the 3 listed is asked for")
+    fire("COMMODITY_PRICE_UNAVAILABLE")
+    check("aren't for sale any more" in f.status.text, f.status.text)
+    answer(2592)
+    check(len(calls("Start")) == 2, "it looks and asks again")
+    fire("COMMODITY_PRICE_UPDATED", 50, 150)
+    G.advance(25)          # the price runs out before the click
+    check(f.go.text == "Get the price" and "ran out" in f.status.text, f"the price ran out: {f.go.text} / {f.status.text}")
+    click(f.go)
+    check(len(calls("Start")) == 3 and len(calls("Confirm")) == 0, "Get the price asks again and buys nothing")
+    fire("COMMODITY_PRICE_UPDATED", 50, 150)
+    click(f.go)
+    fire("COMMODITY_PURCHASE_FAILED")
+    check("didn't go through" in f.status.text, f.status.text)
+    G.advance(1)
+    answer(2592)
+    click(f.skip)
+
+    # the end: what was bought, skipped and spent
+    check(f.head.text == "Done" and f.go.text == "Close", f"done: {f.head.text}")
+    check("Bought 2 items for 560c." in f.body.text, f"summary: {f.body.text!r}")
+    check("1 Old Sword (of 2)" in f.body.text and "Skipped: Wool Cloth" in f.body.text, f"summary lines: {f.body.text!r}")
+    check(ns.listBuying is None, "background searches may run again")
+    click(f.go)
+    check(not f.shown, "Close shuts the panel")
+
+    # again: what was bought isn't bought twice; the auction house closing stops it and says what was bought
+    W.begin(l)
+    check(f.head.text == "Buy 1 Old Sword?", f"only what is still needed: {f.head.text}")
+    G.ITEMS = tbl(auction(7, 300))
+    G.IS_COMMODITY = False
+    G.CALLS = lua.table()
+    click(f.go)
+    answer(3000)
+    click(f.go)
+    fire("AUCTION_HOUSE_PURCHASE_COMPLETED", 7)
+    fire("AUCTION_HOUSE_CLOSED")
+    check(not f.shown and "auction house closed" in G.SAID[len(G.SAID)], f"closed: {G.SAID[len(G.SAID)]}")
+    check(W.state() is None, "the walk is over")
+
+    # /eah buy with a list name that isn't there
+    ns.slash("buy nothing here")
+    check("no list called" in G.SAID[len(G.SAID)] and "mats" in G.SAID[len(G.SAID)], G.SAID[len(G.SAID)])
+    # a client that wants a click for the price: Get the price from then on
+    G.MOCK_BAGS[2589] = 0
+    l.got = None
+    W.begin(l)
+    fire("ADDON_ACTION_BLOCKED", "EverlookDBAuctions", "C_AuctionHouse.StartCommoditiesPurchase()")
+    check(ns.db().quoteByClick is True, "remembered")
+    G.IS_COMMODITY = True
+    G.COMMS = tbl(comm(10, 40))
+    G.CALLS = lua.table()
+    click(f.go)
+    answer(2589)
+    check(len(calls("Start")) == 0 and f.go.text == "Get the price", f"asks for a click: {f.go.text}")
+    W.stop()
+    W.stop()
+    check(not f.shown, "Stop, then Close")
     return failures
 
 

@@ -4,7 +4,8 @@
 --   named after the recipe, in the same lists as the Shopping tab: one search per material (name is "Copper Bar"),
 --   and how many to buy of each in list.want[search]. Making the list again for the same recipe updates it.
 -- Saved shape: db.lists = { { name = "Runed Copper Rod", queries = { 'name is "Copper Bar"', ... },
---   want = { ['name is "Copper Bar"'] = 4 } } }. Only item names and counts, never a player name.
+--   want = { ['name is "Copper Bar"'] = 4 }, items = { ['name is "Copper Bar"'] = 2840 } } }. Only items and counts,
+--   never a player name. Saving it again replaces the amounts and forgets what Buy this list bought (list.got).
 local _, ns = ...
 local R = {}
 ns.recipeList = R
@@ -51,13 +52,14 @@ end
 -- A list with the same name is updated in place. Returns the list and whether it was new, or nil when nothing is
 -- ticked.
 function R.save(lists, recipeName, rows)
-  local queries, want = {}, {}
+  local queries, want, items = {}, {}, {}
   for _, r in ipairs(rows or {}) do
     local n = math.floor(tonumber(r.buy) or 0)
     if r.tick and n > 0 then
       local q = R.query(r.name)
       if not want[q] then queries[#queries + 1] = q end
       want[q] = (want[q] or 0) + n
+      if r.id then items[q] = r.id end   -- Buy this list goes by the item, not its name
     end
   end
   if #queries == 0 then return nil end
@@ -65,11 +67,12 @@ function R.save(lists, recipeName, rows)
   if name == "" then name = "Shopping list" end
   for i, l in ipairs(lists) do
     if l.name == name then
-      l.queries, l.want = queries, want
+      -- the new amounts are what to buy now: what was bought for the old ones no longer counts
+      l.queries, l.want, l.items, l.got, l.countHave = queries, want, items, nil, nil
       return l, false, i
     end
   end
-  local l = { name = name, queries = queries, want = want }
+  local l = { name = name, queries = queries, want = want, items = items }
   lists[#lists + 1] = l
   return l, true, #lists
 end
