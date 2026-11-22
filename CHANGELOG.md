@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.20.1 (2026-11-22)
 - The auction house's status line no longer has an "Open in EverlookDB Auctions" button: you're already there.
 
 ## v0.20.0 (2026-11-22)
