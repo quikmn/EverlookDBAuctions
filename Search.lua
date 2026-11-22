@@ -16,6 +16,9 @@
 -- (`price lt vendor`). profit is the vendor price minus the lowest buyout, each; stackprofit is that for a full stack.
 -- belowvendor works from the scan's single auctions (Vendor.lua): deals is how many auctions are under vendor price
 -- and make at least 10s each (any amount when the search names profit), dealprofit what they make together.
+-- enchant: the enchants players put on the gear up for sale, as a list ("Fiery Weapon, Crusader"), from your last
+-- full scan: `enchant is "Fiery Weapon"`, `enchant like "*crusader*"`, `has enchant` (any). Clicking such a result
+-- picks the cheapest auction with that enchant.
 
 local ADDON, ns = ...
 local UI, T = ns.UI, ns.T
@@ -92,6 +95,7 @@ for k in pairs(STATS) do KIND[k] = "number" end
 KIND.stats = "text"   -- every stat on the item as text, e.g. "Stamina 5, Agility 3": `stats has agility`
 KIND.effect = "text"  -- "Equip: ... / Use: ...": `effect has "run speed"`
 KIND.text = "text"    -- everything on the tooltip: `text has "fire damage"`, or `has "fire damage"` on its own
+KIND.enchant = "text" -- enchants on the gear up for sale: `enchant is "Fiery Weapon"`, `has enchant`
 local ALIAS = {
   rarity = "quality", subtype = "type", subclass = "type", itemclass = "category", level = "reqlevel", lvl = "reqlevel",
   req = "reqlevel", reqlvl = "reqlevel", lvlreq = "reqlevel", levelreq = "reqlevel", minlevel = "reqlevel", vendor = "sell", low = "price", lowest = "price",
@@ -100,11 +104,11 @@ local ALIAS = {
   ac = "armor", armour = "armor", firres = "fire_res", fireres = "fire_res", frostres = "frost_res",
   drop = "droprate", dropchance = "droprate", chance = "droprate", bagslots = "slots", size = "slots", prof = "profession", craftedby = "profession", from = "source",
   vendorprofit = "profit", flip = "profit", totalprofit = "dealprofit", dealsprofit = "dealprofit", stack_profit = "stackprofit", perstack = "stackprofit",
-  effects = "effect", tooltip = "text",
+  effects = "effect", tooltip = "text", enchants = "enchant", enchantment = "enchant", enchanted = "enchant",
   natureres = "nature_res", shadowres = "shadow_res", arcaneres = "arcane_res", blockvalue = "block", attackpower = "ap", spellpower = "sp", heal = "healing", def = "defense",
 }
 -- Columns that hold a comma list ("vendor, drop"): is, has, in, startswith... compare each element, as on the site.
-local LIST = { source = true }
+local LIST = { source = true, enchant = true }
 -- The ways to get an item, in Data.lua's order (ns.SOURCES bits); kept here so a shorter ns.SOURCES can't make a
 -- valid word an error. Other words for them, typed only: never shown.
 local SOURCES = { "vendor", "crafted", "drop", "quest", "skinning", "pickpocket", "fishing", "herbalism", "mining",
@@ -363,6 +367,14 @@ function Parser:primary()
   -- has without a column searches everything on the tooltip: `has "fire damage"` is `text has "fire damage"` (as on
   -- EverlookDB.com). At the end, or before a | or ), it stays a word.
   local tw = t.t == "word" and t.v:lower()
+  -- `has enchant`: any enchant at all
+  if (tw == "has" or tw == "with") and nxt and nxt.t == "word" and column(nxt.v) == "enchant" then
+    local after = self:peek(1)
+    if not (after and type(after.v) == "string" and (OPS[after.v:lower()] or after.v:lower() == "not")) then
+      self.pos = self.pos + 1
+      return { k = "cmp", col = "enchant", op = "ne", values = { "" } }
+    end
+  end
   if (tw == "has" or tw == "contains") and nxt and not (nxt.t == "op" and (nxt.v == "|" or nxt.v == ")")) then
     self.pos = self.pos - 1
     return self:comparison("text")
@@ -935,6 +947,14 @@ local function dataset()
         skill = d[3] or 0, slots = d[4] or 0, droprate = d[5] or 0,
         dealText = scanned.deals and scanned.deals[key] or nil,
       }
+      local ench = ns.enchantsFor and ns.enchantsFor(key)
+      if ench then
+        local names = {}
+        for i, e in ipairs(ench) do names[i] = e.name end
+        rows[#rows].enchants, rows[#rows].enchant = ench, table.concat(names, ", ")
+      else
+        rows[#rows].enchant = ""
+      end
     end
   end
   -- only keep the result when every item was loaded, so the next search sees the rest
@@ -1022,6 +1042,33 @@ local function run(text)
       counted = #out
     end
   end
+  -- the enchants the search names (not "has enchant"): each result keeps the ones it has, for the row and for Buy
+  local wants = {}
+  local function collect(e, neg)
+    if not e then return end
+    if e.k == "and" or e.k == "or" then collect(e.a, neg); collect(e.b, neg); return end
+    if e.k == "not" then collect(e.e, not neg); return end
+    if e.k == "cmp" and e.col == "enchant" and not (neg or e.neg) and e.op ~= "ne" and e.op ~= "notlike" then
+      wants[#wants + 1] = e
+    end
+  end
+  for _, st in ipairs(steps) do if st.k == "where" then collect(st.e) end end
+  for _, r in ipairs(out) do
+    r.wantEnchants = nil
+    if #wants > 0 and r.enchants then
+      for _, en in ipairs(r.enchants) do
+        for _, e in ipairs(wants) do
+          local hit = false
+          for _, w in ipairs(e.values) do if listMatch(en.name, e.op, w) then hit = true end end
+          if hit then
+            r.wantEnchants = r.wantEnchants or {}
+            r.wantEnchants[#r.wantEnchants + 1] = en
+            break
+          end
+        end
+      end
+    end
+  end
   local head = counted and ("%s matching item versions"):format(ns.num(counted))
     or ("%s results"):format(ns.num(#out))
   head = head .. (scanned.shared and " in other players' scan %s" or " in the full scan %s"):format(ns.ago(scanned.at))
@@ -1032,6 +1079,20 @@ local function run(text)
 end
 
 ns.queryRun = function(text) return run(text) end
+
+-- After a result's name: the enchants the search asked for with their price ("  Fiery Weapon 12g"), else the
+-- enchants seen on it ("  + Crusader, 2 more"); nothing for gear nobody enchanted.
+function Q.enchantTail(r)
+  local want = r.wantEnchants
+  if want and #want > 0 then
+    local e = want[1]
+    return "  " .. C_GOOD .. e.name .. (e.low and (" " .. ns.money(e.low)) or "") .. "|r"
+      .. (#want > 1 and (C_MUTE .. (" +%d"):format(#want - 1) .. "|r") or "")
+  end
+  local all = r.enchants
+  if not all or #all == 0 then return "" end
+  return "  " .. C_MUTE .. "+ " .. all[1].name .. (#all > 1 and (", %d more"):format(#all - 1) or "") .. "|r"
+end
 ns.queryOrdered = function() return Q.ordered end   -- for the offline tests: did the last search order itself
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -1132,7 +1193,7 @@ local function render()
       b.icon:SetTexture(r.icon)
       local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[(ENUMS.quality[r.quality] or 2) - 1]
       local l = liveOf(r)
-      b.name:SetText((l and l.gone and GREY or color and color.hex or "|cffffffff") .. r.name .. "|r")
+      b.name:SetText((l and l.gone and GREY or color and color.hex or "|cffffffff") .. r.name .. "|r" .. Q.enchantTail(r))
       local cols, cells, other = COLS, b.cells, b.vcells
       if Q.vendor then cols, cells, other = VCOLS, b.vcells, b.cells end
       for c, col in ipairs(cols) do cells[c]:SetText(col[5](r)) end
@@ -1464,6 +1525,12 @@ local function makeRow(f, k)
     end
     if r.median then
       GameTooltip:AddLine("Usual price at the last scan: " .. ns.money(r.median) .. " (half the auctions cheaper, half dearer)", 0.7, 0.7, 0.7, true)
+    end
+    for i, e in ipairs(r.enchants or {}) do
+      if i == 1 then GameTooltip:AddLine("Enchanted ones at the last scan:", 0.7, 0.7, 0.7) end
+      if i > 6 then GameTooltip:AddLine(("  and %d more"):format(#r.enchants - 6), 0.7, 0.7, 0.7); break end
+      GameTooltip:AddLine(("  %s: %s (%s up)"):format(e.name, e.low and ns.money(e.low) or "bids only", ns.num(e.n)),
+        T.good[1], T.good[2], T.good[3])
     end
     GameTooltip:AddLine("Click to see its live auctions and buy.", T.info[1], T.info[2], T.info[3], true)
     GameTooltip:Show()

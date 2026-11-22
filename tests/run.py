@@ -423,6 +423,39 @@ def below_vendor():
     _, _, vendor = names("slot is onehand")
     check(vendor is False, "a normal search has the normal columns")
 
+    # enchants on gear up for sale (from the last full scan): enchant is / like, has enchant
+    lua.eval("""function(ns)
+      ns.ENCHANTS = { [803] = 'Fiery Weapon', [1900] = 'Crusader' }
+      ns.enchantName = function(e) return ns.ENCHANTS[e] or ('Enchant ' .. e) end
+      ns.enchantsFor = function(key)
+        if key == '3000:0' then return { { id = 803, name = 'Fiery Weapon', low = 900, n = 1 }, { id = 1900, name = 'Crusader', low = 5000, n = 2 } } end
+        if key == '7001:0' then return { { id = 1900, name = 'Crusader', low = 4000, n = 1 } } end
+      end
+      local db, copy = ns.db(), {}
+      for k, v in pairs(db.scans[1]) do copy[k] = v end
+      db.scans[1] = copy   -- a new scan: the search reads its rows again
+    end""")(ns)
+    got, _, _ = names('enchant is "Fiery Weapon"')
+    check(got == ["Old Sword"], f"enchant is: {got}")
+    got, _, _ = names('enchant like "*crusader*" | sort by name')
+    check(got == ["Lesser Magic Wand", "Old Sword"], f"enchant like, any case: {got}")
+    got, _, _ = names("has enchant | sort by name")
+    check(got == ["Lesser Magic Wand", "Old Sword"], f"has enchant: {got}")
+    got, _, _ = names('not has enchant and slot is wand | sort by name')
+    check(got == ["Greater Magic Wand", "Sort Wand"], f"not has enchant: {got}")
+    got, _, _ = names('enchant is fire')
+    check(got == [], f"is compares whole names: {got}")
+    rows, *_ = ns.queryRun('enchant is crusader and slot is onehand')
+    w = rows[1].wantEnchants
+    check(len(rows) == 1 and w and len(w) == 1 and w[1].id == 1900, "a result keeps the enchant it was found by")
+    rows, *_ = ns.queryRun('enchant is "fiery weapon" or enchant is crusader')
+    sword = [rows[i] for i in range(1, len(rows) + 1) if rows[i].name == "Old Sword"][0]
+    check(len(sword.wantEnchants) == 2, "both asked-for enchants kept")
+    rows, *_ = ns.queryRun('has enchant and slot is onehand')
+    check(rows[1].wantEnchants is None, "has enchant names none: no pick")
+    check(P("has enchant")[1].e.col == "enchant", "has enchant is the enchant column")
+    check(P('has "fire damage"')[1].e.col == "text", "has with a word still searches the tooltip")
+
     # an item whose details aren't loaded: not marked, asked for once, not again within 30 s
     check(V.flip(6000, 1) is None and G.MOCK_LOADS == 1, "unknown item: asked for its details once")
     V.flip(6000, 1)
@@ -2253,6 +2286,22 @@ def shared_tooltip():
       return tip.lines
     end""")
     G = lua.globals()
+    # enchants on gear: read from the link for weapons and armor only, packed per item version, read back by name
+    lua.execute("""C_Item.GetItemInfoInstant = function(id) return id, '', '', '', 1, ({ [2244] = 2, [2589] = 7 })[id] end
+      ns_ENCH = { [803] = 'Fiery Weapon', [1900] = 'Crusader' }""")
+    ns.ENCHANTS = G.ns_ENCH
+    check(ns.enchantOf(2244, "|cff1eff00|Hitem:2244:803::::::::60:::::|h[Krol Blade]|h|r") == 803, "enchant read from the link")
+    check(ns.enchantOf(2244, "|Hitem:2244::::::::::60:::::|h[Krol Blade]|h") is None, "no enchant: nothing")
+    check(ns.enchantOf(2589, "|Hitem:2589:803:::|h[Linen Cloth]|h") is None, "only weapons and armor count")
+    check(ns.enchantOf(2244, None) is None, "no link: nothing")
+    packed = ns.packEnchants(lua.eval("{ [1900] = { 90000, 1 }, [803] = { 1200, 2 }, [7777] = { nil, 1 } }"))
+    check(packed == "803:1200:2;1900:90000:1;7777::1", f"packed enchants: {packed}")
+    lua.execute("EverlookAuctionsDB.houses['Test-Alliance'].ench = { ['2244:0'] = '1900:90000:1;803:1200:2;7777::1' }")
+    en = ns.enchantsFor("2244:0", "Alliance")
+    got = [(en[i].name, en[i].low, en[i].n) for i in range(1, len(en) + 1)] if en else None
+    check(got == [("Fiery Weapon", 1200, 2), ("Crusader", 90000, 1), ("Enchant 7777", None, 1)],
+          f"enchants read back, cheapest first, unnamed by number: {got}")
+    check(ns.enchantsFor("2589:0", "Alliance") is None, "no enchants: nil")
     lines = show(2589)
     got = [lines[i] for i in range(1, len(lines) + 1)]
     want = [" ",

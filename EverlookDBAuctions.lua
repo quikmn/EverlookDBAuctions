@@ -804,6 +804,7 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
   for key in pairs(vars) do list[#list + 1] = key end
   local rows, items = {}, {}
   local deals = {}   -- below vendor price: "unit:count,..." per item version (Vendor.lua), worked out once here
+  local ench, enchanted = {}, 0   -- enchanted gear: per item version its enchants (kept with the house, not uploaded)
   local i = 1
   local badRows = (scan and scan.badRows) or 0
   local function addRow(key)
@@ -814,6 +815,10 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       v.tl[1], v.tl[2], v.tl[3], v.tl[4], v.minBid or "" }, ",")
     if v.suffix ~= 0 and v.name then row = row .. "," .. v.name end
     rows[key] = row
+    if v.ench then
+      ench[key] = ns.packEnchants(v.ench)
+      for _, e in pairs(v.ench) do enchanted = enchanted + e[2] end
+    end
     if ns.vendor and ns.vendor.scanDeals then
       local okDeal, d = pcall(ns.vendor.scanDeals, v.id, v.units, v.counts)
       if okDeal and d then deals[key] = d end
@@ -843,6 +848,7 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
       if it[1] then noteDay(h, id, it[1], day) end
     end
     h.scanned = now
+    h.ench, h.enchanted = ench, enchanted
     logScan(h, scan.aborted and "done (AH closed; item details skipped)" or "done")
     pruneDays(h)
     local build = select(2, GetBuildInfo())
@@ -894,6 +900,33 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
   step()
 end
 
+-- The enchant a player put on a weapon or a piece of armor: the link's first field after the item ID
+-- ("item:2244:803:..." is Fiery Weapon). nil for anything else, or when there is none.
+local function enchantOf(id, link)
+  if type(link) ~= "string" then return nil end
+  local e = tonumber(link:match("|Hitem:%-?%d+:(%d+)"))
+  if not e or e <= 0 then return nil end
+  local okI, _, _, _, _, _, class = pcall(C_Item.GetItemInfoInstant, id)
+  if not okI or (class ~= 2 and class ~= 4) then return nil end
+  return e
+end
+ns.enchantOf = enchantOf
+
+-- An item version's enchants as saved: "803:1200:2;1900:90000:1" (enchant ID, lowest buyout each, how many up).
+function ns.packEnchants(t)
+  local ids = {}
+  for e in pairs(t) do ids[#ids + 1] = e end
+  table.sort(ids)
+  local out = {}
+  for i, e in ipairs(ids) do out[i] = e .. ":" .. (t[e][1] or "") .. ":" .. t[e][2] end
+  return table.concat(out, ";")
+end
+
+-- An enchant's name: the client's table (EnchantData.lua), else its number.
+function ns.enchantName(e)
+  return ns.ENCHANTS and ns.ENCHANTS[e] or ("Enchant " .. tostring(e))
+end
+
 -- Adds one auction to its item version.
 local function addOne(vars, id, count, buyout, minBid, bid, link, left)
   local key, suffix, name = variantOf(id, link)
@@ -913,6 +946,15 @@ local function addOne(vars, id, count, buyout, minBid, bid, link, left)
     v.bidOnly = v.bidOnly + 1
   end
   if bid and bid > 0 then v.withBids = v.withBids + 1 end
+  local ench = enchantOf(id, link)
+  if ench then
+    v.ench = v.ench or {}
+    local e = v.ench[ench] or { nil, 0 }
+    v.ench[ench] = e
+    e[2] = e[2] + count
+    local each = buyout and buyout > 0 and math.floor(buyout / count)
+    if each and (not e[1] or each < e[1]) then e[1] = each end
+  end
   if minBid and minBid > 0 then
     local mb = math.floor(minBid / count)
     if not v.minBid or mb < v.minBid then v.minBid = mb end
@@ -1717,6 +1759,7 @@ function ns.debugReport()
     _G.AuctionHouseFrame and "AuctionHouseFrame (modern)" or _G.AuctionFrame and "AuctionFrame (classic)" or "not loaded yet"))
   for key, h in pairs(db.houses) do
     print(("  %s: %s items priced, %s"):format(key, num(ns.countItems(h)), h.scanned and ("last full scan " .. ago(h.scanned)) or "no full scan yet"))
+    if h.enchanted then print(("    enchanted gear at the last full scan: %s"):format(num(h.enchanted))) end
     for i, e in ipairs(h.log or {}) do
       if i > 8 then break end
       print(("    %s: %s%s"):format(ago(e.at), e.how, e.secs and (" after " .. e.secs .. " s") or ""))
@@ -1954,6 +1997,21 @@ function ns.itemFor(id, side)
   local theirs = ns.shared and ns.shared.item(hk, id)
   if theirs and (not mine or theirs[4] > (mine[4] or 0)) then return theirs end
   return mine
+end
+
+-- The enchants seen on an item version ("id:suffix") at the last full scan of the house: { { id, name, low, n } },
+-- cheapest first, or nil. Only this player's own scans know them.
+function ns.enchantsFor(key, side)
+  local h = db and db.houses[keyFor(side)]
+  local text = h and h.ench and h.ench[key]
+  if not text then return nil end
+  local out = {}
+  for e, low, n in text:gmatch("(%d+):(%d*):(%d+)") do
+    e = tonumber(e)
+    out[#out + 1] = { id = e, name = ns.enchantName(e), low = tonumber(low), n = tonumber(n) }
+  end
+  table.sort(out, function(a, b) return (a.low or math.huge) < (b.low or math.huge) end)
+  return #out > 0 and out or nil
 end
 
 -- How old a house's prices are and whose they are: the newer of our last full scan and the shared scan (local

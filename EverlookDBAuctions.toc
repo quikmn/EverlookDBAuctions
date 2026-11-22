@@ -20,6 +20,7 @@ SharedPrices.lua
 Skin.lua
 ItemTip.lua
 Data.lua
+EnchantData.lua
 Disenchant.lua
 DisenchantOdds.lua
 DisenchantLog.lua

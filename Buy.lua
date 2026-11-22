@@ -6,6 +6,8 @@
 -- Start buying (below vendor price): the panel opens each item of the list in turn with its cheapest auction under
 -- vendor price picked; one click on Buy buys it (stackable goods: Buy, then Confirm the quoted price), then the next
 -- comes up. Every purchase is still your own click.
+-- An enchanted auction says its enchant ("Fiery Weapon"); a result from a search for an enchant opens with the
+-- cheapest auction that has it picked (still Buy, then Confirm).
 -- Sellers are never shown or kept. Auctions cheaper than a vendor pays get a green tag with the profit (Vendor.lua).
 
 local _, ns = ...
@@ -66,7 +68,7 @@ local function itemRows(itemKey)
       rows[#rows + 1] = {
         auctionID = okv(r.auctionID), buyout = buy, unit = buy, qty = q,   -- the buyout is per item; quantity is how many are up
         mine = okv(r.containsOwnerItem) == true, left = okv(r.timeLeftSeconds), band = okv(r.timeLeft), link = link,
-        vname = vname,
+        vname = vname, ench = ns.enchantOf and ns.enchantOf(B.id, link) or nil,
       }
     end
   end
@@ -181,6 +183,7 @@ function send()
           end
           render()
           if left <= 0 and B.deal then dealPick() end
+          if left <= 0 and not B.deal then B.pickEnchant() end
         end)
     end
   end
@@ -244,6 +247,27 @@ function B.summaryText(qty, loaded)
   if got <= 0 then return "None for sale from other sellers." end
   if got < qty then return ("Only %s for sale (about %s)."):format(num(got), money(cost)) end
   return ("%s for about %s"):format(num(got), money(cost))
+end
+
+-- A result from a search for an enchant (row.wantEnchants, from Search.lua): the cheapest auction with one of those
+-- enchants is picked, once the auctions are in. Buying it still takes Buy, then Confirm.
+function B.pickEnchant()
+  local want = B.row and B.row.wantEnchants
+  if not want or #want == 0 or B.sel then return end
+  local ok, names = {}, {}
+  for _, e in ipairs(want) do ok[e.id] = true; names[#names + 1] = e.name end
+  local best
+  for _, r in ipairs(B.rows or {}) do
+    if r.ench and ok[r.ench] and r.buyout and not r.mine and (not best or r.buyout < best.buyout) then best = r end
+  end
+  local what = table.concat(names, " or ")
+  if best then
+    B.sel = best
+    setStatus(("Picked the cheapest with %s. Buy, then Confirm."):format(what), T.accent)
+  else
+    setStatus(("None with %s is up any more."):format(what), T.mute)
+  end
+  render()
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -421,6 +445,7 @@ local function fillRow(b, r)
   b.price:SetText(r.unit and money(r.unit) or (C_MUTE .. "bids only|r"))
   local tag = r.mine and "yours" or ""
   if B.showAll and r.vname then tag = (r.mine and "yours, " or "") .. B.versionName(r.vname, baseName()) end
+  if r.ench then tag = ns.enchantName(r.ench) .. (tag ~= "" and (", " .. tag) or "") end
   b.tag:SetText(tag)
   -- below vendor price: a green tag with what buying and vendoring makes, each
   local p = not r.mine and ns.vendor and r.unit and ns.vendor.flip(B.id, r.unit)

@@ -17,6 +17,8 @@ Advanced search
 Search your last full scan with the same query language as everlookdb.com, including things the normal search can't do: stats, random-stat versions ("of the Bear"), slot, item level, required level and price. For example:  
 slot is trinket and price lt 5g | sort by price  
 items | where sta ge 10 and reqlevel le 40 | top 20 by sta  
+slot is onehand and enchant is "Fiery Weapon"  
+Find gear other players already enchanted with `enchant is`, `enchant like "*crusader*"` or `has enchant`.  
 Click a result to jump to it on the auction house and buy it as usual.
 
 Fast selling  
