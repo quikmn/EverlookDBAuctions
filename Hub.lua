@@ -631,6 +631,8 @@ function H.addPages(a)
   page("crafts", function() end, showCrafts, hideCrafts)
   page("gear", buildGear, showGear, hideGear)
   page("favor", buildFavor, function() fillFavor() end)
+  -- Disenchanting (DisenchantLog.lua): a page of cards like the settings pages, listed with the addon's own pages
+  if ns.deLog and ns.deLog.page then ns.deLog.page(a, EUI) end
   -- open on the page used last (never Gear upgrades by itself)
   local d = db()
   local known = {}

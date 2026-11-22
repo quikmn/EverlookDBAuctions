@@ -1337,11 +1337,11 @@ end
 
 local function disenchantLine(t, id)
   if not db or not tipOn("disenchant") or not ns.disenchantValue then return end
-  local value, oldest = ns.disenchantValue(id)
+  local value, oldest, _, source = ns.disenchantValue(id)
   if value then
-    -- how old the oldest material price is, so an old estimate doesn't pass for today's
-    t:Line("Disenchant", Tip.Money(value), { note = tago(time() - (oldest or 0)),
-      stale = (oldest or 0) >= STALE })
+    -- where the chances are from, and how old the oldest material price is, so an old estimate doesn't pass for today's
+    t:Line("Disenchant", Tip.Money(value), { note = join((source == "item" or source == "kind") and "players' disenchants" or "estimate",
+      tago(time() - (oldest or 0))), stale = (oldest or 0) >= STALE })
   end
 end
 
@@ -1972,23 +1972,49 @@ function ns.pricesAt(side)
   return mine, false
 end
 
+-- A disenchant material's price, { lowest saved price, time }: a lesser essence is worth no more than a third of its
+-- greater one (three combine into one), and a third of it when only the greater has a price (setting "deessencecap").
+function ns.deMatPrice(id, side)
+  local it = ns.itemFor(id, side)
+  local price, at = it and it[1], it and it[4]
+  local greater = ns.DE_LESSER and ns.DE_LESSER[id]
+  local de = db and db.de
+  if greater and not (de and de.essenceCap == false) then
+    local g = ns.itemFor(greater, side)
+    if g and g[1] and (not price or price * 3 > g[1]) then return math.floor(g[1] / 3), g[4] end
+  end
+  return price, at
+end
+
 -- What disenchanting an item is worth: the sum over its materials of chance x average count x the material's
--- lowest saved price (Disenchant.lua, from classic-db). Returns the value in copper, the age in seconds of the oldest
--- material price, and the materials { { itemID, chance %, min, max, price }, ... }; nil when the item can't be
--- disenchanted or a material has no price yet.
+-- lowest saved price. The chances are players' disenchants when there are enough of them (DisenchantOdds.lua, from the
+-- Price Feed), else classic-db's (Disenchant.lua). Returns the value in copper, the age in seconds of the oldest
+-- material price, the materials { { itemID, chance %, min, max, price }, ... }, where the chances are from ("item":
+-- players' disenchants of this item, "kind": of items like it, "estimate": classic-db) and how many disenchants
+-- they are from (nil for "estimate"); nil when the item can't be disenchanted or a material has no price yet (a
+-- players' material under 5% without a price is left out).
 function ns.disenchantValue(id, side)
-  local kind = ns.DE_ITEMS and ns.DE_ITEMS[id]
-  local mats = kind and ns.DE_GROUPS[kind]
+  local mats, source, n
+  if ns.deOdds then mats, source, n = ns.deOdds(id) end
+  if not mats then
+    local kind = ns.DE_ITEMS and ns.DE_ITEMS[id]
+    mats = kind and ns.DE_GROUPS[kind]
+    source, n = "estimate", nil
+  end
   if not mats then return nil end
   local value, oldest, out = 0, 0, {}
-  for k, m in ipairs(mats) do
-    local it = ns.itemFor(m[1], side)
-    if not it or not it[1] then return nil end
-    value = value + m[2] / 100 * (m[3] + m[4]) / 2 * it[1]
-    oldest = math.max(oldest, time() - (it[4] or 0))
-    out[k] = { m[1], m[2], m[3], m[4], it[1] }
+  for _, m in ipairs(mats) do
+    local price, at = ns.deMatPrice(m[1], side)
+    if price then
+      value = value + m[2] / 100 * (m[3] + m[4]) / 2 * price
+      oldest = math.max(oldest, time() - (at or 0))
+      out[#out + 1] = { m[1], m[2], m[3], m[4], price }
+    elseif source == "estimate" or m[2] >= 5 then
+      return nil
+    end
   end
-  return math.floor(value + 0.5), oldest, out
+  if #out == 0 then return nil end
+  return math.floor(value + 0.5), oldest, out, source, n
 end
 
 -- The same three for the open auction house only (nil while it is closed).

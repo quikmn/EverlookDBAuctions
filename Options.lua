@@ -7,6 +7,7 @@
 --   Selling   undercut, default duration
 --   Tooltips  auction price, 30-day low and median, disenchant value, vendor price, full-stack price with Shift, the hovered stack's with Ctrl
 --   Logging   what the AH log keeps, loot cards, the sale celebration
+--   Disenchanting  the breakdown, your own results, the lesser essence cap, the chat line (DisenchantLog.lua)
 --   Specs and weights (UpgradesOptions.lua), Crafting (ProfitWindow.lua)
 -- Every setting is also a command: /eah <setting> <value> sets it, says so in chat and updates the open window;
 -- /eah get lists them. The core (EverlookDBAuctions.lua) routes /eah to this app, which follows the chat-command
@@ -21,7 +22,7 @@ local FEEDBACK_URL = "https://everlookdb.com/auctions-addon.html#feedback"
 local TIP_LINES = {
   { "tipprice", "auction", "Auction price, how many are up and how old the price is" },
   { "tiphistory", "history", "30-day low and median" },
-  { "tipdisenchant", "disenchant", "What disenchanting it is worth (an estimate from material prices)" },
+  { "tipdisenchant", "disenchant", "What disenchanting it is worth, from material prices" },
   { "tipcraft", "craft", "What crafting one costs, for items you can craft (materials at the latest AH prices)" },
   { "tipvendor", "vendor", "Vendor price, where the game doesn’t show one (quest rewards, loot, links)" },
   { "tipverdict", "verdict", "Sell on AH / Sell to vendor: how much more the better one pays (after the AH cut: 5%, 15% at a neutral one)" },
@@ -335,6 +336,7 @@ local function build()
     })
     UI.Note(stack, "Sales show up when you take their money from the mail. Bids aren't logged. Nothing about other players is saved: no sellers, buyers or senders.")
   end, { icon = "clock" })
+  if ns.deLog then ns.deLog.settingsFor(app, UI) end   -- the Disenchanting page (DisenchantLog.lua)
   if ns.upgradesSettings then ns.upgradesSettings(app, UI) end   -- the Gear upgrades page (UpgradesOptions.lua)
 end
 

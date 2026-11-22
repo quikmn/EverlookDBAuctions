@@ -3,7 +3,7 @@
 ## Notes: Auction house prices, a Selling tab, shopping lists, price tooltips and an income ledger. Uploads no player names. /eah
 ## Author: quikmn
 ## Version: v0.18.0
-## SavedVariables: EverlookAuctionsDB
+## SavedVariables: EverlookAuctionsDB, EverlookDBAuctionsDB
 ## SavedVariablesPerCharacter: EverlookAuctionsCharDB
 ## OptionalDeps: EverlookDBAuctions_Shared, Bagnon, Pawn
 ## IconTexture: Interface\AddOns\EverlookDBAuctions\Media\icon
@@ -21,6 +21,8 @@ Skin.lua
 ItemTip.lua
 Data.lua
 Disenchant.lua
+DisenchantOdds.lua
+DisenchantLog.lua
 Vendor.lua
 CommodityNote.lua
 AHQuery.lua

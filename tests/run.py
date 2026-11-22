@@ -136,6 +136,7 @@ def main() -> int:
     failures += item_tip()
     failures += health()
     failures += hub()
+    failures += disenchanting()
 
     if failures:
         for f in failures:
@@ -1906,10 +1907,19 @@ def ux_flows():
       end end""")(ns)
     ns.undercutShort = lua.eval("function() return '1s' end")
     ns.setUndercut = lua.eval("function() return true end")
+    for name in ("DisenchantOdds.lua", "DisenchantLog.lua"):
+        run(source_of(name), name, "EverlookDBAuctions", ns)
     run(source_of("Options.lua"), "Options.lua", "EverlookDBAuctions", ns)
-    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then pcall(f.scripts.OnEvent, f, e, a) end end end")
     fire("ADDON_LOADED", "EverlookDBAuctions")
     check(ns.optionsError is None, f"the settings window builds: {ns.optionsError}")
+    # the Disenchanting settings and page (DisenchantLog.lua)
+    check(ns.app.GetSetting(ns.app, "debreakdown") is not None and ns.app.sections.disenchanting is not None,
+          "the Disenchanting settings page")
+    check(ns.slash("debreakdown always") is True and ns.db().de.breakdown == "always", "/eah debreakdown always")
+    ns.slash("debreakdown never")
+    ns.deLog.page(ns.app, lua.eval('(LibStub("EverlookUI-1"))'))
+    check(ns.app.sections.disenchant is not None and ns.app.sections.disenchant.group == "main", "the Disenchanting page, with the main pages")
     G = lua.globals()
     check(ns.slash("duration 24") is True and sell.duration == 2, f"/eah duration 24: {sell.duration}")
     check("24" in (G.CHAT[len(G.CHAT)] or ""), "the change is said in chat")
@@ -2247,7 +2257,7 @@ def shared_tooltip():
             "AH  3,365 · 76m = 95c",
             "    30d low = 93c",
             "    30d median = 95c",
-            "Disenchant  10m = 1g 23s",
+            "Disenchant  estimate · 10m = 1g 23s",
             "Vendor = 13c"]
     check(got == want, f"lines and order: {got}")
     G.SHIFT = True
@@ -3573,6 +3583,251 @@ def hub():
     return failures
 
 
+DE_SETUP = """
+SHIFT = false
+function IsShiftKeyDown() return SHIFT end
+ERRORS = {}
+function geterrorhandler() return function(e) ERRORS[#ERRORS + 1] = e end end
+Enum = { TooltipDataType = { Item = 0, Unit = 2 } }
+HOOKS = {}
+TooltipDataProcessor = { AddTooltipPostCall = function(t, fn) HOOKS[t] = fn end }
+date = os.date
+-- 727: an uncommon armor item of item level 20 (classic-db kind 21: 80% 1-2 Lesser Magic Essence, 20% 1-2 Strange Dust)
+SWORD = "|cff1eff00|Hitem:727::::::::20:::::|h[Test Sword]|h|r"
+ITEMS = {
+  [727] = { "Test Sword", SWORD, 2, 20, 15, "Armor", "Cloth", 1, "INVTYPE_CHEST", 0, 0, 4, 1 },
+  [10938] = { "Lesser Magic Essence" }, [10939] = { "Greater Magic Essence" }, [10940] = { "Strange Dust" },
+}
+C_Item.GetItemInfo = function(x)
+  local id = type(x) == "number" and x or tonumber(tostring(x):match("item:(%d+)"))
+  local it = id and ITEMS[id]
+  if it then return unpack(it) end
+end
+C_Item.GetItemInfoInstant = function(x)
+  local id = type(x) == "number" and x or tonumber(tostring(x):match("item:(%d+)"))
+  local it = id and ITEMS[id]
+  return id, nil, nil, nil, nil, it and it[12]
+end
+C_Item.GetDetailedItemLevelInfo = function() return 20 end
+C_Item.GetItemMaxStackSizeByID = function() return 1 end
+C_Container = {
+  UseContainerItem = function() end,
+  GetContainerItemLink = function(bag, slot) if bag == 0 and slot == 1 then return SWORD end end,
+  GetContainerNumSlots = function() return 4 end,
+}
+TARGETING = false
+SpellIsTargeting = function() return TARGETING end
+C_Spell = { GetSpellName = function(id) if id == 13262 then return "Disenchant" end return "Other" end }
+LOOT = {}
+GetNumLootItems = function() return #LOOT end
+GetLootSlotLink = function(i) return "|Hitem:" .. LOOT[i][1] .. "|h" end
+GetLootSlotInfo = function(i) return nil, nil, LOOT[i][2] end
+local h = EverlookAuctionsDB.houses["Test-Alliance"]
+h.items[10938] = { 3000, 5, 1, MOCK_TIME - 600 }
+h.items[10939] = { 6000, 5, 1, MOCK_TIME - 600 }
+h.items[10940] = { 1000, 5, 1, MOCK_TIME - 600 }
+"""
+
+
+def disenchanting():
+    """Disenchanting (DisenchantOdds.lua, DisenchantLog.lua, ns.disenchantValue): the three sources of the odds
+    (this item's players' disenchants, its kind's summed over its item-level bracket, classic-db), the lesser essence
+    cap, logging a disenchant in the fixed log format, taking over DisenchantValue's log once without names, the cap,
+    the tooltip lines (where the odds come from, your results, the Shift breakdown), an older DisenchantValue still
+    loaded, the page's search and /dv."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("disenchanting: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute(CORE_SETUP)
+    lua.execute(DE_SETUP)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookTooltip.lua"):
+        run(source_of(lib), lib)
+    ns = lua.table()
+    G = lua.globals()
+    for name in ("EverlookDBAuctions.lua", "Disenchant.lua", "DisenchantOdds.lua"):
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    before = len(G.MOCK_FRAMES)
+    run(source_of("DisenchantLog.lua"), "DisenchantLog.lua", "EverlookDBAuctions", ns)
+    de_frame = G.MOCK_FRAMES[before + 1]
+    G.DEFRAME = de_frame
+    fire = lua.eval("function(f, ...) f.scripts.OnEvent(f, ...) end")
+    core = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent and f ~= DEFRAME then pcall(f.scripts.OnEvent, f, e, a) end end end")
+    core("ADDON_LOADED", "EverlookDBAuctions")
+
+    # the old addon's saved log: names, realms and links that must not come over
+    lua.execute("""
+      DisenchantValueDB = { version = 2,
+        items = { [727] = { name = "Test Sword", ilvl = 20, quality = 2, classID = 4, count = 3, mats = {} },
+                  [5000] = { name = "Crate", quality = 1, classID = 15, count = 1, mats = {} } },
+        log = {
+          { t = 1000, char = "Alice-Realm", realmID = 6946, itemID = 727, link = SWORD, ilvl = 20, mats = { [10938] = 2 } },
+          { t = 2000, char = "Bob-Realm", itemID = 727, link = SWORD, ilvl = 20, mats = { [10940] = 1 } },
+          { t = 2002, char = "Bob-Realm", itemID = 727, link = SWORD, ilvl = 20, mats = { [10940] = 1 } },
+          { t = 3000, char = "Bob-Realm", itemID = 5000, ilvl = 1, mats = { [123] = 1 } },
+          { t = 4000, char = "Bob-Realm", itemID = 727, ilvl = 20, mats = { [10938] = "x" } },
+        } }
+    """)
+    fire(de_frame, "PLAYER_LOGIN")
+    log = G.EverlookDBAuctionsDB.deLog
+    check(len(log) == 2, f"two disenchants taken over (a duplicate, a crate and a broken one left out): {len(log)}")
+    if len(log) == 2:
+        e = log[1]
+        keys = sorted(k for k in e.keys())
+        check(keys == ["cls", "ilvl", "item", "mats", "q", "t"], f"exactly the log's fields: {keys}")
+        check(e.t == 1000 and e.item == 727 and e.ilvl == 20 and e.q == 2 and e.cls == 4 and e.mats[10938] == 2,
+              "the first one as it was")
+        check(log[2].t == 2000, "oldest first")
+    check(G.SlashCmdList.EVERLOOKDBDV is not None and G.SLASH_EVERLOOKDBDV1 == "/dv", "/dv is ours")
+    fire(de_frame, "PLAYER_LOGIN")
+    check(len(G.EverlookDBAuctionsDB.deLog) == 2, "taken over only once")
+    lua.execute("table.insert(DisenchantValueDB.log, { t = 5000, char = 'Bob', itemID = 727, ilvl = 20, mats = { [10940] = 3 } })")
+    ns.deLog["import"]()
+    check(len(G.EverlookDBAuctionsDB.deLog) == 3, "a newer one in the old log comes over too")
+
+    # logging a disenchant: the cursor on the bag slot, the cast, the loot window
+    G.TARGETING = True
+    G.C_Container.UseContainerItem(0, 1)
+    G.TARGETING = False
+    fire(de_frame, "UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", 13262)
+    lua.execute("LOOT = { { 10938, 1 }, { 10940, 2 } }")
+    fire(de_frame, "LOOT_READY")
+    fire(de_frame, "LOOT_OPENED")
+    log = G.EverlookDBAuctionsDB.deLog
+    check(len(log) == 4, f"the disenchant is logged once: {len(log)}")
+    e = log[len(log)]
+    check(e.item == 727 and e.q == 2 and e.cls == 4 and e.ilvl == 20 and e.mats[10938] == 1 and e.mats[10940] == 2
+          and e.char is None and e.link is None, "in the log's format, without names or links")
+    # another spell's loot is no disenchant
+    fire(de_frame, "UNIT_SPELLCAST_SUCCEEDED", "player", "cast-2", 999)
+    fire(de_frame, "LOOT_READY")
+    check(len(G.EverlookDBAuctionsDB.deLog) == 4, "loot after another spell isn't logged")
+
+    # the cap: the newest 5000
+    lua.execute("""
+      local log = EverlookDBAuctionsDB.deLog
+      for i = 1, 5100 do log[#log + 1] = { t = 10000 + i, item = 727, ilvl = 20, q = 2, cls = 4, mats = { [10940] = 1 } } end
+    """)
+    ns.deLog.trim()
+    log = G.EverlookDBAuctionsDB.deLog
+    check(len(log) == 5000 and log[len(log)].t == 15100 and log[1].t == 10101, "capped at the newest 5000")
+    lua.execute("local log = EverlookDBAuctionsDB.deLog; for i = #log, 1, -1 do log[i] = nil end")
+    ns.deLog.changed()
+
+    # 1. classic-db: 80% x 1.5 x 20s (lesser essence capped at a third of 60s) + 20% x 1.5 x 10s
+    value, age, out, source, n = ns.disenchantValue(727)
+    check(value == 2400 + 300 and source == "estimate" and n is None, f"classic-db: {value} {source}")
+    G.EverlookAuctionsDB.de.essenceCap = False
+    value = ns.disenchantValue(727)[0]
+    check(value == 3600 + 300, f"cap off: the lesser essence's own price: {value}")
+    G.EverlookAuctionsDB.de.essenceCap = True
+    lua.execute("EverlookAuctionsDB.houses['Test-Alliance'].items[10938][1] = 1500")
+    check(ns.disenchantValue(727)[0] == 1800 + 300, "a lesser essence under a third keeps its price")
+
+    # 2. this item's players' disenchants (10 or more)
+    lua.execute("""
+      EverlookDB_DEOdds = { v = 1, updated = MOCK_TIME, items = {
+        [727] = { n = 12, mats = { [10940] = { p = 1, c = 2 } } } }, kinds = {} }
+    """)
+    value, age, out, source, n = ns.disenchantValue(727)
+    check(value == 2000 and source == "item" and n == 12, f"players' item odds: {value} {source} {n}")
+    lua.execute("EverlookDB_DEOdds.items[727].n = 9")
+    value, _, _, source, _ = ns.disenchantValue(727)
+    check(source == "estimate" and value == 2100, f"9 of the item: not enough, classic-db: {value} {source}")
+
+    # 3. its kind: armor, uncommon, item level 16-20 (its bracket), summed; 30 or more
+    lua.execute("""
+      EverlookDB_DEOdds.kinds = {
+        ["4:2:18"] = { n = 20, mats = { [10940] = { p = 1, c = 1 } } },
+        ["4:2:20"] = { n = 10, mats = { [10940] = { p = 0.5, c = 2 }, [10938] = { p = 0.5, c = 1 } } },
+        ["4:2:21"] = { n = 500, mats = { [10938] = { p = 1, c = 9 } } },
+        ["2:2:20"] = { n = 500, mats = { [10938] = { p = 1, c = 9 } } },
+      }
+    """)
+    value, _, out, source, n = ns.disenchantValue(727)
+    want = (20 * 1 + 10 * 0.5 * 2) / 30 * 1000 + (10 * 0.5 * 1) / 30 * 1500
+    check(source == "kind" and n == 30 and value == int(want + 0.5),
+          f"kind odds summed over the bracket (not the next bracket, not weapons): {value} vs {want}, {source} {n}")
+    lua.execute('EverlookDB_DEOdds.kinds["4:2:18"].n = 19')
+    check(ns.disenchantValue(727)[3] == "estimate", "29 of the kind: not enough, classic-db")
+    lua.execute('EverlookDB_DEOdds.kinds["4:2:18"].n = 20')
+    lua.execute('EverlookDB_DEOdds.v = 2')
+    check(ns.disenchantValue(727)[3] == "estimate", "an odds table of another version is not read")
+    lua.execute('EverlookDB_DEOdds.v = 1')
+    api_ns = ns
+    run(source_of("API.lua"), "API.lua", "EverlookDBAuctions", api_ns)
+    check(G.EverlookDBAuctionsAPI.disenchant(727)[2] == "players", "the API says the odds are players'")
+
+    # the tooltip
+    show = lua.eval("""function(id, link)
+      local tip = { lines = {} }
+      function tip:GetOwner() return nil end
+      local function s(x) return (x:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):gsub("|T[^|]-UI%-(%a)%a+Icon[^|]*|t", function(c) return c:lower() end)) end
+      function tip:AddLine(l) self.lines[#self.lines + 1] = s(l) end
+      function tip:AddDoubleLine(l, r) self.lines[#self.lines + 1] = s(l) .. " = " .. s(r) end
+      HOOKS[0](tip, { id = id, hyperlink = link })
+      return table.concat(tip.lines, "\\n")
+    end""")
+    G.EverlookAuctionsDB.tip = lua.eval("{ verdict = false, vendor = false }")
+    text = show(727, G.SWORD)
+    check("Disenchant  players' disenchants" in text, f"the line says where the odds are from: {text}")
+    check("Your disenchants" not in text, f"no results logged: no line: {text}")
+    lua.execute("EverlookDB_DEOdds = nil")
+    text = show(727, G.SWORD)
+    check("Disenchant  estimate" in text, f"classic-db: estimate: {text}")
+    check("Lesser Magic Essence" not in text, "no breakdown without Shift")
+    G.SHIFT = True
+    text = show(727, G.SWORD)
+    check("80%  1-2x Lesser Magic Essence  each = 15s" in text, f"Shift: the breakdown: {text}")
+    G.SHIFT = False
+    lua.execute("""
+      local log = EverlookDBAuctionsDB.deLog
+      log[#log + 1] = { t = 1, item = 727, ilvl = 20, q = 2, cls = 4, mats = { [10940] = 2 } }
+      log[#log + 1] = { t = 2, item = 999, ilvl = 17, q = 2, cls = 4, mats = { [10938] = 2 } }
+      log[#log + 1] = { t = 3, item = 998, ilvl = 21, q = 2, cls = 4, mats = { [10938] = 5 } }
+    """)
+    ns.deLog.changed()
+    text = show(727, G.SWORD)
+    check("Your disenchants  this item · 1 disenchant = ~20s" in text, f"your results for this item: {text}")
+    check("Your disenchants  item level 16-20 · 2 disenchants = ~25s" in text, f"and for its bracket: {text}")
+    G.EverlookAuctionsDB.de.observed = False
+    check("Your disenchants" not in show(727, G.SWORD), "your results can be turned off")
+    G.EverlookAuctionsDB.de.observed = True
+    # an older DisenchantValue still loaded draws these itself
+    lua.execute("DisenchantValue = { ObservedFor = function() end }")
+    G.SHIFT = True
+    text = show(727, G.SWORD)
+    check("Disenchant  estimate" in text and "Your disenchants" not in text and "Lesser Magic Essence" not in text,
+          f"old DisenchantValue: only our value line: {text}")
+    G.SHIFT = False
+    lua.execute("DisenchantValue = { merged = true, ObservedFor = function() end }")
+    check("Your disenchants" in show(727, G.SWORD), "DisenchantValue 0.3.0 (merged): ours again")
+    lua.execute("DisenchantValue = nil")
+
+    # the page's list and search, /dv
+    rec = ns.deLog.recent(10, "strange")
+    check(len(rec) == 1 and rec[1].item == 727, f"search by material: {len(rec)}")
+    check(len(ns.deLog.recent(10, "")) == 3, "no words: all")
+    check(len(ns.deLog.recent(10, "test sword")) == 1, "search by item name")
+    ns.hub = lua.eval("{ open = function(p) HUBOPEN = p end }")
+    ns.app = lua.eval("{ HandleSlash = function(self, m) SLASHED = m end }")
+    G.SlashCmdList.EVERLOOKDBDV("")
+    check(G.HUBOPEN == "disenchant", "bare /dv opens the Disenchanting page")
+    G.SlashCmdList.EVERLOOKDBDV("announce off")
+    check(G.SLASHED == "deannounce off", f"/dv announce off: our setting: {G.SLASHED}")
+    G.SlashCmdList.EVERLOOKDBDV("off breakdown")
+    check(G.SLASHED == "off debreakdown", f"/dv off breakdown: {G.SLASHED}")
+    G.SlashCmdList.EVERLOOKDBDV("quiet")
+    check(G.EverlookAuctionsDB.de.announce is True, "/dv quiet switches the chat line")
+    check(len(G.ERRORS) == 0, f"no errors: {list(G.ERRORS.values()) if G.ERRORS else ''}")
+    return failures
+
+
 def profit():
     """The profit finder (Profit.lua): the cost of a craft with the cheaper of buying and crafting each material, the
     auction house cut, loops (transmutes), unpriced materials, the filters, the shopping list it makes (RecipeList's
@@ -3767,7 +4022,7 @@ def profit_api():
         if not cond:
             failures.append("profit api: " + what)
 
-    check(api.version == 4, "version 4")
+    check(api.version == 5, "version 5")
     ok_add, new = api.addShoppingList("Linen Bags", lua.eval("{ { 2589, 24 }, { 2320, 12 } }"))
     check(ok_add is True and new is True and len(DB.lists) == 1 and DB.lists[1].want['name is "Linen Cloth"'] == 24,
           "addShoppingList saves a list")
@@ -5059,7 +5314,7 @@ def ledger():
 
     # --- the AH API door ----------------------------------------------------------------------------------------------
     api = G.EverlookDBAuctionsAPI
-    check(api.version == 4 and api.mail.version == 1 and lua.eval("rawequal")(api.mail.classifier(), C), "API version 4 with mail")
+    check(api.version == 5 and api.mail.version == 1 and lua.eval("rawequal")(api.mail.classifier(), C), "API version 5 with mail")
     check(api.mail.scanned(lua.eval("{ { cat = 'player', subject = 'x', sender = 'y', exp = 1 } }")) is True, "scanned answers")
     check(api.mail.taken(lua.eval("{ }"), "money") is True, "taken ignores a mail without a category quietly")
     okW = lua.eval("function(a) return (pcall(function() a.mail.version = 2 end)) end")(api)

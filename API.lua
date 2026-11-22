@@ -16,7 +16,10 @@
 --   api.disenchant(item)                  what disenchanting the item is worth on the auction house, in copper, an
 --                                         estimate from the drop chances in classic-db and today's material prices,
 --                                         and how old the oldest material price is; nil when it can't be disenchanted
---                                         or a material has no price
+--                                         or a material has no price. (version 5) A third value says where the
+--                                         chances are from: "players" (players' disenchants, from the Price Feed)
+--                                         or "estimate" (classic-db). Version 5 also means this addon keeps the
+--                                         disenchant log, your results on tooltips and /dv (DisenchantLog.lua).
 --   api.addShoppingList(name, items)      (version 2) saves a shopping list in the auction house's Shopping tab:
 --                                         items = { { itemID, count }, ... }. A list with the same name is
 --                                         replaced, so pushing it again updates it. Returns true and whether the list
@@ -42,7 +45,7 @@
 -- returned are copies. addShoppingList is the one call that writes: it only adds or replaces a list.
 local _, ns = ...
 
-local api = { version = 4 }
+local api = { version = 5 }
 
 local function idOf(item)
   if type(item) == "number" then return item end
@@ -77,8 +80,9 @@ end
 function api.disenchant(item)
   local id = idOf(item)
   if not id or not ns.disenchantValue then return nil end
-  local value, age = ns.disenchantValue(id)
-  return value, age
+  local value, age, _, source = ns.disenchantValue(id)
+  if not value then return nil end
+  return value, age, (source == "item" or source == "kind") and "players" or "estimate"
 end
 
 function api.addShoppingList(name, items)
