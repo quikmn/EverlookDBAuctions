@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.23.0 (2026-11-23)
 - Advanced search finds enchanted gear: `enchant is "Fiery Weapon"`, `enchant like "*crusader*"` or `has enchant`. Results show the enchant and its price, the tooltip lists every enchant seen with its cheapest price, and clicking a result picks the cheapest auction with that enchant. It works from your next full scan.
 
 ## v0.22.1 (2026-11-23)
