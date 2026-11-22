@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Merchant's Favor in the main window now shows every crate with its filters and "Send missing to Auctions", right on the page (needs the latest EverlookDB Crafting).
+
 ## v0.18.0 (2026-11-22)
 - Income is now a ledger (`/eah income`): every auction you post is followed to sold, expired or cancelled, and only real gains count as income (auction sales after the cut, vendor sales, looted money, quest rewards). Gold from players and your alts, and outbid refunds, are listed apart; lost deposits, C.O.D. and AH purchases are costs.
 - Fixed: returned deposits, outbid refunds and gold from your alts counted as income; "Auction canceled" mail wasn't recognised; items back from expired auctions showed as loot. Your old Income entries move into the ledger once.
