@@ -1,5 +1,9 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Loot cards share their spot with EverlookDB Crafting's new skill-up cards: those sit right under the loot cards and never cover them.
+- `/eah lootmove` shows the box to drag on the first try.
+
 ## v0.21.0 (2026-11-22)
 - Crafting profit shows cost, sale price and profit as gold, silver and copper coins in lined-up columns. Click any heading to sort, and filter by name, skill, profit, margin, cost or only what you can make right now; your filters are remembered.
 - Crafting profit can include your alts' recipes (needs EverlookDB Crafting): tick them under Alts and each recipe shows who can make it.

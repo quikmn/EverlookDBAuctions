@@ -154,13 +154,40 @@ local function anchorXY()
   return -math.floor(UIParent:GetWidth() * 0.17), -math.floor(UIParent:GetHeight() * 0.19)
 end
 
+-- One column with the other EverlookDB cards at the top right: EverlookDB Crafting's skill-up cards sit right under
+-- these. EverlookCardColumn.stacks[name] = { order, anchor() -> x, y, height() -> px, relayout() }; a stack sits
+-- under the ones with a lower order, at the first one's spot. The loot cards are order 10 (the top).
+local COLUMN, ORDER = "auctions.loot", 10
+local function column()
+  local c = rawget(_G, "EverlookCardColumn")
+  if type(c) ~= "table" then
+    c = { stacks = {} }
+    _G.EverlookCardColumn = c
+  end
+  if type(c.stacks) ~= "table" then c.stacks = {} end
+  return c
+end
+
 local function layout()
   local x, y = anchorXY()
   for i, c in ipairs(cards) do
     c:ClearAllPoints()
     c:SetPoint("TOPRIGHT", UIParent, "TOPRIGHT", x, y - (i - 1) * (H + GAP))
   end
+  -- the stacks under ours follow
+  for name, st in pairs(column().stacks) do
+    if name ~= COLUMN and type(st) == "table" and (tonumber(st.order) or 0) > ORDER and type(st.relayout) == "function" then
+      pcall(st.relayout)
+    end
+  end
 end
+
+column().stacks[COLUMN] = {
+  order = ORDER,
+  anchor = function() return anchorXY() end,
+  height = function() return #cards > 0 and #cards * (H + GAP) or 0 end,
+  relayout = function() layout() end,
+}
 
 -- /eah lootmove: a card-sized handle to drag; the cards follow, the spot is saved
 local mover
@@ -194,6 +221,7 @@ function L.move()
       layout()
     end)
     mover:SetScript("OnMouseUp", function(self, button) if button == "RightButton" then self:Hide() end end)
+    mover:Hide()   -- a new frame is shown: hidden until asked for
   end
   if mover:IsShown() then mover:Hide(); return end
   local x, y = anchorXY()
