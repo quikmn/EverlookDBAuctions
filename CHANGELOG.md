@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- The auction house's status line no longer has an "Open in EverlookDB Auctions" button: you're already there.
+
 ## v0.20.0 (2026-11-22)
 - Better disenchant values where players haven't measured an item yet: real disenchant counts from vanilla ("measured in vanilla"), Greater Magic Essence from uncommon weapons of item level 21-30, and shields and off-hands count as armor.
 
