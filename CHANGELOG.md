@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.21.1 (2026-11-22)
 - Loot cards share their spot with EverlookDB Crafting's new skill-up cards: those sit right under the loot cards and never cover them.
 - `/eah lootmove` shows the box to drag on the first try.
 
