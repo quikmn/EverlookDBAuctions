@@ -513,32 +513,44 @@ H.fillHome = fillHome
 local favor = {}
 local function buildFavor(holder)
   favor.head = H.head(holder, "star", "Merchant's Favor", "Waylaid Crates, ranked by gold per Favor at your auction house's prices.")
+  -- EverlookDB Crafting's whole crate list lives here (it fills this frame itself)
+  favor.body = CreateFrame("Frame", nil, holder)
+  favor.body:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, -70)
+  favor.body:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 4)
+  -- without a Crafting that can do that: the three best crates and a note
   favor.have = card(holder, "star", "Your Favor", nil)
   favor.have:SetPoint("TOPLEFT", PAD, -76)
   favor.have:SetPoint("RIGHT", holder, "RIGHT", -PAD, 0)
   favor.rows = {}
   for i = 1, 3 do
-    local c = card(holder, "check", "", function() local api = rawget(_G, "EverlookCraftAPI"); if api and api.openFavor then pcall(api.openFavor) end end)
+    local c = card(holder, "check", "", nil)
     c:SetPoint("TOPLEFT", PAD, -(76 + (CARD_H + 12) * i))
     c:SetPoint("RIGHT", holder, "RIGHT", -PAD, 0)
     favor.rows[i] = c
   end
-  favor.open = EUI.Button(holder, "Open in EverlookDB Crafting", function()
-    local api = rawget(_G, "EverlookCraftAPI")
-    if api and api.openFavor then pcall(api.openFavor) end
-  end, 220)
-  favor.open:SetPoint("BOTTOMRIGHT", -PAD, 16)
   favor.note = text(holder, T.font - 1, T.muted)
   favor.note:SetPoint("BOTTOMLEFT", PAD, 22)
-  favor.note:SetPoint("RIGHT", favor.open, "LEFT", -12, 0)
+  favor.note:SetPoint("RIGHT", holder, "RIGHT", -PAD, 0)
   favor.note:SetWordWrap(true)
 end
 
 local function fillFavor()
   local have = H.favorHave()
-  favor.have:Set(have and (ns.num and ns.num(have) or tostring(have)) .. " Merchant's Favor" or "Merchant's Favor: the game hasn't said how much you have",
-    "Fill a Waylaid Crate with one bundle, seal it and hand it to your faction's Inventory Intake clerk")
+  local haveText = have and (ns.num and ns.num(have) or tostring(have)) .. " Merchant's Favor" or nil
   local api = rawget(_G, "EverlookCraftAPI")
+  local embed = api and (api.version or 0) >= 5 and api.embedFavor
+  favor.head.sub:SetText((haveText and ("You have " .. haveText .. ".  ") or "")
+    .. "Fill a Waylaid Crate with one bundle, seal it and hand it to your faction's Inventory Intake clerk.")
+  favor.body:SetShown(embed and true or false)
+  favor.have:SetShown(not embed)
+  favor.note:SetShown(not embed)
+  if embed then
+    for _, c in ipairs(favor.rows) do c:Hide() end
+    pcall(embed, favor.body)
+    return
+  end
+  favor.have:Set(haveText or "Merchant's Favor: the game hasn't said how much you have",
+    "Fill a Waylaid Crate with one bundle, seal it and hand it to your faction's Inventory Intake clerk")
   local best = H.favorBest(3)
   for i, c in ipairs(favor.rows) do
     local b = best and best[i]
@@ -548,11 +560,8 @@ local function fillFavor()
       c:Set(b.perFavorText or "", b.fill or "")
     end
   end
-  favor.open:SetShown(api ~= nil and api.openFavor ~= nil)
-  if best and #best > 0 then
-    favor.note:SetText("Click a crate, or Open, for every crate, its bundles and where to turn it in.")
-  elseif api then
-    favor.note:SetText("Update EverlookDB Crafting to see its best crates here. /ecraft favor shows them all.")
+  if api then
+    favor.note:SetText("Update EverlookDB Crafting to see every crate here.")
   else
     favor.note:SetText("EverlookDB Crafting ranks every Waylaid Crate by gold per Favor with these prices. Get it on CurseForge or with the EverlookDB App.")
   end
