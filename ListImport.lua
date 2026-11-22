@@ -309,15 +309,15 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- Names to item IDs, from the game (items it has seen) and the addon's own item cache (every item a scan saw)
 
-local index, indexSize
-local function nameIndex()
+-- Built once and again only when a name isn't in it and it is a few seconds old (the cache grows with every scan).
+local index, indexAt
+local function nameIndex(fresh)
   local db = ns.db and ns.db()
   local cache = db and db.itemInfo
   if not cache then return {} end
-  local n = 0
-  for _ in pairs(cache) do n = n + 1 end
-  if index and indexSize == n then return index end
-  index, indexSize = {}, n
+  local now = GetTime and GetTime() or 0
+  if index and not (fresh and now - indexAt > 5) then return index end
+  index, indexAt = {}, now
   for id, v in pairs(cache) do
     local name
     if type(v) == "table" then name = v[1]
@@ -340,7 +340,7 @@ function I.idOf(name)
   name = trim(name)
   if name == "" then return nil end
   local function find(n)
-    local id = nameIndex()[n:lower()]
+    local id = nameIndex()[n:lower()] or nameIndex(true)[n:lower()]
     if id then return id end
     local link
     for _, fn in ipairs({ C_Item and C_Item.GetItemInfo or false, rawget(_G, "GetItemInfo") or false }) do
