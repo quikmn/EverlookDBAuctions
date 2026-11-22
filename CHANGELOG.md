@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.21.0 (2026-11-22)
 - Crafting profit shows cost, sale price and profit as gold, silver and copper coins in lined-up columns. Click any heading to sort, and filter by name, skill, profit, margin, cost or only what you can make right now; your filters are remembered.
 - Crafting profit can include your alts' recipes (needs EverlookDB Crafting): tick them under Alts and each recipe shows who can make it.
 
