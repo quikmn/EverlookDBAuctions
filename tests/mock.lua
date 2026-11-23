@@ -36,7 +36,8 @@ local function frame(kind, name)
   -- unknown methods do nothing; the addon's own fields (edb...) start empty, as on a real frame
   return setmetatable(f, { __index = function(_, k)
     if methods[k] then return methods[k] end
-    if type(k) == "string" and k:sub(1, 3) == "edb" then return nil end
+    -- "more": an EverlookUI list's "N more not shown" line, made only when needed
+    if type(k) == "string" and (k:sub(1, 3) == "edb" or k == "more") then return nil end
     return function() end
   end })
 end

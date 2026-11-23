@@ -11,8 +11,12 @@
 --   2. else measured in vanilla (Enchantrix, Disenchant.lua): this item's own odds (DE_ITEM_ODDS), else its
 --      bracket's when they are measured;
 --   3. else classic-db's chances for its bracket (an estimate);
---   4. a bracket with none of these (rare item levels 5-20, new in WoW Forever) can be disenchanted, but nobody has
---      measured what it gives yet.
+--   4. else, for the rare brackets new in WoW Forever (item level 5-15 and 16-20), Disenchantry's rough estimate
+--      (Disenchant.lua, source "d"; Disenchantry 1.3.0 by x_Raven_x, based on Disenchant Helper by Rakuga, both MIT:
+--      see THIRD-PARTY-NOTICES.md);
+--   5. a bracket with none of these can be disenchanted, but nobody has measured what it gives yet.
+-- A material row is { material, chance %, min, max[, average count] }: min-max is the range it comes in (the bracket's
+-- when the average falls inside it, else the average as both), the average gives the value (else (min + max) / 2).
 -- The brackets, which items can be disenchanted and their class (shields and off-hands are armor) are the WoW Forever
 -- client's. The lesser -> greater essences and the material names are classic-db's (CMaNGOS, GPL-3.0,
 -- https://github.com/cmangos/classic-db).
@@ -52,15 +56,46 @@ end
 
 local function num(v) return type(v) == "number" and v == v and v or nil end
 
--- A players' mats table as Disenchant.lua's rows { mat, chance %, count, count } (the average count as both min and
--- max, so value = chance x count x price either way); nil when there is nothing usable in it.
-local function rows(mats)
+-- A material's average count: its own, else the middle of its range.
+function ns.deAvg(m) return m[5] or (m[3] + m[4]) / 2 end
+
+-- The range a material comes in, from its bracket's row for it, when the average falls inside it; else the average
+-- as both.
+local function rangeOf(k, mat, avg)
+  for i = 6, #(k or {}) do
+    local r = k[i]
+    if r[1] == mat and r[3] == math.floor(r[3]) and r[4] == math.floor(r[4]) and avg >= r[3] - 0.05 and avg <= r[4] + 0.05 then
+      return r[3], r[4]
+    end
+  end
+  return avg, avg
+end
+ns.deRangeOf = rangeOf
+
+-- "1-2", "1", or "~2.5" when only an average is known.
+function ns.deCountText(m)
+  local lo, hi = m[3], m[4]
+  if lo ~= hi then return lo .. "-" .. hi end
+  if lo == math.floor(lo) then return tostring(lo) end
+  return ("~%.1f"):format(lo)
+end
+
+-- "75%", "4.5%", "0.1%"
+function ns.deChanceText(p)
+  if p >= 10 then return ("%d%%"):format(math.floor(p + 0.5)) end
+  return (("%.1f"):format(p):gsub("%.0$", "")) .. "%"
+end
+
+-- A players' mats table as Disenchant.lua's rows { mat, chance %, min, max, average } (the range from the item's
+-- bracket k); nil when there is nothing usable in it.
+local function rows(mats, k)
   if type(mats) ~= "table" then return nil end
   local out = {}
   for mat, m in pairs(mats) do
     local id, p, c = num(tonumber(mat)), type(m) == "table" and num(m.p), type(m) == "table" and num(m.c)
     if id and p and c and p > 0 and p <= 1 and c > 0 and c < 100 then
-      out[#out + 1] = { id, p * 100, c, c }
+      local lo, hi = rangeOf(k, id, c)
+      out[#out + 1] = { id, p * 100, lo, hi, c }
     end
   end
   if #out == 0 then return nil end
@@ -105,14 +140,14 @@ ns.deKindOf = kindOf
 function ns.deOdds(id)
   local o = odds()
   if not o or not id then return nil end
+  local k = kindOf(id)
   local it = type(o.items) == "table" and o.items[id]
   if type(it) == "table" and (num(it.n) or 0) >= ns.DE_ITEM_MIN then
-    local r = rows(it.mats)
+    local r = rows(it.mats, k)
     if r then return r, "item", it.n end
   end
   if type(o.kinds) ~= "table" then return nil end
   -- the kinds only stand in for items the client says can be disenchanted
-  local k = kindOf(id)
   if not k then return nil end
   local cls, q, low, high = k[1], k[2], k[3], k[4]
   local entries, total = {}, 0
@@ -125,26 +160,30 @@ function ns.deOdds(id)
   end
   if total < ns.DE_KIND_MIN then return nil end
   local mats, n = combine(entries)
-  local r = rows(mats)
+  local r = rows(mats, k)
   if r then return r, "kind", n end
 end
 
 -- Without enough players' disenchants: rows, "measured" (vanilla's disenchants: this item's own, else its
--- bracket's) or "estimate" (classic-db's), and for this item's own the disenchants they are from. nil, "unmeasured"
--- for an item that can be disenchanted but whose bracket nobody has measured; nil when it can't be disenchanted.
+-- bracket's), "estimate" (classic-db's) or "rough" (Disenchantry's, for WoW Forever's new rare brackets), and for
+-- this item's own the disenchants they are from. nil, "unmeasured" for an item that can be disenchanted but whose
+-- bracket nobody has measured; nil when it can't be disenchanted.
 function ns.deFallback(id)
   local k = kindOf(id)
   if not k then return nil end
   local own = ns.DE_ITEM_ODDS and ns.DE_ITEM_ODDS[id]
   if own then
     local out = {}
-    for i = 2, #own - 2, 3 do out[#out + 1] = { own[i], own[i + 1], own[i + 2], own[i + 2] } end
+    for i = 2, #own - 2, 3 do
+      local lo, hi = rangeOf(k, own[i], own[i + 2])
+      out[#out + 1] = { own[i], own[i + 1], lo, hi, own[i + 2] }
+    end
     if #out > 0 then return out, "measured", own[1] end
   end
-  if k[5] == "m" or k[5] == "e" then
+  if k[5] == "m" or k[5] == "e" or k[5] == "d" then
     local out = {}
     for i = 6, #k do out[#out + 1] = k[i] end
-    if #out > 0 then return out, k[5] == "m" and "measured" or "estimate" end
+    if #out > 0 then return out, k[5] == "m" and "measured" or k[5] == "e" and "estimate" or "rough" end
   end
   return nil, "unmeasured"
 end

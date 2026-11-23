@@ -13,6 +13,9 @@ Prices from your normal auction house searches are saved as well, no scan needed
 Prices in tooltips  
 Every item tooltip shows the lowest buyout, how many are up, how old that price is, and the lowest price in the last 30 days.
 
+Disenchant preview  
+Gear tooltips show what the item disenchants into, like "Strange Dust 1-2 (75%)", with each material's worth at your auction house and the total, green when disenchanting pays more than selling. The Disenchanting page (/eah de) lists the gear in your bags with what each piece gives: click one to preview it and disenchant it with one click.
+
 Advanced search  
 Search your last full scan with the same query language as everlookdb.com, including things the normal search can't do: stats, random-stat versions ("of the Bear"), slot, item level, required level and price. For example:  
 slot is trinket and price lt 5g | sort by price  

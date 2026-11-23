@@ -1371,16 +1371,50 @@ local function auctionLines(t, id, tooltip)
   end
 end
 
+-- Where an item's disenchant chances come from, in a few words.
+function ns.deSourceText(source)
+  return (source == "item" or source == "kind") and "players' disenchants" or source == "measured" and "measured in vanilla"
+    or source == "rough" and "rough estimate" or "estimate"
+end
+
+-- "|T..|t Strange Dust  1-2 (75%)": a disenchant material as the tooltip and the preview show it.
+function ns.deMatText(m, noIcon)
+  local okI, icon = pcall(C_Item.GetItemIconByID, m[1])
+  local name = ns.deMatName and ns.deMatName(m[1]) or ("item " .. m[1])
+  return ((not noIcon and okI and icon) and ("|T" .. icon .. ":0|t ") or "") .. name .. "  " .. ns.deCountText(m)
+    .. " (" .. ns.deChanceText(m[2]) .. ")"
+end
+
+-- The disenchant block of an item tooltip. With the materials shown (the setting "debreakdown", on by default):
+--   Disenchants into  measured in vanilla
+--       [icon] Strange Dust  1-2 (75%)            12s 30c
+--       [icon] Lesser Magic Essence  1-2 (20%)     5s
+--   Disenchant value  10m ago                      17s 30c
+-- each material's worth (chance x average count x its price) right, nothing when it has no price; the value green when
+-- it pays more than selling the item would, red when less. Without them, one "Disenchant" line with the value.
 local function disenchantLine(t, id)
-  if not db or not tipOn("disenchant") or not ns.disenchantValue then return end
-  local value, oldest, _, source = ns.disenchantValue(id)
-  if value then
-    -- where the chances are from, and how old the oldest material price is, so an old estimate doesn't pass for today's
-    local from = (source == "item" or source == "kind") and "players' disenchants" or source == "measured" and "measured in vanilla" or "estimate"
-    t:Line("Disenchant", Tip.Money(value), { note = join(from, tago(time() - (oldest or 0))), stale = (oldest or 0) >= STALE })
-  elseif source == "unmeasured" then
-    t:Line("Disenchant", "not measured yet", { stale = true })
+  if not db or not tipOn("disenchant") or not ns.deMaterials then return end
+  local mats, value, oldest, source = ns.deMaterials(id)
+  if not mats then
+    if source == "unmeasured" then t:Line("Disenchant", "not measured yet", { stale = true }) end
+    return
   end
+  -- where the chances are from, and how old the oldest material price is, so an old estimate doesn't pass for today's
+  local from = ns.deSourceText(source)
+  local age = value and tago(time() - (oldest or 0)) or nil
+  local stale = value ~= nil and (oldest or 0) >= STALE
+  if not (ns.deLog and ns.deLog.showMaterials and ns.deLog.showMaterials()) then
+    if value then t:Line("Disenchant", Tip.Money(value), { note = join(from, age), stale = stale }) end
+    return
+  end
+  t:Line("Disenchants into", nil, { note = from })
+  for _, m in ipairs(mats) do
+    t:Detail(ns.deMatText(m), m[7] and Tip.Money(m[7]) or nil, { always = true })
+  end
+  local tone
+  local best = value and not stale and ns.bestSale(id)
+  if best then tone = value > best and "good" or value < best and "bad" or nil end
+  t:Line("Disenchant value", value and Tip.Money(value) or nil, { note = age, stale = stale, tone = tone })
 end
 
 -- What crafting one costs from the latest AH prices, for items you know a recipe for (Purchases.lua reads your
@@ -2040,15 +2074,15 @@ function ns.deMatPrice(id, side)
   return price, at
 end
 
--- What disenchanting an item is worth: the sum over its materials of chance x average count x the material's
--- lowest saved price. The chances are players' disenchants when there are enough of them (DisenchantOdds.lua, from the
--- Price Feed), else vanilla's measured ones, else classic-db's (Disenchant.lua). Returns the value in copper, the age
--- in seconds of the oldest material price, the materials { { itemID, chance %, min, max, price }, ... }, where the
--- chances are from ("item": players' disenchants of this item, "kind": of items like it, "measured": measured in
--- vanilla, "estimate": classic-db) and how many disenchants they are from (nil for a bracket's); nil when the item
--- can't be disenchanted or a material has no price yet (a measured material under 5% without a price is left out).
--- An item that can be disenchanted but that nobody has measured gives nil, nil, nil, "unmeasured".
-function ns.disenchantValue(id, side)
+-- What an item disenchants into, priced: every material { itemID, chance %, min, max, average count, price or nil,
+-- worth or nil (chance x average count x price) }, most likely first; the value in copper (the sum of the worths; nil
+-- while a material that counts has no price: any material of an estimate, else one of 5% or more), the age in
+-- seconds of the oldest material price, where the chances are from ("item": players' disenchants of this item,
+-- "kind": of items like it, "measured": measured in vanilla, "estimate": classic-db, "rough": a rough estimate for
+-- WoW Forever's new rare brackets) and how many disenchants they are from (nil for a bracket's). The chances are
+-- players' disenchants when there are enough of them (DisenchantOdds.lua, from the Price Feed), else Disenchant.lua's.
+-- nil when the item can't be disenchanted; nil, nil, nil, "unmeasured" when nobody has measured what it gives.
+function ns.deMaterials(id, side)
   local mats, source, n
   if ns.deOdds then mats, source, n = ns.deOdds(id) end
   if not mats and ns.deFallback then
@@ -2056,19 +2090,56 @@ function ns.disenchantValue(id, side)
     if source == "unmeasured" then return nil, nil, nil, source end
   end
   if not mats then return nil end
-  local value, oldest, out = 0, 0, {}
+  local value, oldest, out, missing = 0, 0, {}, false
   for _, m in ipairs(mats) do
+    local avg = ns.deAvg and ns.deAvg(m) or (m[3] + m[4]) / 2
     local price, at = ns.deMatPrice(m[1], side)
+    local worth
     if price then
-      value = value + m[2] / 100 * (m[3] + m[4]) / 2 * price
+      worth = m[2] / 100 * avg * price
+      value = value + worth
       oldest = math.max(oldest, time() - (at or 0))
-      out[#out + 1] = { m[1], m[2], m[3], m[4], price }
-    elseif source == "estimate" or m[2] >= 5 then
-      return nil
+    elseif source == "estimate" or source == "rough" or m[2] >= 5 then
+      missing = true
     end
+    out[#out + 1] = { m[1], m[2], m[3], m[4], avg, price, worth }
   end
   if #out == 0 then return nil end
-  return math.floor(value + 0.5), oldest, out, source, n
+  return out, (not missing and value > 0) and math.floor(value + 0.5) or nil, oldest, source, n
+end
+
+-- What disenchanting an item is worth (see ns.deMaterials): the value in copper, the age in seconds of the oldest
+-- material price, the priced materials { { itemID, chance %, min, max, price, average count }, ... }, where the
+-- chances are from and how many disenchants they are from; nil when the item can't be disenchanted or a material that
+-- counts has no price yet. An item that can be disenchanted but that nobody has measured gives nil, nil, nil,
+-- "unmeasured".
+function ns.disenchantValue(id, side)
+  local mats, value, oldest, source, n = ns.deMaterials(id, side)
+  if source == "unmeasured" then return nil, nil, nil, source end
+  if not value then return nil end
+  local out = {}
+  for _, m in ipairs(mats) do
+    if m[6] then out[#out + 1] = { m[1], m[2], m[3], m[4], m[6], m[5] } end
+  end
+  return value, oldest, out, source, n
+end
+
+-- What selling an item pays at best: the vendor's price, or the lowest auction after the house's cut (5%, 15% at the
+-- neutral houses; not for an item that can't be auctioned, bound = true); nil when neither is known.
+function ns.bestSale(id, bound)
+  local info = { pcall(C_Item.GetItemInfo, id) }
+  local sell = ok(info[1] and info[12])
+  local best = type(sell) == "number" and sell > 0 and sell or nil
+  if not bound then
+    local it = ns.itemFor(id)
+    local ah = it and it[1]
+    if type(ah) == "number" and ah > 0 then
+      local cut = tostring(ns.houseOrFaction and ns.houseOrFaction() or ""):match("%-Neutral$") and 15 or 5
+      local net = math.floor(ah * (1 - cut / 100))
+      if not best or net > best then best = net end
+    end
+  end
+  return best
 end
 
 -- The same three for the open auction house only (nil while it is closed).

@@ -1956,6 +1956,17 @@ def ux_flows():
     ns.slash("debreakdown never")
     ns.deLog.page(ns.app, lua.eval('(LibStub("EverlookUI-1"))'))
     check(ns.app.sections.disenchant is not None and ns.app.sections.disenchant.group == "main", "the Disenchanting page, with the main pages")
+    # the bag preview on that page builds (DisenchantPreview.lua)
+    run(source_of("DisenchantPreview.lua"), "DisenchantPreview.lua", "EverlookDBAuctions", ns)
+    built = lua.eval("""function(ns)
+      local UI = LibStub("EverlookUI-1")
+      local parent = CreateFrame("Frame", nil, UIParent)
+      local stack = UI.Stack(parent, 600, ns.app.T, { cards = true })
+      local okB, err = pcall(ns.dePreview.build, stack, ns.app, UI)
+      if okB then okB, err = pcall(ns.dePreview.refresh) end
+      return okB, tostring(err)
+    end""")(ns)
+    check(built[0], f"the bag preview builds: {built[1]}")
     G = lua.globals()
     check(ns.slash("duration 24") is True and sell.duration == 2, f"/eah duration 24: {sell.duration}")
     check("24" in (G.CHAT[len(G.CHAT)] or ""), "the change is said in chat")
@@ -2271,7 +2282,7 @@ def shared_tooltip():
         run(source_of(lib), lib)
     ns = lua.table()
     run(source_of("EverlookDBAuctions.lua"), "EverlookDBAuctions.lua", "EverlookDBAuctions", ns)
-    ns.disenchantValue = lua.eval("function(id) if id == 2589 then return 12345, 600 end end")
+    ns.deMaterials = lua.eval("function(id) if id == 2589 then return { { 10940, 100, 1, 1, 1, 12345, 12345 } }, 12345, 600, 'estimate' end end")
     fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")
     fire("ADDON_LOADED", "EverlookDBAuctions")
     show = lua.eval("""function(id)
@@ -3725,7 +3736,14 @@ def disenchanting():
     check(w21[1] == 2 and w21[2] == 2 and w21[3] == 21 and w21[6][1] == 10939
           and all(w21[i][1] not in (10998, 11082) for i in range(6, len(w21) + 1)),
           "uncommon weapons 21-25: Greater Magic Essence, no Astral")
-    check(all(K[k][5] is False and len(K[k]) == 5 for k in (335, 336, 337, 338)), "the new rare brackets: not measured yet")
+    check(all(K[k][5] == "d" for k in (335, 336, 337, 338)), "the new rare brackets: Disenchantry's rough estimate")
+    r336 = K[336]
+    check(r336[1] == 4 and r336[6][1] == 10940 and r336[6][2] == 75 and r336[6][3] == 3 and r336[6][4] == 4,
+          "rare armor 16-20: Strange Dust 3-4 at 75%")
+    check(K[337][6][1] == 10939 and K[337][6][2] == 75, "rare weapons 16-20: Greater Magic Essence first")
+    # measured brackets keep the average and get classic-db's range: uncommon armor 16-20, Strange Dust 2-3
+    s5 = K[5][6]
+    check(s5[1] == 10940 and s5[3] == 2 and s5[4] == 3 and 2.4 < s5[5] < 2.6, f"measured: range 2-3, average {s5[5]}")
     check(any(v == 336 for v in I.values()), "items in a new rare bracket can be disenchanted")
     check(K[54][5] == "e" and K[54][6][1] == 20725, "epic 61-99: classic-db's Nexus Crystal (vanilla's era left out)")
     check(I[9764] and not I[6948], "the hearthstone can't be disenchanted")
@@ -3861,30 +3879,70 @@ def disenchanting():
     end""")
     G.EverlookAuctionsDB.tip = lua.eval("{ verdict = false, vendor = false }")
     text = show(727, G.SWORD)
-    check("Disenchant  players' disenchants" in text, f"the line says where the odds are from: {text}")
+    check("Disenchants into  players' disenchants" in text, f"the line says where the odds are from: {text}")
+    check("Strange Dust  1-2 (83%) = 10s" in text and "Disenchant value  10m = 12s 50c" in text,
+          f"players' odds: the material, its count range from the bracket, its worth, the value: {text}")
     check("Your disenchants" not in text, f"no results logged: no line: {text}")
     lua.execute("EverlookDB_DEOdds = nil")
     text = show(727, G.SWORD)
-    check("Disenchant  estimate" in text, f"classic-db: estimate: {text}")
-    check("Lesser Magic Essence" not in text, "no breakdown without Shift")
+    check("Disenchants into  estimate" in text, f"classic-db: estimate: {text}")
+    check("Lesser Magic Essence  1-2 (80%) = 18s" in text and "Strange Dust  1-2 (20%) = 3s" in text,
+          f"each material: count range, chance, worth (chance x average count x price): {text}")
+    check("Disenchant value  10m = 21s" in text, f"then the value: {text}")
+    check(text.index("Disenchants into") < text.index("Lesser Magic Essence") < text.index("Disenchant value"),
+          f"in that order: {text}")
+    # the old default (behind Shift) becomes the new one once; a choice made after that stays
+    G.EverlookAuctionsDB.de.matsShown = None
+    G.EverlookAuctionsDB.de.breakdown = "shift"
+    ns.deLog.settings()
+    check(G.EverlookAuctionsDB.de.breakdown == "always", "the saved old default moves to always")
+    G.EverlookAuctionsDB.de.breakdown = "shift"
+    ns.deLog.settings()
+    check(G.EverlookAuctionsDB.de.breakdown == "shift", "a choice made later stays")
+    text = show(727, G.SWORD)
+    check("Lesser Magic Essence" not in text and "Disenchant  estimate · 10m = 21s" in text,
+          f"behind Shift: one line without it: {text}")
     G.SHIFT = True
     text = show(727, G.SWORD)
-    check("80%  1-2x Lesser Magic Essence  each = 15s" in text, f"Shift: the breakdown: {text}")
+    check("Lesser Magic Essence  1-2 (80%) = 18s" in text, f"Shift: the materials: {text}")
     G.SHIFT = False
+    G.EverlookAuctionsDB.de.breakdown = "always"
+    # a material without a price: its line has no worth, the value none either
+    lua.execute("EverlookAuctionsDB.houses['Test-Alliance'].items[10940] = nil")
+    text = show(727, G.SWORD)
+    check("Strange Dust  1-2 (20%)\n" in text + "\n" and "Strange Dust  1-2 (20%) =" not in text,
+          f"no price: nothing right: {text}")
+    check("Disenchant value\n" in text + "\n" and "Disenchant value  " not in text, f"no value without every price: {text}")
+    check(ns.disenchantValue(727) is None, "and no value for the rest of the addon")
+    lua.execute("EverlookAuctionsDB.houses['Test-Alliance'].items[10940] = { 1000, 5, 1, MOCK_TIME - 600 }")
+    # green when disenchanting pays more than selling, red when less
+    lua.execute("ITEMS[727][11] = 5000")
+    check("Disenchant value  10m = 21s" in show(727, G.SWORD), "vendor 50s: the value still shows")
+    lua.execute("ITEMS[727][11] = 0")
 
     # 4. measured in vanilla: the bracket's, then the item's own; players' still come first
     ns.DE_KINDS[5] = lua.eval('{ 4, 2, 16, 20, "m", { 10940, 100, 2, 2 } }')
     value, _, out, source, n = ns.disenchantValue(727)
     check(value == 2000 and source == "measured" and n is None, f"the bracket measured in vanilla: {value} {source} {n}")
-    check("Disenchant  measured in vanilla" in show(727, G.SWORD), "the tooltip says measured in vanilla")
+    check("Disenchants into  measured in vanilla" in show(727, G.SWORD), "the tooltip says measured in vanilla")
     check(G.EverlookDBAuctionsAPI.disenchant(727)[2] == "measured", "the API says measured")
     ns.DE_ITEM_ODDS[727] = lua.eval("{ 500, 10940, 50, 2, 10938, 50, 1 }")
     value, _, out, source, n = ns.disenchantValue(727)
     check(value == 1000 + 750 and source == "measured" and n == 500, f"the item's own measured odds: {value} {source} {n}")
-    G.SHIFT = True
     text = show(727, G.SWORD)
-    check("50%  2x Strange Dust" in text and "50%  1x Lesser Magic Essence" in text, f"measured: average counts: {text}")
-    G.SHIFT = False
+    check("Strange Dust  2 (50%) = 10s" in text and "Lesser Magic Essence  1 (50%) = 7s 50c" in text,
+          f"measured: counts and worths: {text}")
+    # an average outside the bracket's range: "~" and the average
+    ns.DE_ITEM_ODDS[727] = lua.eval("{ 500, 10940, 100, 2.5 }")
+    ns.DE_KINDS[5] = lua.eval('{ 4, 2, 16, 20, "m", { 10940, 100, 1, 2, 1.5 } }')
+    text = show(727, G.SWORD)
+    check("Strange Dust  ~2.5 (100%) = 25s" in text, f"an average outside the range: {text}")
+    ns.DE_KINDS[5] = lua.eval('{ 4, 2, 16, 20, "m", { 10940, 100, 2, 3, 2.5 } }')
+    text = show(727, G.SWORD)
+    check("Strange Dust  2-3 (100%) = 25s" in text, f"inside it: the range: {text}")
+    check(ns.disenchantValue(727)[0] == 2500, "the value from the average")
+    ns.DE_ITEM_ODDS[727] = lua.eval("{ 500, 10940, 50, 2, 10938, 50, 1 }")
+    ns.DE_KINDS[5] = lua.eval('{ 4, 2, 16, 20, "m", { 10940, 100, 2, 2 } }')
     lua.execute("""
       EverlookDB_DEOdds = { v = 1, items = { [727] = { n = 10, mats = { [10940] = { p = 1, c = 1 } } } }, kinds = {
         ["4:2:20"] = { n = 40, mats = { [10938] = { p = 1, c = 1 } } },
@@ -3929,10 +3987,48 @@ def disenchanting():
     text = show(727, G.SWORD)
     check("Disenchant  estimate" in text and "Your disenchants" not in text and "Lesser Magic Essence" not in text,
           f"old DisenchantValue: only our value line: {text}")
+    check("Disenchants into" not in text, "and not our materials")
     G.SHIFT = False
     lua.execute("DisenchantValue = { merged = true, ObservedFor = function() end }")
     check("Your disenchants" in show(727, G.SWORD), "DisenchantValue 0.3.0 (merged): ours again")
     lua.execute("DisenchantValue = nil")
+
+    # a rough estimate: a new rare bracket with Disenchantry's odds
+    ns.DE_KINDS[336] = lua.eval('{ 4, 3, 16, 20, "d", { 10940, 75, 3, 4 }, { 10939, 20, 2, 3 }, { 10978, 5, 2, 2 } }')
+    check(ns.disenchantValue(900) is None, "rough: a material without a price, no value")
+    lua.execute("EverlookAuctionsDB.houses['Test-Alliance'].items[10978] = { 400, 5, 1, MOCK_TIME - 600 }")
+    value, _, _, source, _ = ns.disenchantValue(900)
+    want = int(0.75 * 3.5 * 1000 + 0.2 * 2.5 * 6000 + 0.05 * 2 * 400 + 0.5)
+    check(value == want and source == "rough", f"rough: {value} vs {want} {source}")
+    text = show(900, G.ITEMS[900][2])
+    check("Disenchants into  rough estimate" in text and "Strange Dust  3-4 (75%)" in text, f"rough on the tooltip: {text}")
+    check(G.EverlookDBAuctionsAPI.disenchant(900)[2] == "estimate", "the API calls it an estimate")
+    ns.DE_KINDS[336] = lua.eval("{ 4, 3, 16, 20, false }")
+
+    # the bag preview (DisenchantPreview.lua): bag 0 slot 1 holds 727
+    run(source_of("DisenchantPreview.lua"), "DisenchantPreview.lua", "EverlookDBAuctions", ns)
+    P = ns.dePreview
+    items = P.bagItems()
+    check(len(items) == 1 and items[1].id == 727 and items[1].bag == 0 and items[1].slot == 1 and items[1].value == 2100,
+          f"the bags: one item that can be disenchanted, with its value: {[(items[i].id, items[i].value) for i in range(1, len(items) + 1)]}")
+    lua.execute("ITEMS[727][11] = 3000")
+    e = P.bagItems()[1]
+    check(e.best == 3000 and not e.beats and "selling pays more" in P.summary(e), f"vendor 30s beats 21s: {P.summary(e)}")
+    lua.execute("ITEMS[727][11] = 1000")
+    e = P.bagItems()[1]
+    check(e.beats and "beats selling" in P.summary(e), f"vendor 10s: disenchanting wins: {P.summary(e)}")
+    lua.execute("ITEMS[727][11] = 0")
+    check(P.macroFor(0, 1) == "/cast Disenchant\n/use 0 1", f"the button's macro: {P.macroFor(0, 1)}")
+    P.select(e)
+    check(P.current() is not None and P.current().id == 727, "selected: previewed")
+    lua.execute("C_Container.GetContainerItemLink = function() return nil end")
+    check(P.current() is None, "gone from the bag: no preview")
+    P.refresh()
+    check(P.selected is None, "and the selection moves on (nothing left)")
+    lua.execute("C_Container.GetContainerItemLink = function(bag, slot) if bag == 0 and slot == 1 then return SWORD end end")
+    lua.execute("issecretvalue = function(v) return v == SWORD end")
+    check(len(P.bagItems()) == 0, "a secret link is left alone")
+    lua.execute("issecretvalue = nil")
 
     # the page's list and search, /dv
     rec = ns.deLog.recent(10, "strange")

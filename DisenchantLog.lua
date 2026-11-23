@@ -1,12 +1,14 @@
--- Disenchanting: a log of every disenchant on every character, your own results on item tooltips, the per-material
--- breakdown under the "Disenchant" line, the Disenchanting page of the main window and /dv.
+-- Disenchanting: a log of every disenchant on every character, your own results on item tooltips, the setting for the
+-- materials on the tooltip (drawn by EverlookDBAuctions.lua's disenchant block), the Disenchanting page of the main
+-- window (with DisenchantPreview.lua's list of your bags) and /dv.
 --
 -- The log (a fixed format the EverlookDB App reads; never change it):
 --   EverlookDBAuctionsDB.deLog = { { t = <unix time>, item = <item id>, ilvl = <item level>, q = <quality 0-5>,
 --     cls = <item class id: 2 weapon, 4 armor>, mats = { [<material item id>] = <count>, ... } }, ... }
 --   oldest first, the newest DE_LOG_CAP kept. No character names, GUIDs, realms or zones.
--- Settings live in EverlookAuctionsDB.de: announce, breakdown ("shift", "always", "never"), observed, essenceCap,
--- importedUpTo (the newest disenchant taken over from DisenchantValue's own log, DisenchantValueDB).
+-- Settings live in EverlookAuctionsDB.de: announce, breakdown ("shift", "always", "never": the materials on the
+-- tooltip), observed, essenceCap, importedUpTo (the newest disenchant taken over from DisenchantValue's own log,
+-- DisenchantValueDB), matsShown (1 once the materials became shown always by default).
 --
 -- A disenchant is told by its cast: the item clicked while the Disenchant cursor is up (or found in the bags by the
 -- name UNIT_SPELLCAST_SENT gives), UNIT_SPELLCAST_SUCCEEDED for Disenchant (13262), then the loot window
@@ -29,11 +31,16 @@ local function saved()
 end
 function D.log() return saved().deLog end
 
-local DEFAULTS = { announce = false, breakdown = "shift", observed = true, essenceCap = true }
+local DEFAULTS = { announce = false, breakdown = "always", observed = true, essenceCap = true }
 function D.settings()
   local db = ns.db and ns.db()
   if not db then return DEFAULTS end
   if type(db.de) ~= "table" then db.de = {} end
+  -- the materials were behind Shift by default before; the saved default becomes the new one, once
+  if db.de.matsShown == nil then
+    if db.de.breakdown == "shift" then db.de.breakdown = "always" end
+    db.de.matsShown = 1
+  end
   for k, v in pairs(DEFAULTS) do if db.de[k] == nil then db.de[k] = v end end
   return db.de
 end
@@ -316,30 +323,9 @@ D.showBreakdown = showBreakdown
 
 local function tipOn() return not ns.tipOn or ns.tipOn("disenchant") end
 
--- "20%  1-2x Lesser Magic Essence" (classic-db) or "37%  1.4x Strange Dust" (an average: players', or measured in
--- vanilla), price each right.
-function D.breakdownRows(out, source)
-  local list = {}
-  for _, m in ipairs(out or {}) do
-    local count
-    if source == "estimate" then
-      count = m[3] == m[4] and tostring(m[3]) or (m[3] .. "-" .. m[4])
-    else
-      count = ("%.1f"):format(m[3]):gsub("%.0$", "")
-    end
-    list[#list + 1] = { ("%g%%  %sx %s"):format(math.floor(m[2] * 10 + 0.5) / 10, count, ns.deMatName(m[1])), m[5] }
-  end
-  return list
-end
-
-local function addBreakdown(t, ctx)
-  if not ctx.id or not tipOn() or D.oldAddon() or not showBreakdown() or not ns.disenchantValue then return end
-  local value, _, out, source = ns.disenchantValue(ctx.id)
-  if not value then return end
-  for _, r in ipairs(D.breakdownRows(out, source)) do
-    t:Detail(r[1], Tip.Money(r[2]), { always = true, note = "each" })
-  end
-end
+-- Whether the tooltip lists what an item disenchants into (else one "Disenchant" line). An older DisenchantValue still
+-- loaded draws its own breakdown.
+function D.showMaterials() return showBreakdown() and not D.oldAddon() end
 
 local function observedLine(t, which, obs)
   local value, missing = 0, false
@@ -353,7 +339,8 @@ local function observedLine(t, which, obs)
   else
     t:Line("Your disenchants", "no prices", { note = note, stale = true })
   end
-  if showBreakdown() then
+  -- what you got, each material: behind Shift (the materials of the odds above already show by default)
+  if opt("breakdown") ~= "never" and IsShiftKeyDown and IsShiftKeyDown() then
     local rows = {}
     for id, m in pairs(obs.mats) do
       rows[#rows + 1] = { ("%d%%  %s"):format(math.floor(m.hits / obs.count * 100 + 0.5), ns.deMatName(id)),
@@ -385,7 +372,6 @@ local function addObserved(t, ctx)
 end
 
 if Tip then
-  Tip:Register({ id = "EverlookDBAuctions.disenchantBreakdown", kind = "item", order = Tip.ORDER.disenchant + 0.5, add = addBreakdown })
   Tip:Register({ id = "EverlookDBAuctions.disenchantOwn", kind = "item", order = Tip.ORDER.disenchantOwn, add = addObserved })
 end
 
@@ -445,8 +431,9 @@ end
 function D.settingsFor(app, UI)
   local function s() return D.settings() end
   app:Setting({
-    key = "debreakdown", type = "choice", label = "What each disenchant material is worth, on the tooltip", width = 200,
-    chatLabel = "Disenchant breakdown", keywords = { "disenchant", "breakdown", "materials", "mats", "shift", "detail" },
+    key = "debreakdown", type = "choice", label = "What an item disenchants into, on its tooltip", width = 200,
+    chatLabel = "Disenchant materials", keywords = { "disenchant", "breakdown", "materials", "mats", "shift", "detail", "preview", "dust", "essence", "shard" },
+    desc = "Each material with its count, chance and worth, then the disenchant value. Otherwise one line with the value.",
     choices = { { value = "shift", text = "While Shift is held" }, { value = "always", text = "Always" }, { value = "never", text = "Never" } },
     get = function() return s().breakdown end,
     set = function(v) if v == "shift" or v == "always" or v == "never" then s().breakdown = v end end,
@@ -489,7 +476,7 @@ function D.settingsFor(app, UI)
     })
   end, { icon = "sparkle" })
   -- /eah de: the page; /eah de recent, /eah de status
-  app:Command("de", "de [recent|status]", "the Disenchanting page (also /dv)", function(rest)
+  app:Command("de", "de [recent|status]", "the Disenchanting page: what your bags disenchant into (also /dv)", function(rest)
     rest = (rest or ""):lower()
     if rest:match("^recent") then D.printRecent()
     elseif rest:match("^status") or rest:match("^summary") then
@@ -511,7 +498,8 @@ function D.page(app, UI)
       local e = log[#log]
       return e and (date("%Y-%m-%d %H:%M", e.t) .. "  " .. itemText(e.item)) or "nothing yet"
     end)
-    UI.Note(stack, "Every disenchant on every character goes into one log. Item tooltips then show what you actually got, for that item and for items of its kind and item level. Hold Shift for each material.")
+    UI.Note(stack, "Every disenchant on every character goes into one log. Item tooltips then show what you actually got, for that item and for items of its kind and item level.")
+    if ns.dePreview then ns.dePreview.build(stack, app, UI) end
     UI.Header(stack, "Recent disenchants", "Newest first. Hover one for the item.")
     local list
     UI.Input(stack, { placeholder = "Search by item or material", width = 320,

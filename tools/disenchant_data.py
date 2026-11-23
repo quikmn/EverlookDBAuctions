@@ -17,7 +17,12 @@ Sources, in this order of trust (players' own disenchants, from the Price Feed, 
   - classic-db (CMaNGOS, GPL-3.0): a bracket's chances where Enchantrix has too few disenchants.
   - VMaNGOS (GPL-2.0-or-later), optional: printed where it disagrees with classic-db on a bracket that uses
     classic-db's chances. Only a check, nothing of it is written.
-Brackets WoW Forever added (rare 5-15 and 16-20) have no odds anywhere: "can be disenchanted, not measured yet".
+  - Disenchantry 1.3.0 (x_Raven_x, MIT, based on Disenchant Helper by Rakuga, MIT;
+    https://www.curseforge.com/wow/addons/disenchantry; licence in THIRD-PARTY-NOTICES.md): its rough estimate for the
+    rare brackets WoW Forever added (item level 5-15 and 16-20), which nothing above has odds for. The lowest source:
+    source "d", "a rough estimate". Only those brackets are taken from it.
+The count ranges (min-max) of measured materials are classic-db's for that bracket (else the material's most common
+range in classic-db at that quality) when the measured average falls inside it; the average still gives the value.
 
 Writes Disenchant.lua into the addon, and with --site the site's web/disenchant.js (brackets) and
 web/data/disenchant.json (brackets, items, per-item odds; game data, not committed).
@@ -50,6 +55,15 @@ ITEM_MAX_DROPPED = 0.10         # an item with more of its disenchants dropped a
 ITEM_DIFF = 0.15                # list an item on its own when its chances differ from its bracket's by this much
 ITEM_COUNT_DIFF = 0.30          # or a main material's average count by this share
 GME, ASTRAL = 10939, (10998, 11082)
+
+
+# Disenchantry 1.3.0, ForecastPolicy.lua (Copyright (c) 2026 x_Raven_x, Copyright (c) 2026 Rakuga, MIT): its estimate
+# for WoW Forever's new rare brackets. Weapons give the essence where armor gives the dust. (material, chance %, min, max)
+def disenchantry_estimate(cls, lo):
+    weapon = cls == 2
+    if lo <= 15:
+        return [(10940, 20 if weapon else 80, 2, 3), (10938, 80 if weapon else 20, 2, 3)]
+    return [(10940, 20 if weapon else 75, 3, 4), (10939, 75 if weapon else 20, 2, 3), (10978, 5, 2, 2)]
 
 
 def rows(path):
@@ -256,13 +270,34 @@ for i, d in usable.items():
         pooled[lid][m][1] += c
 
 # ------------------------------------------------------------------ brackets: measured, estimate or nothing
-kinds = {}      # loot ID -> (source "m" / "e" / "", n, [(mat, chance %, min, max)])
+# a material's usual count range in classic-db at each quality: the range it has most often there
+usual_range = defaultdict(Counter)
+for t, mats in cdb_groups.items():
+    for m, _, lo, hi in mats:
+        usual_range[family(t), m][lo, hi] += 1
+
+
+def count_range(lid, m, avg):
+    """classic-db's min and max count of a material in this bracket (else its usual one at this quality), when the
+    measured average falls inside it; else the average as both."""
+    rng = next(((lo, hi) for mm, _, lo, hi in cdb_groups.get(classic.get(lid), ()) if mm == m), None)
+    if not rng and usual_range.get((brackets[lid][1], m)):
+        rng = usual_range[brackets[lid][1], m].most_common(1)[0][0]
+    if rng and rng[0] - 0.05 <= avg <= rng[1] + 0.05:
+        return rng
+    return round(avg, 2), round(avg, 2)
+
+
+kinds = {}      # loot ID -> (source "m" / "e" / "d" / "", n, [(mat, chance %, min, max, average count)])
 for lid in sorted(brackets):
     n, o = odds(pooled[lid]) if lid in pooled else (0, [])
     if n >= BRACKET_MIN_N and pooled_items[lid] >= BRACKET_MIN_ITEMS:
-        kinds[lid] = ("m", n, [(m, round(p * 100, 1), round(c, 2), round(c, 2)) for m, p, c in o if round(p * 100, 1) > 0])
+        kinds[lid] = ("m", n, [(m, round(p * 100, 1), *count_range(lid, m, c), round(c, 2)) for m, p, c in o if round(p * 100, 1) > 0])
     elif lid in classic:
-        kinds[lid] = ("e", 0, [(m, round(p, 3), lo, hi) for m, p, lo, hi in cdb_groups[classic[lid]]])
+        kinds[lid] = ("e", 0, [(m, round(p, 3), lo, hi, (lo + hi) / 2) for m, p, lo, hi in cdb_groups[classic[lid]]])
+    elif lid in NEW_IN_FOREVER and brackets[lid][1] == 3:
+        cls, _, lo, _ = brackets[lid]
+        kinds[lid] = ("d", 0, sorted(((m, p, a, b, (a + b) / 2) for m, p, a, b in disenchantry_estimate(cls, lo)), key=lambda x: (-x[1], x[0])))
     else:
         kinds[lid] = ("", 0, [])
 
@@ -273,8 +308,8 @@ for i, d in usable.items():
     src, _, base = kinds[items[i]]
     if n < ITEM_MIN_N or src != "m":
         continue
-    bp = {m: p / 100 for m, p, _, _ in base}
-    bc = {m: c for m, _, c, _ in base}
+    bp = {m: p / 100 for m, p, _, _, _ in base}
+    bc = {m: c for m, _, _, _, c in base}
     ip = {m: p for m, p, _ in o}
     diff = sum(abs(ip.get(m, 0) - bp.get(m, 0)) for m in set(ip) | set(bp)) / 2
     count_diff = max((abs(c - bc[m]) / bc[m] for m, p, c in o if p >= 0.1 and m in bc), default=0)
@@ -285,7 +320,7 @@ for i, d in usable.items():
 print("\nbrackets (loot ID, class, quality, item levels: source, disenchants, materials):")
 for lid, (src, n, mats) in sorted(kinds.items(), key=lambda kv: (brackets[kv[0]][1], brackets[kv[0]][0], brackets[kv[0]][2])):
     cls, q, lo, hi = brackets[lid]
-    print(f"  {lid:3} {cls} {q} {lo:2}-{hi:<2} {src or '-'} {n:7}  " + ", ".join(f"{m} {p}% x{a}" + ("" if a == b else f"-{b}") for m, p, a, b in mats))
+    print(f"  {lid:3} {cls} {q} {lo:2}-{hi:<2} {src or '-'} {n:7}  " + ", ".join(f"{m} {p}% x{a}" + ("" if a == b else f"-{b}") + (f" (avg {c})" if src == "m" else "") for m, p, a, b, c in mats))
 if args.vmangos:
     v = sqlite3.connect(args.vmangos)
     vit = {e: d for e, d in v.execute("select entry, disenchant_id from item_template where disenchant_id > 0 group by entry having patch = max(patch)")}
@@ -301,7 +336,7 @@ if args.vmangos:
         vv = Counter(vit[i] for i in items if items[i] == lid and i in vit)
         vt = vv.most_common(1)[0][0] if vv else None
         got = sorted((m, round(p, 3), lo, hi) for m, p, lo, hi in vgroups.get(vt, []))
-        if got != sorted(mats):
+        if got != sorted(tuple(m[:4]) for m in mats):
             print(f"  {lid} {brackets[lid]}: classic-db {sorted(mats)}  VMaNGOS {got}")
 print(f"\n{len(items)} items, {len(item_odds)} with their own measured odds")
 
@@ -333,18 +368,22 @@ kind_lines = []
 for lid in sorted(kinds):
     cls, q, lo, hi = brackets[lid]
     src, _, mats = kinds[lid]
+    # a measured material carries its average count as a fifth number (min and max are the range it comes in)
     kind_lines.append(f"[{lid}]={{{cls},{q},{lo},{hi},{json.dumps(src) if src else 'false'}" + "".join(
-        f",{{{m},{num(p)},{num(a)},{num(b)}}}" for m, p, a, b in mats) + "},")
+        f",{{{m},{num(p)},{num(a)},{num(b)}" + (f",{num(c)}" if src == "m" else "") + "}" for m, p, a, b, c in mats) + "},")
 odds_lines = [f"[{i}]={{{n}" + "".join(f",{m},{num(p)},{num(c)}" for m, p, c in mats) + "}," for i, (n, mats) in sorted(item_odds.items())]
 out = args.addon / "Disenchant.lua"
 out.write_text(
     "-- Generated by tools/disenchant_data.py. Do not edit. Brackets and items from the WoW Forever client (build "
     + (args.tables / "build.txt").read_text().strip() + ");\n"
     "-- odds from Enchantrix (Norganna's AddOns, GPL-2.0-or-later), disenchants counted in vanilla, and from\n"
-    "-- classic-db (CMaNGOS, GPL-3.0, https://github.com/cmangos/classic-db) where Enchantrix has too few.\n"
+    "-- classic-db (CMaNGOS, GPL-3.0, https://github.com/cmangos/classic-db) where Enchantrix has too few; for the rare\n"
+    "-- brackets new in WoW Forever, Disenchantry 1.3.0's rough estimate (x_Raven_x, based on Disenchant Helper by\n"
+    "-- Rakuga; both MIT, see THIRD-PARTY-NOTICES.md).\n"
     "local _, ns = ...\n"
-    "-- [loot ID] = { item class, quality, low, high, source, { material, chance %, min, max }, ... }: per bracket of the\n"
-    '-- client. source "m": measured (Enchantrix; min = max = the average count), "e": estimate (classic-db), false: not\n'
+    "-- [loot ID] = { item class, quality, low, high, source, { material, chance %, min, max[, average] }, ... }: per\n"
+    "-- bracket of the client. source \"m\": measured (Enchantrix; min-max is classic-db's range, the fifth number the\n"
+    "-- measured average count), \"e\": estimate (classic-db), \"d\": a rough estimate (Disenchantry), false: not\n"
     "-- measured yet (no odds anywhere).\n"
     "ns.DE_KINDS = {\n" + "\n".join(kind_lines) + "\n}\n"
     "-- [item] = { disenchants, material, chance %, average count, ... }: items Enchantrix measured often enough whose\n"
@@ -370,7 +409,9 @@ if args.site:
     for lid in sorted(kinds, key=lambda k: brackets[k][2]):
         cls, q, lo, hi = brackets[lid]
         src, _, mats = kinds[lid]
-        de[str(cls)][str(q)].append([lo, hi, [[round(p / 100, 4), round((a + b) / 2, 2), m] for m, p, a, b in mats], src])
+        if src == "d":   # the site keeps "not measured yet" for these
+            src, mats = "", []
+        de[str(cls)][str(q)].append([lo, hi, [[round(p / 100, 4), round(c, 2), m] for m, p, a, b, c in mats], src])
     js = args.site / "web" / "disenchant.js"
     js.write_text(
         "// Generated by EverlookDB Auctions' tools/disenchant_data.py. Do not edit.\n"
@@ -390,7 +431,9 @@ if args.site:
         "v": 1,
         "build": (args.tables / "build.txt").read_text().strip(),
         "kinds": {str(lid): {"cls": brackets[lid][0], "q": brackets[lid][1], "lo": brackets[lid][2], "hi": brackets[lid][3],
-                             "src": src, "n": n, "mats": [[m, p, a, b] for m, p, a, b in mats]} for lid, (src, n, mats) in sorted(kinds.items())},
+                             "src": "" if src == "d" else src, "n": n,
+                             "mats": [] if src == "d" else [[m, p, c, c] if src == "m" else [m, p, a, b] for m, p, a, b, c in mats]}
+                  for lid, (src, n, mats) in sorted(kinds.items())},
         "items": {str(i): lid for i, lid in sorted(items.items())},
         "item_odds": {str(i): {"n": n, "mats": [[m, p, c] for m, p, c in mats]} for i, (n, mats) in sorted(item_odds.items())},
     }
