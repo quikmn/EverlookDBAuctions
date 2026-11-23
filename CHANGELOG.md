@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.25.0 (2026-11-23)
 - Gear upgrades for your alts: pick a character in the new dropdown at the top of the Gear upgrades page, click one of its specs, and see the best upgrades for it on your auction house, for its class, its level and the gear it wore when you last played it. Each character's spec is remembered, and the shopping list gets the alt's name. Log in once on each alt to add it; "Forget a character..." removes one.
 - The spec buttons now show every spec of the class; "Other..." has the levelling builds and your own weights.
 
