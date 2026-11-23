@@ -42,6 +42,7 @@ What gear is worth to your spec, and what the auction house has that beats what 
 
 - **Your specs and builds:** the first time you open the auction house, pick the specs or levelling builds this character gears for (for example Beast Mastery with a melee two-hander, or Discipline to 40 then Shadow). Change it on the Gear upgrades page or with `/eah up spec fury`.
 - **Upgrades tab:** every slot like the character window, with the best upgrade within your max price; click a slot for all its upgrades. `/eah up` opens it anywhere. "Make shopping list" saves the best upgrade of every slot.
+- **Your alts too:** pick a character in the dropdown at the top left, then one of its specs, and see the upgrades for it: its class, its level and the gear it wore when you last played it. Each character's spec is remembered. Alts show up after you log in on them once; "Forget a character..." in the same list removes one.
 - **Scores:** every stat times your spec's stat weights for your level, adjusted to your talents, plus procs and Use: effects, compared with what you wear. Items your class can't use are skipped.
 - **Only real upgrades:** small gains say "About the same". Every gain is a share of your whole gear ("+6.5% of your gear") and the tooltip says why.
 - **Stat weights:** for every spec and levelling build, every five levels up to 60, for solo levelling or groups. Make your own profile, share it with an import string, or import a Pawn scale. Weights that are estimates say so.

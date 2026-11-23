@@ -208,9 +208,9 @@ function U.armorOK(class, level, role, classID, subID, equipLoc, on)
   return subID == U.bestArmor(class, level)
 end
 
--- Whether the class wields two one-handers: the game's answer when it has one, else by class.
+-- Whether the class wields two one-handers: the game's answer when it has one (for the player), else by class.
 function U.canDualWield(class)
-  if CanDualWield then
+  if CanDualWield and not U.ctx then
     local okDW, v = pcall(CanDualWield)
     if okDW and v ~= nil then return v and true or false end
   end
@@ -436,13 +436,27 @@ function U.set(key, v)
   U.changed()
 end
 
+-- Another character of the account (UpgradesChars.lua): while U.ctx is set, the class, level, worn gear, talents
+-- and weight profile picks are that character's. U.as(ctx, fn, ...) runs fn with it and puts the old one back.
+U.ctx = nil
+function U.as(ctx, fn, ...)
+  local prev = U.ctx
+  U.ctx = ctx
+  local res = { pcall(fn, ...) }
+  U.ctx = prev
+  if not res[1] then error(res[2], 0) end
+  return unpack(res, 2, table.maxn(res))
+end
+
 function U.class()
+  if U.ctx and U.ctx.class then return U.ctx.class end
   if U.testClass then return U.testClass end
   local okC, _, class = pcall(UnitClass, "player")
   return okC and class or "WARRIOR"
 end
 
 function U.level()
+  if U.ctx and U.ctx.level then return U.ctx.level end
   if U.testLevel then return U.testLevel end
   local okL, l = pcall(UnitLevel, "player")
   return okL and tonumber(l) or 60
@@ -451,7 +465,7 @@ end
 -- The specs this character gears for: the ones ticked, or every spec of the class until one is picked (then the
 -- second return is true: all of them are counted).
 function U.ticked()
-  local c = U.char()
+  local c = U.ctx and { specs = {} } or U.char()
   local out = {}
   for _, s in ipairs(U.specs()) do if c.specs[s.key] then out[#out + 1] = s end end
   if #out == 0 then
@@ -482,11 +496,20 @@ function U.profiles(spec)
   return out
 end
 
+-- Which profile each spec uses: { [spec key] = profile name }, this character's (or U.ctx's).
+function U.picks()
+  if U.ctx then
+    U.ctx.profile = U.ctx.profile or {}
+    return U.ctx.profile
+  end
+  return U.char().profile
+end
+
 function U.activeProfile(spec)
-  local name = U.char().profile[spec]
+  local name = U.picks()[spec]
   if not name then return nil end
   for _, p in ipairs(U.profiles(spec)) do if p.name == name then return p end end
-  U.char().profile[spec] = nil
+  U.picks()[spec] = nil
 end
 
 -- Pawn's scale for the spec, when Pawn is installed and the setting is on: a visible scale of this class whose name
@@ -496,6 +519,7 @@ function U.pawnScale(spec)
   local pc = rawget(_G, "PawnCommon")
   if type(pc) ~= "table" or type(pc.Scales) ~= "table" then return nil end
   local okC, _, _, classID = pcall(UnitClass, "player")
+  if U.ctx then okC, classID = U.ctx.classID ~= nil, U.ctx.classID end
   local want = spec.name:lower()
   for name, sc in pairs(pc.Scales) do
     if type(sc) == "table" and type(sc.Values) == "table" and (not sc.ClassID or sc.ClassID == (okC and classID))
@@ -513,7 +537,8 @@ local weightCache = {}
 function U.weights(spec)
   if type(spec) == "string" then spec = U.spec(spec) end
   if not spec then return {}, {}, "none" end
-  local hit = weightCache[spec.key]
+  local ck = (U.ctx and U.ctx.key or "") .. "|" .. U.class() .. "|" .. spec.key
+  local hit = weightCache[ck]
   if hit then return hit[1], hit[2], hit[3], hit[4], hit[5] end
   local w, why, from, label
   local meta = {}
@@ -527,7 +552,7 @@ function U.weights(spec)
     else
       local ranks
       if U.get("talents") then
-        local t = U.testTalents or U.readTalents()
+        local t = U.testTalents or (U.ctx and (U.ctx.talents or {})) or U.readTalents()
         ranks = function(tab, tier, col, name)
           local byName = name and t["name:" .. name]
           if byName then return byName end
@@ -548,7 +573,7 @@ function U.weights(spec)
       end
     end
   end
-  weightCache[spec.key] = { w, why, from, label, meta }
+  weightCache[ck] = { w, why, from, label, meta }
   return w, why, from, label, meta
 end
 
@@ -632,7 +657,7 @@ function U.saveProfile(specKey, name, w)
   for k, v in pairs(w) do if U.NAME[k] and tonumber(v) and v ~= 0 then copy[k] = tonumber(v) end end
   local p = { name = name, spec = specKey, w = copy }
   all[#all + 1] = p
-  U.char().profile[specKey] = name
+  U.picks()[specKey] = name
   U.changed()
   return p
 end
@@ -642,7 +667,7 @@ function U.deleteProfile(specKey)
   if not p then return false end
   local all = U.profiles()
   for i = #all, 1, -1 do if all[i] == p then table.remove(all, i) end end
-  U.char().profile[specKey] = nil
+  U.picks()[specKey] = nil
   U.changed()
   return true, p.name
 end
@@ -650,11 +675,11 @@ end
 -- Previous or next of: built-in, then the spec's own profiles.
 function U.stepProfile(specKey, dir)
   local list = U.profiles(specKey)
-  local cur = U.char().profile[specKey]
+  local cur = U.picks()[specKey]
   local idx = 0
   for i, p in ipairs(list) do if p.name == cur then idx = i end end
   idx = (idx + dir) % (#list + 1)
-  U.char().profile[specKey] = idx > 0 and list[idx].name or nil
+  U.picks()[specKey] = idx > 0 and list[idx].name or nil
   U.changed()
   return idx > 0 and list[idx].name or "Built-in"
 end
@@ -820,12 +845,19 @@ end
 -- What is worn
 
 -- worn[slot] = { link, id, key, equipLoc, stats } for the inventory slots we compare with.
+-- With U.ctx: that character's saved links (ctx.items = { [slot] = link }), read the same way.
 function U.readWorn()
   local out = {}
-  if U.testWorn then return U.testWorn end
+  local ctx = U.ctx
+  if U.testWorn and not ctx then return U.testWorn end
   for _, slots in pairs(U.SLOTS) do
     for _, slot in ipairs(slots) do
-      local okL, link = pcall(GetInventoryItemLink, "player", slot)
+      local okL, link
+      if ctx then
+        okL, link = true, ctx.items and ctx.items[slot]
+      else
+        okL, link = pcall(GetInventoryItemLink, "player", slot)
+      end
       link = okL and ns.ok and ns.ok(link) or (okL and link) or nil
       if type(link) == "string" then
         local id = tonumber(link:match("item:(%d+)"))
@@ -840,8 +872,20 @@ end
 
 local wornCache
 function U.worn()
+  local ctx = U.ctx
+  if ctx then
+    if not ctx.worn then ctx.worn = U.readWorn() end
+    return ctx.worn
+  end
   if not wornCache then wornCache = U.readWorn() end
   return wornCache
+end
+
+-- How many worn items the game hasn't loaded yet (their stats unknown).
+function U.wornMissing(worn)
+  local n = 0
+  for _, it in pairs(worn or {}) do if not it.stats then n = n + 1 end end
+  return n
 end
 function U.wornChanged() wornCache = nil; U.changed() end
 
@@ -1141,11 +1185,17 @@ local function finish(r)
 end
 
 -- Scores every row of the newest scan for a spec in batches over frames (about 3 ms a frame), never in combat (it
--- waits for combat to end). onDone(result) when finished. A newer call replaces a running one.
-function U.collect(spec, onDone, sync)
+-- waits for combat to end). onDone(result) when finished. A newer call replaces a running one. who: another
+-- character of the account (a U.ctx, UpgradesChars.lua): its class, level and saved gear; nil for this one.
+function U.collect(spec, onDone, sync, who)
+  if who and U.ctx ~= who then
+    return U.as(who, U.collect, spec, onDone, sync, who)
+  end
+  local ctx = U.ctx
   if type(spec) == "string" then spec = U.spec(spec) end
   local scan, source = U.newestScan()
   local r = newResult(scan, source, spec)
+  r.whoKey, r.whoName = ctx and ctx.key or nil, ctx and ctx.name or nil
   if not scan or not spec then
     r.done, r.none = true, not scan
     U.result = r
@@ -1157,13 +1207,13 @@ function U.collect(spec, onDone, sync)
   local mine = { keys = keys, i = 1, r = r }
   job = mine
   local worn = U.readWorn()
-  wornCache = worn
+  if ctx then ctx.worn = worn else wornCache = worn end
+  -- worn items the game hasn't loaded yet count as loading: read again in a moment
+  local missing = U.wornMissing(worn)
+  if missing > 0 and ctx then ctx.worn = nil end
   local maxPrice, minPct = filters()
   local clock = debugprofilestop or function() return 0 end
-  local function step()
-    if job ~= mine then return end
-    if inCombat() and not sync then mine.waiting = true; return end   -- PLAYER_REGEN_ENABLED goes on
-    mine.waiting = nil
+  local function batch()
     local start = clock()
     local n = 0
     while mine.i <= #keys do
@@ -1173,6 +1223,12 @@ function U.collect(spec, onDone, sync)
       n = n + 1
       if not sync and (n >= 400 or (n % 25 == 0 and clock() - start > 3)) then break end
     end
+  end
+  local function step()
+    if job ~= mine then return end
+    if inCombat() and not sync then mine.waiting = true; return end   -- PLAYER_REGEN_ENABLED goes on
+    mine.waiting = nil
+    if ctx and U.ctx ~= ctx then U.as(ctx, batch) else batch() end
     r.progress = (mine.i - 1) / math.max(1, #keys)
     if mine.i <= #keys then
       if U.onProgress then pcall(U.onProgress, r) end
@@ -1181,6 +1237,7 @@ function U.collect(spec, onDone, sync)
     end
     job = nil
     finish(r)
+    r.pending = r.pending + missing
     U.result = r
     if onDone then onDone(r) end
   end

@@ -134,6 +134,7 @@ def main() -> int:
     failures += upgrades_ours()
     failures += start_tab()
     failures += upgrades_tab()
+    failures += upgrades_alts()
     failures += item_tip()
     failures += health()
     failures += hub()
@@ -5544,6 +5545,194 @@ def upgrades_tab():
     ns.realmInfo = lua.eval("function() return nil, 6946 end")
     G.DB.scans[1].realm, G.DB.scans[1].realmID = "", 6946
     check(U.newestScan() is not None, "a scan saved without its realm name is found by realm ID")
+    return failures
+
+
+def upgrades_alts():
+    """Gear upgrades for an alt (UpgradesChars.lua, UpgradesTab.lua): every character of the account is saved at login
+    (class, level, the links of its gear, talents) with the values the game hides skipped; the character dropdown
+    lists you first and your alts of this realm and faction, with a hint for alts not seen yet; a level-34 priest alt
+    viewed from a level-60 warrior gets cloth upgrades (never plate) against its own saved gear, its own specs as
+    buttons, its spec remembered, "Gear as of" in the status line and its name in the shopping list; and an alt can
+    be forgotten (never you)."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("upgrades alts: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute(UPGRADES_SETUP)
+    lua.execute(r"""
+      SECRET = {}
+      function issecretvalue(v) return SECRET[v] == true end
+      MOCK_NAME, MOCK_RACE, MOCK_FACTION, MOCK_INV = "Prayer", "Human", "Alliance", {}
+      function UnitName() return MOCK_NAME end
+      function UnitRace() return MOCK_RACE, MOCK_RACE end
+      function UnitFactionGroup() return MOCK_FACTION end
+      function UnitClass() return MOCK_CLASS, MOCK_CLASS, MOCK_CLASS == "PRIEST" and 5 or 1 end
+      function GetInventoryItemLink(_, slot) return MOCK_INV[slot] end
+      RAID_CLASS_COLORS = { PRIEST = { r = 1, g = 1, b = 1 }, WARRIOR = { r = 0.78, g = 0.61, b = 0.43 } }
+      UPDATA.classes.PRIEST = { specs = {
+        { key = "discipline", name = "Discipline", role = "healer", brackets = { { upTo = 60, w = { int = 1, spi = 1, heal = 0.5, sta = 0.2 } } } },
+        { key = "holy", name = "Holy", role = "healer", brackets = { { upTo = 60, w = { int = 1, heal = 1 } } } },
+        { key = "shadow", name = "Shadow", role = "caster", brackets = { { upTo = 60, w = { int = 0.5, sp = 1, sp_shadow = 1 } } } },
+        { key = "priest_disc_leveling", name = "Discipline (levelling 1-40, then Shadow)", role = "caster", build = true,
+          brackets = { { upTo = 60, w = { int = 1 } } } },
+      } }
+    """)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    ns = lua.table()
+    run(UPGRADES_NS, "ns", ns)
+    ns.realmInfo = lua.eval("function() return 'Test', 1234 end")
+    ns.ago = lua.eval("function() return '2 h ago' end")
+    run(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns)
+    for name in ("Upgrades.lua", "UpgradesChars.lua", "UpgradesTab.lua", "UpgradesExtras.lua"):
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    lua.eval("""function(UI) UI.list = function(parent)
+      local L = CreateFrame("Frame", nil, parent)
+      L.empty = CreateFrame("FontString")
+      L.SetItems = function(self, items) self.items = items end
+      return L
+    end end""")(ns.UI)
+    G = lua.globals()
+    U, V, C = ns.up, ns.upgradesView, ns.upChars
+    T = lua.table_from
+    gear = lua.eval("""function(id, loc, cls, sub, stats, name, req)
+      MOCK_GEAR[id] = { loc, cls, sub, stats, name or ("Item " .. id), 2, req or 30 }
+    end""")
+    gear(201, "INVTYPE_HEAD", 4, 1, T({"ITEM_MOD_INTELLECT_SHORT": 5, "ITEM_MOD_SPIRIT_SHORT": 4}), "Worn Hood")
+    gear(202, "INVTYPE_ROBE", 4, 1, T({"ITEM_MOD_INTELLECT_SHORT": 6, "ITEM_MOD_STAMINA_SHORT": 4}), "Worn Robe")
+    gear(211, "INVTYPE_HEAD", 4, 1, T({"ITEM_MOD_INTELLECT_SHORT": 12, "ITEM_MOD_SPIRIT_SHORT": 10}), "Silk Hood")
+    gear(212, "INVTYPE_ROBE", 4, 1, T({"ITEM_MOD_INTELLECT_SHORT": 3}), "Thin Robe")            # worse than worn
+    gear(213, "INVTYPE_HEAD", 4, 4, T({"ITEM_MOD_STRENGTH_SHORT": 20}), "Plate Helm")
+    gear(214, "INVTYPE_HAND", 4, 1, T({"ITEM_MOD_INTELLECT_SHORT": 30}), "Gloves of Later", 40)
+    gear(215, "INVTYPE_2HWEAPON", 2, 1, T({"ITEM_MOD_STRENGTH_SHORT": 15, "ITEM_MOD_DAMAGE_PER_SECOND_SHORT": 20}), "Great Axe")
+
+    # --- recording: the priest alt logs in (level 34), one slot hidden by the game
+    G.MOCK_CLASS, G.MOCK_LEVEL = "PRIEST", 34
+    G.EverlookAuctionsCharDB = lua.eval("{ up = { specs = { discipline = true }, shown = 'discipline', asked = true, profile = {} } }")
+    lua.execute('MOCK_INV = { [1] = "item:201", [5] = "item:202", [6] = "SECRET_BELT" }; SECRET.SECRET_BELT = true')
+    lua.execute("ns_tal = { ['1:1:1'] = 3, ['name:Meditation'] = 2, ['1:2:1'] = 0 }")
+    U.readTalents = lua.eval("function() return ns_tal end")
+    rec = C.record()
+    key = "Prayer-1234"
+    check(rec is not None and C.meKey() == key, f"the key is name and realm ID: {C.meKey()}")
+    check(rec["class"] == "PRIEST" and rec.classID == 5 and rec.level == 34 and rec.race == "Human" and rec.faction == "Alliance",
+          "class, level, race and faction saved")
+    check(rec["items"][1] == "item:201" and rec["items"][5] == "item:202" and rec["items"][6] is None,
+          "the gear's links saved; the hidden one skipped")
+    check(rec.talents["name:Meditation"] == 2 and rec.talents["1:2:1"] is None, "talents: only the ranks taken")
+    check(rec.shown == "discipline", "this character's spec on the page is saved with it")
+    rec["items"][6] = "item:999"
+    C.record()
+    check(rec["items"][6] == "item:999", "a slot the game hides keeps what was saved")
+    lua.execute('MOCK_INV[6] = nil')
+    C.record()
+    check(rec["items"][6] is None, "an empty slot is empty")
+    G.MOCK_NAME = "SECRET_NAME"
+    G.SECRET.SECRET_NAME = True
+    before = len(list(C.all().keys()))
+    check(C.record() is None and len(list(C.all().keys())) == before, "no record while the game hides the name")
+    G.MOCK_NAME = "Prayer"
+    C.record(35)
+    check(rec.level == 35, "PLAYER_LEVEL_UP's new level")
+    C.record(34)
+    check(G.DB.up.chars[key].level == 34 and G.DB.up.chars[key].name == "Prayer", "saved per account (db.up.chars)")
+
+    # an alt on another realm and one of the other faction: never listed
+    lua.execute("""
+      DB.up.chars["Far-999"] = { name = "Far", realmID = 999, class = "MAGE", level = 60, faction = "Alliance", items = {} }
+      DB.up.chars["Red-1234"] = { name = "Red", realmID = 1234, class = "ROGUE", level = 50, faction = "Horde", items = {} }
+    """)
+
+    # --- now playing the warrior (level 60), nothing worn
+    G.MOCK_CLASS, G.MOCK_LEVEL, G.MOCK_NAME = "WARRIOR", 60, "Grom"
+    G.MOCK_INV = lua.table()
+    G.EverlookAuctionsCharDB = lua.eval("{ up = { specs = { fury = true }, shown = 'fury', asked = true, profile = {} } }")
+    U.readTalents = lua.eval("function() return {} end")
+    C.record()
+    U.changed()
+    names = [c.name for c in C.list().values()]
+    check(names == ["Grom", "Prayer"], f"you first, then alts of this realm and faction: {names}")
+    items = V.charItems()
+    texts = [items[i].text for i in range(1, len(items) + 1)]
+    check("Grom" in texts[0] and "(you)" in texts[0] and "60" in texts[0] and items[1].value == "", f"you, with level and (you): {texts[0]}")
+    check("Prayer" in texts[1] and "34" in texts[1] and "(you)" not in texts[1] and items[2].value == key, f"the alt: {texts[1]}")
+    check(texts[1].startswith("|cffffffff"), f"class-coloured: {texts[1]}")
+    check(items[3].title and "Log in once on an alt to add it" in texts[2], "the hint for alts not seen yet")
+    check("Forget a character" in texts[3], "forget is in the list")
+
+    # --- the scan
+    lua.execute("""DB.scans = { { realm = "Test", side = "Alliance", at = 1699990000, rows = {
+      ["211:0"] = "5000,5000,5000,1,1,,,,,,,",
+      ["212:0"] = "100,100,100,1,1,,,,,,,",
+      ["213:0"] = "900,900,900,1,1,,,,,,,",
+      ["214:0"] = "700,700,700,1,1,,,,,,,",
+      ["215:0"] = "3000,3000,3000,1,1,,,,,,,",
+    } } }""")
+    V.openWindow()
+    F = G.EverlookAuctionsUpgrades
+    r = U.result
+    check(V.kind == "ready" and r.whoKey is None and r.spec.key == "fury", f"you by default: {V.kind}")
+    check(r.slots.head.best and r.slots.head.best.id == 213, "the warrior's plate helm")
+    check(r.slots.mainhand.best and r.slots.mainhand.best.id == 215, "and the axe")
+    check("Gear as of" not in F.head.text, "no gear age for you")
+    shown_specs = [F.specs[i].spec.key for i in range(1, len(F.specs) + 1) if F.specs[i].shown]
+    check(shown_specs == ["fury", "protection"], f"your class's specs as buttons: {shown_specs}")
+
+    # --- the priest alt
+    V.pickChar(key)
+    r = U.result
+    check(V.who == key and r.whoKey == key and r.whoName == "Prayer" and V.kind == "ready", f"the alt's upgrades: {r.whoKey}")
+    check(r.spec.key == "discipline", f"its saved spec: {r.spec.key}")
+    check(r.slots.head.best and r.slots.head.best.id == 211, "a cloth hood for the priest")
+    heads = [r.slots.head.list[i].id for i in range(1, len(r.slots.head.list) + 1)]
+    check(213 not in heads, f"never the plate helm: {heads}")
+    check(r.slots.mainhand.best is None, "never the warrior's axe")
+    check(r.slots.chest.best is None, "the robe worse than its saved robe isn't an upgrade (its own gear is the baseline)")
+    check(r.slots.head.best.cmp.vs and r.slots.head.best.cmp.vs.id == 201, "measured against the hood it wears")
+    check(r.slots.hands.best is None and r.slots.hands.nextLevel == 40, "level 34: gloves of level 40 are the next upgrade")
+    shown_specs = [F.specs[i].spec.key for i in range(1, len(F.specs) + 1) if F.specs[i].shown]
+    check(shown_specs == ["discipline", "holy", "shadow"], f"the alt's class's specs as buttons: {shown_specs}")
+    check("Prayer" in F.charText.text and "34" in F.charText.text, f"the dropdown shows the alt: {F.charText.text}")
+    check(F.head.text.startswith("Gear as of 2 h ago"), f"the gear's age in the status line: {F.head.text}")
+    check(U.ctx is None and U["class"]() == "WARRIOR" and U.level() == 60, "outside the page you're still yourself")
+    tl = ns.upExtras.tipLines("item:213", 213)
+    check(tl and "Upgrade for Fury" in (tl[1].left or ""), "tooltips stay yours")
+
+    # spec memory, per character
+    V.showSpec("shadow")
+    check(rec.shown == "shadow" and U.result.spec.key == "shadow", "picking Shadow for the alt")
+    check(G.EverlookAuctionsCharDB.up.shown == "fury", "your own spec untouched")
+    V.pickChar("")
+    check(U.result.whoKey is None and U.result.spec.key == "fury", "back to you: Fury")
+    V.pickChar(key)
+    check(U.result.spec.key == "shadow", "the alt's spec remembered")
+
+    # "Other...": the levelling build of the alt's class
+    oi, cur, _p = V.otherItems()
+    vals = [oi[i].value for i in range(1, len(oi) + 1)]
+    check("s:priest_disc_leveling" in vals and cur == "s:shadow", f"Other: the alt's levelling build: {vals}")
+    check("edit" not in vals, "weights of your own are made on a character of that class")
+
+    # the shopping list has the alt's name
+    V.showSpec("discipline")
+    G.DB.lists = lua.table()
+    ns.recipeList = lua.eval("""{ save = function(lists, name, rows) local l = { name = name, rows = rows }; lists[#lists + 1] = l; return l, true end }""")
+    V.makeList()
+    check(len(G.DB.lists) == 1 and G.DB.lists[1].name == "Gear upgrades: Prayer, Discipline", f"the list: {G.DB.lists[1].name if len(G.DB.lists) else None}")
+
+    # forget: never you; the alt goes, the page goes back to you
+    check(C.forget(C.meKey()) is False, "you can't be forgotten")
+    fi = V.forgetItems()
+    check(any(fi[i].value == key for i in range(1, len(fi) + 1)) and not any(fi[i].value == "Grom-1234" for i in range(1, len(fi) + 1)),
+          "the forget list has only alts")
+    check(V.forgetChar(key) is True and G.DB.up.chars[key] is None and V.who is None, "forgotten")
+    check(U.result.whoKey is None and [c.name for c in C.list().values()] == ["Grom"], "the page is back to you")
+    items = V.charItems()
+    check(not any("Forget" in (items[i].text or "") for i in range(1, len(items) + 1)), "no forget without alts")
     return failures
 
 

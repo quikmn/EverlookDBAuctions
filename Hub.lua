@@ -470,6 +470,7 @@ local function fillHome()
   local view = ns.upgradesView
   local spec = view and view.spec and try(view.spec)
   if r and r.done and not r.none and spec and r.spec == spec then
+    if r.whoName then spec = { name = tostring(r.whoName) .. ", " .. spec.name } end   -- an alt's upgrades (UpgradesTab.lua)
     local bestE, bestPct
     for _, slot in pairs(r.slots or {}) do
       local e = slot.best

@@ -45,6 +45,7 @@ LootCards.lua
 Crafting.lua
 UpgradesData.lua
 Upgrades.lua
+UpgradesChars.lua
 UpgradesTab.lua
 UpgradesExtras.lua
 UpgradesOptions.lua
