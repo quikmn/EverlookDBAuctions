@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.25.1 (2026-11-23)
 - Gear upgrades for alts: gear the game is still loading at login no longer counts as an empty slot.
 
 ## v0.25.0 (2026-11-23)
