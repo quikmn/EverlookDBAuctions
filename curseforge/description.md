@@ -30,6 +30,9 @@ Put an item in the sell frame and the price is set just under the cheapest aucti
 Shopping lists, and buying a whole list  
 Paste a list of what you want, one item per line ("60 Light Leather", "Light Leather x60", item links...), and it becomes a shopping list. Press Buy this list at the auction house: it asks "Buy 60 Light Leather?", shows the cheapest way to get them and what that costs, and buys when you press Buy. Then the next item, until the list is done. It warns you when a price is far above the usual one or fewer are listed than you want, and it takes off what you already have. Add "max 25s" to a line to never pay more than that for one. EverlookDB Crafting and the leveling guides on everlookdb.com can send their shopping lists here too.
 
+Gear upgrades, for you and your alts  
+The Gear upgrades page shows the best upgrade on your auction house for every slot, scored with stat weights for your spec and level, within the price you set. Pick one of your alts in the dropdown at the top and one of its specs, and you see its upgrades too: for its class, its level and the gear it wore when you last played it. One click makes a shopping list of them. /eah up opens it.
+
 A cleaner auction house  
 A darker, flatter look for the auction house window. Turn it off with /eah skin off.
 
