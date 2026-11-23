@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.24.0 (2026-11-23)
 - Disenchant preview: item tooltips list what the item disenchants into, like "Strange Dust 1-2 (75%)", each with its icon and what it's worth at your auction house, then the disenchant value. It's green when disenchanting pays more than selling the item, red when less. Works everywhere you see an item: bags, the auction house, chat links, shopping lists.
 - The Disenchanting page (`/eah de`) lists the gear in your bags that can be disenchanted, with what each piece gives and whether that beats selling it. Click one to preview it, then one click on Disenchant disenchants it. Never in combat, never on its own.
 - New rare gear of item level 5-20 now shows a rough disenchant estimate instead of "not measured yet".
