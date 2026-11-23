@@ -82,7 +82,9 @@ function C.record(level)
     local okL, link = pcall(GetInventoryItemLink, "player", slot)
     if okL then
       if link == nil then
-        items[slot] = nil
+        -- an item the game hasn't loaded yet has an ID but no link: keep what was saved
+        local okI, id = pcall(GetInventoryItemID, "player", slot)
+        if not (okI and id ~= nil) then items[slot] = nil end
       elseif not isSecret(link) and type(link) == "string" then
         items[slot] = link
       end
