@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.27.0 (2026-11-24)
 - Fresher Price Feed prices: the EverlookDB App brings new prices about every hour, but the game only reads them when you log in or /reload. When the prices you see are over 90 minutes old, a small line under the minimap offers "Prices: 2 h old · Reload (1 s)". It only comes at a quiet moment: resting in a city or inn, or right after a mailbox, a vendor, a flight or a loading screen. Never in a fight, a dungeon or a battleground, or while you type or cast; at most once an hour, and the x keeps it away for 2 hours. Click it to reload.
 - The minimap button gets a small yellow dot while newer prices may be ready; Shift-click it to reload. At the auction house a Reload button sits next to Update prices, and item tooltips say "/reload for newer prices" while you hold Shift.
 - Settings, General: "Offer to reload for newer prices" (on) and how old prices must be first (90 minutes). In chat: `/eah reloadhint off`, `/eah reloadafter 120`.
