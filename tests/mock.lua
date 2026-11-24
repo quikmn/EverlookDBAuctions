@@ -28,6 +28,7 @@ local function frame(kind, name)
   function methods.GetTop(self) return self.t end
   function methods.GetBottom(self) return self.b end
   function methods.GetParent(self) return self.parent end
+  function methods.SetParent(self, p) self.parent = p end
   function methods.CreateTexture() return frame("Texture") end
   function methods.CreateFontString() return frame("FontString") end
   function methods.GetName() return name end

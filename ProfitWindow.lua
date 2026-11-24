@@ -156,23 +156,76 @@ local function crafterCan(c, r)
   return Pr.canMake(r, function(id) return c.bags[id] or 0 end)
 end
 
+-- The scope shown: "known" (the recipes you know), "easy" (easy to learn) or "all" (every recipe).
+function W.scope()
+  local sc = settings().scope
+  return Pr.SCOPES[sc] and sc or "known"
+end
+function W.setScope(sc)
+  local s = settings()
+  s.scope = (Pr.SCOPES[sc] and sc ~= "known") and sc or nil
+  W.offset = 0
+  W.render()
+end
+
+-- EverlookDB Crafting (API v7) has every recipe and how it is learned.
+local function recipesAPI()
+  local api = rawget(_G, "EverlookCraftAPI")
+  if api and (tonumber(api.version) or 0) >= 7 and api.allRecipes then return api end
+end
+W.recipesAPI = recipesAPI
+
+-- Your skill in each of your professions: { [skill line] = rank } (EverlookDB Crafting's record of you).
+function W.ranks()
+  local out = {}
+  for _, c in ipairs(W.characters()) do
+    if c.me then for _, p in ipairs(c.profs or {}) do out[p.skill] = tonumber(p.rank) end end
+  end
+  return out
+end
+
+-- Every recipe in EverlookDB Crafting's data (read once a minute at most: it doesn't change while you play).
+local allCache, allAt
+local function allRecipes(api)
+  local now = GetTime and GetTime() or 0
+  if not allCache or not allAt or now - allAt > 60 then
+    allCache = try(api.allRecipes) or {}
+    allAt = now
+  end
+  return allCache
+end
+function W.forgetAll() allCache, allAt = nil, nil end
+
 -- The rows, worked out again from the saved recipes and prices (best profit first; render sorts them as chosen).
-local function compute()
+local function compute(scope)
   local s = settings()
   local sources = W.sources()
   local recipes, who = Pr.merge(sources)
   local ctx = Pr.context({ recipes = recipes, price = priceOf, cut = ns.ahCut and ns.ahCut() or 0.05,
     craftMats = not s.noCraft, info = Pr.info })
+  scope = scope or W.scope()
+  local list
+  if scope ~= "known" then
+    local api = recipesAPI()
+    local known = {}
+    for id in pairs(recipes) do known[id] = true end
+    list = api and Pr.scopeRecipes(scope, allRecipes(api), known, W.ranks(), function(id) return (priceOf(id)) end) or {}
+    who = nil
+  end
   local rows, counts = Pr.list(ctx, { from = s.from or 1, to = s.to or 300, min = s.min, maxCost = s.maxCost,
-    minMargin = s.minMargin, q = s.q, nameOf = rowName, who = who, canMake = s.canMake and crafterCan or nil })
+    minMargin = s.minMargin, q = s.q, nameOf = rowName, who = who, recipes = list,
+    canMake = (scope == "known" and s.canMake) and crafterCan or nil, onAH = scope ~= "known" and s.onAH or nil })
   return ctx, rows, counts, sources
 end
-W.compute = compute
+-- (the main window's start page counts the recipes you know, whatever the list shows)
+function W.compute(scope) return compute(scope or "known") end
 
 -- the sort chosen: column, high to low
+-- Best profit first for the recipes you know; best margin first for the ones to learn.
+function W.defaultSort() return W.scope() == "known" and "profit" or "margin" end
 function W.sortState()
   local s = settings()
-  local key = Pr.SORTS[s.sort] ~= nil and s.sort or "profit"
+  local key = Pr.SORTS[s.sort] ~= nil and s.sort or W.defaultSort()
   local desc = s.desc
   if desc == nil then desc = Pr.SORTS[key] end
   return key, desc and true or false
@@ -183,7 +236,7 @@ function W.sortBy(key)
   local s = settings()
   local cur, desc = W.sortState()
   if cur == key then desc = not desc else desc = Pr.SORTS[key] end
-  if key == "profit" and desc then s.sort, s.desc = nil, nil else s.sort, s.desc = key, desc end
+  if key == W.defaultSort() and desc == Pr.SORTS[key] then s.sort, s.desc = nil, nil else s.sort, s.desc = key, desc end
   W.offset = 0
   W.render()
 end
@@ -256,6 +309,28 @@ local function rowTooltip(self)
       GameTooltip:AddDoubleLine(charName(c) .. (c.me and " |cff8d94a3(you)|r" or ""), profText(c.profs), 1, 1, 1, 0.55, 0.58, 0.64)
     end
   end
+  if r.start then
+    local st = r.start
+    GameTooltip:AddLine(" ")
+    GameTooltip:AddLine("You don't know this recipe yet. To start:", 1, 0.82, 0)
+    local how
+    if st.how == "trainer" then how = "From a trainer" .. ((st.cost or 0) > 0 and (", " .. ns.money(st.cost)) or "")
+    elseif st.how == "vendor" then how = "The recipe from a vendor, " .. ns.money(st.vendor or st.cost)
+    elseif st.how == "ah" then how = "The recipe on the auction house now, " .. ns.money(st.ah or st.cost)
+    elseif st.how == "unknown" then how = "Source unknown"
+    else how = "Learned from: " .. st.how end
+    if st.how ~= "ah" and st.ah then how = how .. " (on the AH: " .. ns.money(st.ah) .. ")" end
+    if st.fee and st.how ~= "trainer" then how = how .. ", plus a trainer fee of " .. ns.money(st.fee) end
+    GameTooltip:AddLine(how, 1, 1, 1, true)
+    local sk = Pr.skillText(st)
+    if sk then GameTooltip:AddLine(sk, 1, 0.4, 0.4, true)
+    else GameTooltip:AddLine(("Needs %d %s, you're %d."):format(st.need or 1, st.prof or "", st.rank or 0), 0.55, 0.58, 0.64, true) end
+    local pb = r.profit and Pr.paybackText(st, r.profit, ns.money)
+    if pb then GameTooltip:AddLine(pb, 0.38, 0.81, 0.53, true) end
+    if st.item and W.inAH then
+      GameTooltip:AddLine("Right-click: find the recipe in Buy.", 0.55, 0.55, 0.55, true)
+    end
+  end
   if r.approx then
     GameTooltip:AddLine("A material has no AH price, so the cost is too low and the real profit lower.", 1, 0.4, 0.4, true)
   end
@@ -263,13 +338,18 @@ local function rowTooltip(self)
     GameTooltip:AddLine("The oldest price used is from " .. ns.ago(r.oldest) .. ". Update prices at the auction house.", 0.6, 0.6, 0.6, true)
   end
   GameTooltip:AddLine("Type how many crafts in its box to plan them. Shift-click links the item.", 0.55, 0.55, 0.55, true)
+  if W.inAH and not r.start then
+    local n = bagCount(r.id)
+    GameTooltip:AddLine(n > 0 and ("Right-click: sell it in Quick sell (%d in your bags)."):format(n)
+      or "Right-click: sell it in Quick sell, once you've made it.", 0.55, 0.55, 0.55, true)
+  end
   GameTooltip:Show()
 end
 
 local function makeRow(parent)
   local row = CreateFrame("Button", nil, parent)
   row:SetHeight(ROW)
-  row:RegisterForClicks("LeftButtonUp")
+  row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
   row.bg = U.Round(row, 4, "BACKGROUND")
   row.bg:SetPoint("TOPLEFT", -6, 0)
   row.bg:SetPoint("BOTTOMRIGHT", 6, 0)
@@ -312,9 +392,10 @@ local function makeRow(parent)
   row.name:SetPoint("RIGHT", row.tag, "LEFT", -6, 0)
   row:SetScript("OnEnter", function(self) self.bg:Show(); rowTooltip(self) end)
   row:SetScript("OnLeave", function(self) self.bg:Hide(); GameTooltip:Hide() end)
-  row:SetScript("OnClick", function(self)
+  row:SetScript("OnClick", function(self, button)
     local r = self.data
     if not r then return end
+    if button == "RightButton" then W.sell(r); return end
     if IsShiftKeyDown() then
       local okInfo, _, link = pcall(C_Item.GetItemInfo, r.id)
       if okInfo and link and ChatEdit_InsertLink then ChatEdit_InsertLink(link) end
@@ -328,10 +409,19 @@ end
 local function paintRow(row, r)
   row.data = r
   row.icon:SetTexture(try(C_Item.GetItemIconByID, r.id) or 134400)
-  row.tag:SetText(whoTag(r.who))
+  if r.start then
+    -- a recipe you don't know: how to start, in green when it's easy, grey otherwise
+    local st = r.start
+    row.tag:SetText("|cff" .. hex((st.how == "trainer" or st.how == "vendor" or st.how == "ah") and T.ok or T.muted)
+      .. Pr.startText(st) .. "|r")
+  else
+    row.tag:SetText(whoTag(r.who))
+  end
   row.name:SetText(rowName(r) or ("item " .. r.id))
   row.name:SetTextColor(qualityColor(r.id))
   row.skill:SetText(r.skill and tostring(r.skill) or "?")
+  local above = r.start and (r.start.rank == nil or (r.start.need or 1) > r.start.rank)
+  row.skill:SetTextColor(rgba(above and T.danger or T.muted))
   local old = r.oldest and stale(r.oldest)
   setMoney(row.cost, r.cost, { prefix = r.approx and "≈ " or nil }, r.approx and T.danger or (old and T.muted or T.text))
   setMoney(row.sale, r.sale, nil, stale(r.lowAt) and T.muted or T.text)
@@ -479,6 +569,21 @@ function W.fillBoxes()
   f.margin:SetText(s.minMargin and tostring(s.minMargin) or "")
   f.maxCost:SetText(s.maxCost and Pr.moneyText(s.maxCost) or "")
   f.canMake:SetOn(s.canMake)
+  f.onAH:SetOn(s.onAH)
+end
+
+-- The scope buttons: the one shown bright and underlined; the tick that fits the scope.
+function W.paintScopes()
+  local f = W.frame
+  if not f or not f.scopes then return end
+  local sc = W.scope()
+  for _, b in ipairs(f.scopes) do
+    local on = b.scope == sc
+    b.label:SetTextColor(rgba(on and T.text or T.muted))
+    b.line:SetShown(on)
+  end
+  f.canMake:SetShown(sc == "known")
+  f.onAH:SetShown(sc ~= "known")
 end
 
 function W.clearFilters()
@@ -587,6 +692,51 @@ local function makeFrame()
     GameTooltip:Show()
   end)
   f.canMake:HookScript("OnLeave", function() GameTooltip:Hide() end)
+  f.onAH = tickBox(f, "Only recipes on the AH now", 176, function(on)
+    settings().onAH = on or nil
+    f.onAH:SetOn(on)
+    changed()
+  end)
+  f.onAH:SetPoint("LEFT", f.to, "RIGHT", 16, 0)
+  f.onAH:HookScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:SetText("Only recipes on the AH now", 1, 1, 1)
+    GameTooltip:AddLine("Recipes whose recipe item is on the auction house in the last scan, to buy and learn today.", nil, nil, nil, true)
+    GameTooltip:Show()
+  end)
+  f.onAH:HookScript("OnLeave", function() GameTooltip:Hide() end)
+  f.onAH:Hide()
+
+  -- the scope: the recipes you know, the ones easy to learn, every recipe
+  f.scopes = {}
+  local prevScope
+  for _, d in ipairs({ { "known", "Recipes I know", "The recipes you know (and your alts', with Alts)." },
+      { "easy", "Easy to get", "Recipes you don't know yet that are easy to learn: a trainer, a vendor or the auction house, at most " .. Pr.EASY .. " points over your skill." },
+      { "all", "All recipes", "Every recipe of every profession you don't know yet, to find the best margins anywhere." } }) do
+    local b = CreateFrame("Button", nil, f)
+    b:SetHeight(22)
+    b.label = text(b, T.font, T.muted, "CENTER")
+    b.label:SetPoint("CENTER", 0, 1)
+    b.label:SetText(d[2])
+    b:SetWidth(math.max(70, math.floor((b.label:GetStringWidth() or 80) + 20)))
+    b.line = U.Solid(b, "ARTWORK", rgba(T.accent))
+    b.line:SetHeight(2)
+    b.line:SetPoint("BOTTOMLEFT", 6, 0)
+    b.line:SetPoint("BOTTOMRIGHT", -6, 0)
+    b.scope = d[1]
+    b:SetScript("OnClick", function() W.setScope(d[1]) end)
+    b:SetScript("OnEnter", function(self)
+      self.label:SetTextColor(rgba(T.text))
+      GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+      GameTooltip:SetText(d[2], 1, 1, 1)
+      GameTooltip:AddLine(d[3], nil, nil, nil, true)
+      GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() W.paintScopes(); GameTooltip:Hide() end)
+    if prevScope then b:SetPoint("LEFT", prevScope, "RIGHT", 4, 0) end
+    prevScope = b
+    f.scopes[#f.scopes + 1] = b
+  end
   f.clear = EUI.Button(f, "Clear crafts", function()
     wipe(W.crafts)
     W.status = nil
@@ -597,6 +747,7 @@ local function makeFrame()
 
   -- second row: profit at least, margin at least, cost at most, alts; Clear filters on the right
   local pl = text(f, T.font, T.muted)
+  f.pl = pl
   pl:SetPoint("TOPLEFT", 20, -106)
   pl:SetText("Profit at least")
   f.min = moneyBox(f, 70, "min", "Profit at least")
@@ -703,7 +854,9 @@ local function makeFrame()
 
   -- under the card: the selection, the one gold button, what happened
   f.sum = text(f, T.font, T.text)
-  f.make = EUI.Button(f, "Make shopping list", function() W.makeList() end, 170, "accent")
+  f.make = EUI.Button(f, "Make shopping list", function()
+    if W.inAH then W.buyMaterials() else W.makeList() end
+  end, 170, "accent")
   f.status = text(f, T.font - 1, T.muted)
   f.status:SetWordWrap(true)
 
@@ -713,6 +866,7 @@ local function makeFrame()
   f:Hide()
   W.frame = f
   W.fillBoxes()
+  W.chrome(f)
   return f
 end
 
@@ -752,6 +906,7 @@ function W.footer()
       (profit < 0 and "-" or "") .. ns.money(math.abs(profit))))
     f.sum:SetTextColor(rgba(T.text))
   end
+  f.make:SetText(W.inAH and "Buy materials" or "Make shopping list")
   f.make:SetUsable(crafts > 0)
 end
 
@@ -770,6 +925,7 @@ function W.render(keep)
   end
   local rows, counts = W.rows, W.counts
   W.paintHeads()
+  W.paintScopes()
   if f.alts then
     f.alts:SetShown(craftAPI() ~= nil)
     f.altsText:SetText(altsLabel())
@@ -785,29 +941,43 @@ function W.render(keep)
   if ns.pricesAt then pricesAt, shared = ns.pricesAt(houseKey():match("%-(%a+)$")) end
   local _, side = houseKey():match("^(.*)%-(%a+)$")
   local where = side and (side .. " auction house") or "your auction house"
+  local scope = W.scope()
   local whose = W.multi and "you and your alts know" or "you know"
+  local from = ("From the %d recipes %s"):format(counts.known, whose)
+  if scope == "easy" then
+    from = ("%d recipes you can learn easily (a trainer, vendor or the AH, up to %d over your skill)"):format(counts.known, Pr.EASY)
+  elseif scope == "all" then
+    from = ("Every recipe you don't know yet (%d)"):format(counts.known)
+  end
   if nPrices == 0 then
-    f.sub:SetText(("From the %d recipes %s. No prices yet for the %s."):format(counts.known, whose, where))
+    f.sub:SetText(("%s. No prices yet for the %s."):format(from, where))
     f.sub:SetTextColor(rgba(T.danger))
   else
     local when = shared and ("other players' scan " .. ns.ago(pricesAt))
       or (h and h.scanned) and ("full update " .. ns.ago(h.scanned)) or "no full update yet"
-    f.sub:SetText(("From the %d recipes %s, at the %s's prices (%s), after its %d%% cut."):format(counts.known, whose, where,
+    f.sub:SetText(("%s, at the %s's prices (%s), after its %d%% cut."):format(from, where,
       when, math.floor((ns.ahCut and ns.ahCut() or 0.05) * 100 + 0.5)))
     f.sub:SetTextColor(rgba((not pricesAt or time() - pricesAt >= Pr.STALE) and T.danger or T.muted))
   end
 
-  local maxOff = math.max(0, #rows - ROWS)
+  local n = W.rowsShown()
+  local maxOff = math.max(0, #rows - n)
   W.offset = math.max(0, math.min(W.offset or 0, maxOff))
   local shown = 0
   for i = 1, ROWS do
-    local r = rows[W.offset + i]
+    local r = i <= n and rows[W.offset + i]
     local row = f.rows[i]
     if r then paintRow(row, r); row:Show(); shown = i else row:Hide(); row.data = nil end
   end
   f.empty:SetShown(#rows == 0)
   if #rows == 0 then
-    if counts.known == 0 then
+    if scope ~= "known" and not recipesAPI() then
+      f.empty:SetText("Recipes you don't know yet come from EverlookDB Crafting: it knows every recipe and where to learn it. Get it on CurseForge or with the EverlookDB App.")
+    elseif scope == "easy" and counts.known == 0 and not next(W.ranks()) then
+      f.empty:SetText("Open each of your profession windows once, so the addon knows your skill; recipes easy to learn show here after that.")
+    elseif scope == "easy" and counts.known == 0 then
+      f.empty:SetText("Nothing easy to learn right now: no trainer, vendor or AH recipe near your skill. Try All recipes.")
+    elseif counts.known == 0 then
       f.empty:SetText("No recipes yet. Open each of your profession windows once, so the addon learns your recipes; they show here after that.")
     elseif Pr.filtered(s) and counts.noSale < counts.known then
       f.empty:SetText("No recipe matches these filters. Loosen one, or click Clear filters to see them all.")
@@ -831,14 +1001,16 @@ function W.render(keep)
     notes[#notes + 1] = ("%d %s left out: no AH price for what %s."):format(counts.noSale,
       counts.noSale == 1 and "recipe" or "recipes", counts.noSale == 1 and "it makes" or "they make")
   end
-  f.note:SetText(#notes > 0 and table.concat(notes, "  ") or "Prices over a day old are grey. Hover a recipe for its materials.")
+  f.note:SetText(#notes > 0 and table.concat(notes, "  ") or W.inAH
+    and "Prices over a day old are grey. Hover a recipe for its materials; right-click one you've made to sell it."
+    or "Prices over a day old are grey. Hover a recipe for its materials.")
   f.note:ClearAllPoints()
   f.note:SetPoint("TOPLEFT", PAD, y - 8)
   f.note:SetPoint("RIGHT", f.pos, "LEFT", -12, 0)
   f.pos:ClearAllPoints()
   f.pos:SetPoint("TOPRIGHT", -PAD, y - 8)
   f.pos:SetWidth(90)
-  if #rows > ROWS then
+  if #rows > n then
     f.pos:SetText(("%d-%d of %d"):format(W.offset + 1, W.offset + shown, #rows))
   else
     f.pos:SetText(#rows > 0 and ("%d %s"):format(#rows, #rows == 1 and "recipe" or "recipes") or "")
@@ -846,7 +1018,7 @@ function W.render(keep)
   local listH = -(y - 8 - 16 - 10)
   f.list:SetHeight(listH)
 
-  local by = LIST_TOP - listH - 14
+  local by = W.listTop() - listH - 14
   f.sum:ClearAllPoints()
   f.sum:SetPoint("TOPLEFT", 20, by - 6)
   f.sum:SetPoint("RIGHT", f.make, "LEFT", -12, 0)
@@ -858,7 +1030,7 @@ function W.render(keep)
   local st = W.status
   f.status:SetText(st and st[1] or "")
   if st then f.status:SetTextColor(rgba(st[2] or T.muted)) end
-  f:SetHeight(-(by - 34 - (st and 30 or 4) - 10))
+  if not W.inAH then f:SetHeight(-(by - 34 - (st and 30 or 4) - 10)) end   -- at the auction house: its content area
   W.footer()
 end
 
@@ -875,6 +1047,11 @@ function W.makeList()
       if vendorOnly then leftOut[#leftOut + 1] = itemName(m.id) or ("item " .. m.id)
       else items[#items + 1] = { m.id, m.buy } end
     end
+  end
+  -- a recipe you don't know yet, cheapest on the auction house: the recipe itself goes on the list too
+  for _, p in ipairs(W.picks) do
+    local st = p.row.start
+    if st and st.how == "ah" and st.item then items[#items + 1] = { st.item, 1 } end
   end
   if #items == 0 then
     W.status = { #leftOut > 0 and ("Nothing to buy at the auction house; vendors sell the rest: " .. table.concat(leftOut, ", ") .. ".")
@@ -896,6 +1073,7 @@ function W.makeList()
     if ns.shoppingRefresh then pcall(ns.shoppingRefresh) end
   end
   W.render(true)
+  return l
 end
 
 -- A page of the main window (Hub.lua); a window of its own only when that window couldn't be made.
@@ -908,6 +1086,7 @@ function W.open()
   W.render()
 end
 function W.toggle()
+  if W.ahOpen() then W.openTab(); return end   -- /eah profit at the auction house: its Crafting tab
   if ns.hub and ns.hub.ready then
     if ns.hub.isOpen("crafts") then ns.hub.close() else W.open() end
     return
@@ -920,16 +1099,217 @@ end
 function W.dock(holder)
   local f = makeFrame()
   if not f or not ns.hub then return end
+  if W.inAH then W.closeTab() end   -- the auction house's Crafting tab had it: it moves here
   ns.hub.dock(f, holder)
   W.docked = holder
+  W.chrome(f)
   f:SetWidth(math.max(WIDTH, math.floor((holder:GetWidth() or WIDTH) + 0.5)))
-  f.gear:ClearAllPoints()
-  f.gear:SetPoint("TOPRIGHT", -14, -10)
   f:Show()
   W.render()
 end
-function W.undock() if W.frame then W.frame:Hide() end end
+function W.undock() if W.frame and not W.inAH then W.frame:Hide() end end   -- never the auction house's tab
 function W.refresh() if W.frame and W.frame:IsShown() then W.render() end end
+
+---------------------------------------------------------------------------------------------------------------------
+-- The auction house's Crafting tab: the same view in the window's content area (above the price bar and the tabs),
+-- like the Upgrades tab (UpgradesTab.lua). It opens only when clicked or with /eah profit there, never by itself
+-- when the auction house opens, and isn't remembered as the last tab. The main window's page takes the view back.
+-- At the auction house the one gold button is Buy materials (the shopping list, then Buy this list on it), and a
+-- right-click on a recipe sells what it makes in Quick sell.
+
+local AH_TOP = 14   -- how much higher the filters and the list sit there: the auction house's title row is the title
+local PLACE = ns.T and ns.T.places and ns.T.places.crafts
+local tab
+
+function W.ahOpen() return _G.AuctionHouseFrame ~= nil and AuctionHouseFrame:IsShown() and true or false end
+function W.listTop() return LIST_TOP + (W.inAH and AH_TOP or 0) end
+
+-- How many recipe rows fit: all of them in a window or the main window, fewer in the auction house's content area.
+function W.rowsShown()
+  if not W.inAH then return ROWS end
+  local f = W.frame
+  local h = f and f:GetHeight() or 0
+  if h < 100 then
+    local ah = _G.AuctionHouseFrame
+    h = ((ah and ah:GetHeight()) or 0) - 24 - (ns.BAR_H or 0) - 2
+  end
+  -- above the list, the list's heading and foot, the gold button's row and the status line under it
+  return math.max(4, math.min(ROWS, math.floor((h + W.listTop() - 74 - 14 - 34 - 30 - 10) / ROW)))
+end
+
+-- The title row and the filters: the window's own title at its top, or (at the auction house) no title of its own
+-- and everything higher.
+function W.chrome(f)
+  f = f or W.frame
+  if not f then return end
+  local up = W.inAH and AH_TOP or 0
+  f.icon:SetShown(not W.inAH)
+  f.title:SetShown(not W.inAH)
+  if rawget(f, "ahBg") then f.ahBg:SetShown(W.inAH and true or false) end
+  if rawget(f, "ahEdge") then for _, t in ipairs(f.ahEdge) do t:SetShown(W.inAH and true or false) end end
+  -- the scope buttons: beside the title, or (at the auction house) in its place
+  local first = f.scopes and f.scopes[1]
+  if first then
+    first:ClearAllPoints()
+    if W.inAH then first:SetPoint("TOPLEFT", f, "TOPLEFT", 14, -6) else first:SetPoint("LEFT", f.title, "RIGHT", 20, 0) end
+  end
+  f.sub:ClearAllPoints()
+  f.sub:SetPoint("TOPLEFT", 20, -48 + up)
+  f.sub:SetPoint("RIGHT", -20, 0)
+  f.search:ClearAllPoints()
+  f.search:SetPoint("TOPLEFT", 20, -70 + up)
+  f.clear:ClearAllPoints()
+  f.clear:SetPoint("TOPRIGHT", -20, -70 + up)
+  f.pl:ClearAllPoints()
+  f.pl:SetPoint("TOPLEFT", 20, -106 + up)
+  f.clearFilters:ClearAllPoints()
+  f.clearFilters:SetPoint("TOPRIGHT", -20, -100 + up)
+  f.list:ClearAllPoints()
+  f.list:SetPoint("TOPLEFT", 16, W.listTop())
+  f.list:SetPoint("RIGHT", -16, 0)
+  f.gear:ClearAllPoints()
+  if W.inAH then f.gear:SetPoint("TOPRIGHT", -14, -6) else f.gear:SetPoint("TOPRIGHT", W.docked and -14 or -38, -10) end
+end
+
+local function closeTab()
+  local f = W.frame
+  if not W.inAH then return end
+  W.inAH = nil
+  if f and f:GetParent() == _G.AuctionHouseFrame then f:Hide() end
+  if tab then pcall(PanelTemplates_DeselectTab, tab) end
+  if ns.blizzardTabs then ns.blizzardTabs(true) end
+  if ns.ahTitle then ns.ahTitle(nil) end
+end
+W.closeTab = closeTab
+
+local function makeTab()
+  if not tab and ns.makeTab then tab = ns.makeTab("EverlookAuctionsCraftingTab", "Crafting", W.openTab, closeTab, "crafts") end
+  W.tab = tab
+  return tab
+end
+
+-- Into the auction house's content area: no window edge, close button, dragging or keys of its own; opaque, so
+-- Blizzard's view under it doesn't show through.
+local function placeInAH(f, ah)
+  if f:GetParent() ~= ah then f:SetParent(ah) end
+  f:ClearAllPoints()
+  f:SetPoint("TOPLEFT", ah, "TOPLEFT", 2, -24)
+  f:SetPoint("BOTTOMRIGHT", ah, "BOTTOMRIGHT", -2, (ns.BAR_H or 0) + 2)   -- the price bar and the tabs stay visible
+  if f.SetMovable then f:SetMovable(false) end
+  if f.RegisterForDrag then f:RegisterForDrag() end
+  f:SetScript("OnDragStart", nil)
+  f:SetScript("OnDragStop", nil)
+  f:SetScript("OnKeyDown", nil)
+  if f.EnableKeyboard then f:EnableKeyboard(false) end
+  if f.SetToplevel then f:SetToplevel(false) end
+  f:SetFrameStrata(ah:GetFrameStrata())
+  f:SetFrameLevel((ah:GetFrameLevel() or 1) + 150)
+  f.edbDocked = ah
+  for _, k in ipairs({ "bgFill", "bgEdge", "accentLine", "closeButton", "grip" }) do
+    local part = rawget(f, k)
+    if type(part) == "table" and part.Hide then part:Hide() end
+  end
+  if not rawget(f, "ahBg") then
+    f.ahBg = f:CreateTexture(nil, "BACKGROUND", nil, -8)
+    f.ahBg:SetAllPoints()
+    f.ahBg:SetColorTexture(T.bg[1], T.bg[2], T.bg[3], 1)
+    if PLACE and UI and UI.placeEdge then f.ahEdge = UI.placeEdge(f, PLACE) end
+  end
+end
+
+function W.openTab()
+  local ah = _G.AuctionHouseFrame
+  if not ah then return end
+  local f = makeFrame()
+  if not f then return end
+  makeTab()
+  W.inAH, W.docked = true, nil
+  placeInAH(f, ah)
+  W.chrome(f)
+  if ns.closeSearch then ns.closeSearch() end
+  if ns.closeSelling then ns.closeSelling() end
+  if ns.closeOthers then ns.closeOthers("crafts") end
+  if ns.blizzardTabs then ns.blizzardTabs(false) end
+  if tab then pcall(PanelTemplates_SelectTab, tab) end
+  if ns.raise then ns.raise(f) end
+  f:Show()
+  if ns.ahTitle then ns.ahTitle("Crafting profit", PLACE) end
+  -- not remembered as the last tab: the auction house never opens on Crafting by itself
+  if PlaySound and SOUNDKIT and SOUNDKIT.IG_CHARACTER_INFO_TAB then pcall(PlaySound, SOUNDKIT.IG_CHARACTER_INFO_TAB) end
+  W.render()
+  if ns.hub and ns.hub.away then ns.hub.away() end   -- the main window's page, if it is open, says where it went
+end
+
+-- The gold button at the auction house: the shopping list of the planned crafts, then Buy this list on it.
+function W.buyMaterials()
+  local l = W.makeList()
+  if not (l and W.inAH and ns.buyList and ns.buyList.begin) then return end
+  if ns.buyList.begin(l) then
+    W.status = { ("Buying \"%s\" item by item, in the panel beside the auction house."):format(l.name), T.ok }
+    W.render(true)
+  end
+end
+
+-- Right-click on a recipe: what it makes, picked in Quick sell (only at the auction house, when it is in your bags).
+function W.sell(r)
+  if not r then return end
+  if r.start then W.buyRecipe(r); return end
+  local name = rowName(r) or ("item " .. r.id)
+  if not W.ahOpen() then
+    W.status = { "Open the auction house to sell " .. name .. ".", T.muted }
+  elseif bagCount(r.id) <= 0 then
+    W.status = { "No " .. name .. " in your bags yet: craft it, then right-click it here to sell it.", T.muted }
+  elseif ns.sellItemID and ns.sellItemID(r.id) then
+    return
+  else
+    W.status = { "The auction house won't take " .. name .. " (is it soulbound?).", T.danger }
+  end
+  W.render(true)
+end
+
+-- Right-click on a recipe you don't know: its recipe item in Advanced search on the Buy tab, with its live auctions.
+function W.buyRecipe(r)
+  local st = r and r.start
+  if not st then return end
+  if not st.item then
+    W.status = { (rowName(r) or "This recipe") .. (st.how == "trainer" and " is taught by a trainer." or " has no recipe item to buy."), T.muted }
+  elseif not W.ahOpen() then
+    W.status = { "Open the auction house to buy the recipe.", T.muted }
+  else
+    local n = itemName(st.item)
+    if not n then
+      W.status = { "The recipe's name is still loading. Try again in a moment.", T.muted }
+    else
+      if ns.openSearch then ns.openSearch() end
+      if ns.query and R then ns.query(R.query(n)) end
+      return
+    end
+  end
+  W.render(true)
+end
+
+-- The other tabs close this one (Shopping.lua's closeOthers is the shared hook).
+local prevClose = ns.closeOthers
+function ns.closeOthers(except)
+  if prevClose then prevClose(except) end
+  if except ~= "crafts" then closeTab() end
+end
+
+if CreateFrame then
+  local ahEv = CreateFrame("Frame")
+  ahEv:RegisterEvent("AUCTION_HOUSE_SHOW")
+  ahEv:RegisterEvent("AUCTION_HOUSE_CLOSED")
+  ahEv:SetScript("OnEvent", function(_, e)
+    if e == "AUCTION_HOUSE_CLOSED" then
+      closeTab()
+      return
+    end
+    -- after the Upgrades tab (0.4 s after the auction house opens); never opened here
+    C_Timer.After(0.45, function()
+      if W.ahOpen() then makeTab() end
+    end)
+  end)
+end
 
 ---------------------------------------------------------------------------------------------------------------------
 -- The command and the settings page, added to the /eah app once Options.lua has made it.

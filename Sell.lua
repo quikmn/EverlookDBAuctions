@@ -1974,6 +1974,23 @@ local function openSelling()
 end
 ns.openSelling = openSelling
 
+-- Quick sell with an item picked (the Crafting tab's right-click on a recipe): true when it is in your bags and the
+-- auction house takes it.
+function ns.sellItemID(id)
+  if not (_G.AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return false end
+  openSelling()
+  if not S.frame then return false end
+  collect()
+  for _, g in ipairs(S.groups or {}) do
+    if g.id == id then
+      selectGroup(g)
+      return true
+    end
+  end
+  renderBags()
+  return false
+end
+
 -- Puts one of our full panels above everything Blizzard shows in the auction house (its buy and sell views sit at
 -- high frame levels, and a panel under them opens invisibly). Called on every open, since Blizzard's levels change.
 function ns.raise(f)

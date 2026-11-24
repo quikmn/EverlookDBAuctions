@@ -49,6 +49,7 @@ T.places = {
   shopping = { 0.765, 0.651, 1, 1 },         -- #c3a6ff  Shopping: violet
   prices   = { 0.561, 0.663, 0.710, 1 },     -- #8fa9b5  price updates (the bar along the bottom): cyan-grey
   upgrades = { 1, 0.565, 0.388, 1 },         -- #ff9063  Gear upgrades: coral
+  crafts   = { 0.949, 0.478, 0.753, 1 },     -- #f27ac0  Crafting profit: pink
 }
 ns.T = T
 

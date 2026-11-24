@@ -159,9 +159,16 @@ function Pr.list(ctx, filter)
   local minMargin, maxCost = tonumber(filter.minMargin), tonumber(filter.maxCost)
   local q = filter.q and lower(filter.q):gsub("^%s+", ""):gsub("%s+$", "") or ""
   local out, counts = {}, { known = 0, noSale = 0, approx = 0 }
-  for id, r in pairs(ctx.recipes) do
+  for id, r in pairs(filter.recipes or ctx.recipes) do
     counts.known = counts.known + 1
     local row = Pr.row(ctx, id, r)
+    row.recipe = r
+    if r.start then
+      row.start = r.start
+      row.skill = r.start.need or row.skill
+      row.profession = r.start.prof or row.profession
+      row.payback = Pr.payback(r.start.cost, row.profit)
+    end
     local s = row.skill
     local inRange = s and s >= from and s <= to or (not s and whole)
     if not row.sale then
@@ -169,6 +176,7 @@ function Pr.list(ctx, filter)
     elseif inRange and (not min or row.profit >= min)
       and (not maxCost or row.cost <= maxCost)
       and (not minMargin or (row.margin and not row.approx and row.margin * 100 >= minMargin - 1e-9))
+      and (not filter.onAH or (row.start and row.start.ah))
       and (q == "" or lower(row.name or (filter.nameOf and filter.nameOf(row))):find(q, 1, true)) then
       local who = filter.who and filter.who[id]
       local keep = true
@@ -241,7 +249,7 @@ function Pr.shopping(ctx, picks, haveOf)
   end
   for _, p in ipairs(picks or {}) do
     local n = math.max(0, math.floor(tonumber(p.crafts) or 0))
-    local r = p.row and ctx.recipes[p.row.id]
+    local r = p.row and (ctx.recipes[p.row.id] or p.row.recipe)   -- a recipe you don't know yet: its own row's
     if n > 0 and r then
       for _, m in ipairs(r.mats or {}) do expand(m[1], (m[2] or 1) * n, 1, { [p.row.id] = true }) end
     end
@@ -262,6 +270,109 @@ function Pr.info(id)
   local crafted = math.floor(d[1] / 2) % 2 == 1   -- source bit 2: crafted
   if not crafted or not d[3] or d[3] <= 0 then return nil end
   return d[3], ns.PROFESSIONS and ns.PROFESSIONS[d[2] or 0]
+end
+
+---------------------------------------------------------------------------------------------------------------------
+-- Recipes you don't know yet (the "Easy to get" and "All recipes" scopes, from EverlookDB Crafting's recipe data)
+
+-- The scopes: the recipes you know, the ones easy to learn (a trainer, a vendor or the auction house, at most EASY
+-- skill points above yours), and every recipe of every profession. The default sort of the other two is margin.
+Pr.SCOPES = { known = true, easy = true, all = true }
+Pr.EASY = 25
+
+-- After how many crafts the recipe has paid for itself: learn cost / profit per craft, rounded up; nil when it costs
+-- nothing, has no known cost, or makes no profit.
+function Pr.payback(cost, profit)
+  cost, profit = tonumber(cost), tonumber(profit)
+  if not cost or cost <= 0 or not profit or profit <= 0 then return nil end
+  return math.ceil(cost / profit - 1e-9)
+end
+
+local HOW_WORDS = { drop = "drops", quest = "quest", rep = "reputation", dungeon = "dungeon drop", world = "world drop",
+  fish = "fishing", container = "container", chest = "chest", object = "found in the world", cur = "currency",
+  limited = "limited vendor" }
+
+-- How to start making a recipe you don't know: e = one of EverlookDB Crafting's api.allRecipes() rows, ahPrice(item)
+-- = the recipe item's cheapest price at the auction house (nil when it isn't there), rank = your skill in its
+-- profession (nil: you don't have it). Returns { how = "trainer" / "vendor" / "ah" / other ways ("drops", "quest",
+-- ...) / "unknown", cost (copper, nil when not known), fee, vendor, ah (AH price of the recipe item), item, need
+-- (skill), rank, prof, easy (a trainer, vendor or the AH, at most Pr.EASY points above your skill) }. The cheapest
+-- of the ways with a price wins.
+function Pr.start(e, ahPrice, rank)
+  local st = { item = e.item, need = tonumber(e.learn), rank = rank, prof = e.prof, fee = e.fee }
+  local ways = {}
+  if (e.tier == 0 or e.trained or e.auto) and (not e.item or e.trained or e.auto) then
+    ways[#ways + 1] = { "trainer", (e.fee or 0) }
+  end
+  if e.item and (e.tier == 1 or e.tier == 2) and e.price and e.price > 0 then
+    st.vendor = e.price
+    ways[#ways + 1] = { "vendor", e.price + (e.fee or 0) }
+  end
+  if e.item and ahPrice then
+    st.ah = ahPrice(e.item)
+    if st.ah then ways[#ways + 1] = { "ah", st.ah + (e.fee or 0) } end
+  end
+  table.sort(ways, function(a, b) return a[2] < b[2] end)
+  if ways[1] then
+    st.how, st.cost = ways[1][1], ways[1][2]
+  else
+    local w = e.why ~= "" and e.why or nil
+    st.how = (w and w ~= "unknown" and (HOW_WORDS[w] or w)) or (e.item and "pattern") or "unknown"
+  end
+  local near = rank ~= nil and (st.need or 1) <= rank + Pr.EASY
+  st.easy = near and (st.how == "trainer" or st.how == "vendor" or st.how == "ah") or false
+  return st
+end
+
+-- The recipes of a scope, as Pr.list takes them: { [item made] = { mats, makes, rid, name, start } }. all = EverlookDB
+-- Crafting's api.allRecipes(), known = { [item made] = true } (yours and your alts' that the list counts), ranks =
+-- { [skill line] = your skill }. "easy": only easy ones in your professions; "all": every one. One recipe per item:
+-- the cheapest to start.
+function Pr.scopeRecipes(scope, all, known, ranks, ahPrice)
+  local out = {}
+  known, ranks = known or {}, ranks or {}
+  for _, e in ipairs(all or {}) do
+    local id = e.creates
+    if id and not known[id] then
+      local st = Pr.start(e, ahPrice, ranks[e.skill])
+      if scope == "all" or (scope == "easy" and st.easy) then
+        local have = out[id]
+        if not have or (st.cost or math.huge) < (have.start.cost or math.huge) then
+          out[id] = { mats = e.mats, makes = tonumber(e.yield) or 1, rid = e.spell, name = e.name, start = st }
+        end
+      end
+    end
+  end
+  return out
+end
+
+-- The short "to start" text in a row: "trainer 1g 20s", "AH 4g", "vendor 50s", "drops", "source unknown".
+function Pr.startText(st)
+  if not st then return "" end
+  if st.how == "trainer" then return st.cost and st.cost > 0 and ("trainer " .. Pr.short(st.cost)) or "trainer" end
+  if st.how == "vendor" then return "vendor " .. Pr.short(st.cost) end
+  if st.how == "ah" then return "AH " .. Pr.short(st.cost) end
+  if st.how == "unknown" then return "source unknown" end
+  return st.how
+end
+
+-- "Needs 225 Tailoring, you're 180." / "You don't have Tailoring." / nil when you have the skill.
+function Pr.skillText(st)
+  if not st then return nil end
+  local prof = st.prof or "this profession"
+  if st.rank == nil then return ("You don't have %s; it needs %d."):format(prof, st.need or 1) end
+  if (st.need or 1) > st.rank then return ("Needs %d %s, you're %d."):format(st.need, prof, st.rank) end
+  return nil
+end
+
+-- "Recipe 4g, profit 1g 20s per craft: pays back after 4 crafts."
+function Pr.paybackText(st, profit, money)
+  money = money or Pr.short
+  if not st or not st.cost or st.cost <= 0 then return nil end
+  local n = Pr.payback(st.cost, profit)
+  if not n then return ("Learning costs %s; no profit per craft to pay it back."):format(money(st.cost)) end
+  return ("Learning %s, profit %s per craft: pays back after %d %s."):format(money(st.cost), money(profit), n,
+    n == 1 and "craft" or "crafts")
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -405,7 +516,7 @@ end
 
 -- Clear filters: every filter and the sort back to the start (alts and the window's place stay).
 function Pr.clearFilters(s)
-  for _, k in ipairs({ "from", "to", "min", "maxCost", "minMargin", "q", "canMake", "sort", "desc" }) do s[k] = nil end
+  for _, k in ipairs({ "from", "to", "min", "maxCost", "minMargin", "q", "canMake", "onAH", "sort", "desc" }) do s[k] = nil end
   return s
 end
 
@@ -413,7 +524,7 @@ end
 function Pr.filtered(s)
   s = s or {}
   return ((s.from and s.from > 1) or (s.to and s.to < 300) or s.min or s.maxCost or s.minMargin or (s.q and s.q ~= "")
-    or s.canMake) and true or false
+    or s.canMake or s.onAH) and true or false
 end
 
 -- Copper as short text for tight columns: 12g 34s, 5s 20c, 80c (no coin icons).

@@ -134,6 +134,8 @@ def main() -> int:
     failures += upgrades_ours()
     failures += start_tab()
     failures += upgrades_tab()
+    failures += profit_tab()
+    failures += profit_scopes()
     failures += upgrades_alts()
     failures += item_tip()
     failures += health()
@@ -4776,6 +4778,193 @@ ns.UI = { hex = function() return "|cff00ff00" end }
 ns.T = { good = { 0, 1, 0 }, dim = { 1, 1, 1 }, mute = { 1, 1, 1 }, places = { upgrades = { 1, 1, 1 } } }
 ns.UP_DATA = UPDATA
 """
+
+
+def profit_tab():
+    """The auction house's Crafting tab (ProfitWindow.lua), like the Upgrades tab: made when the auction house opens
+    but never opened by itself; opened by its tab or /eah profit there (else the main window's page); closed by the
+    other tabs and when the auction house closes; the main window's page takes the view back, and leaving that page
+    doesn't hide the tab's view. At the auction house the gold button is Buy materials (Buy this list on the plan)."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("crafting tab: " + what)
+
+    lua, ns, W, DB, _ = profit_window_setup(craft_api=True)
+    lua.execute("""
+      AuctionHouseFrame = CreateFrame("Frame", "AuctionHouseFrame")
+      TABS, TITLES, CLOSED, HUB, BEGUN, BLIZZ = {}, {}, {}, {}, {}, {}
+    """)
+    G = lua.globals()
+    ns.makeTab = lua.eval("""function(name, text, onClick, onBlizzard, place)
+      local t = CreateFrame("Button", name)
+      TABS[#TABS + 1] = { name = name, text = text, onClick = onClick, place = place }
+      return t
+    end""")
+    ns.ahTitle = lua.eval("function(t) TITLES[#TITLES + 1] = t or false end")
+    ns.blizzardTabs = lua.eval("function(on) BLIZZ[#BLIZZ + 1] = on end")
+    ns.buyList = lua.eval("{ begin = function(l) BEGUN[#BEGUN + 1] = l.name; return true end }")
+    inner = ns.closeOthers
+    ns.closeOthers = lua.eval("function(inner) return function(e) CLOSED[#CLOSED + 1] = e; inner(e) end end")(inner)
+    ns.hub = lua.eval("""{ ready = true,
+      open = function(page) HUB[#HUB + 1] = page; return true end,
+      isOpen = function() return false end, close = function() end,
+      dock = function(f, holder) f:SetParent(holder) end }""")
+    fire = lua.eval("function(e) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e) end end end")
+    ah = G.AuctionHouseFrame
+    same = lua.eval("rawequal")
+
+    def seq(t):
+        return [t[i] for i in range(1, len(t) + 1)]
+
+    fire("AUCTION_HOUSE_SHOW")
+    tabs = seq(G.TABS)
+    check(len(tabs) == 1 and tabs[0].text == "Crafting" and tabs[0].place == "crafts",
+          f"the auction house opening makes the Crafting tab: {[(t.text, t.place) for t in tabs]}")
+    check(not W.inAH and not (W.frame and W.frame.shown and same(W.frame.parent, ah)),
+          "the auction house opening never opens the Crafting tab")
+    check('noteTab("crafts")' not in source_of("ProfitWindow.lua"), "the Crafting tab isn't noted as the last tab")
+    fire("AUCTION_HOUSE_SHOW")
+    check(len(G.TABS) == 1, "the tab is made once")
+
+    # its tab, or /eah profit at the auction house
+    tabs[0].onClick()
+    f = W.frame
+    check(W.inAH and f.shown and same(f.parent, ah), "clicking the tab shows the view in the auction house")
+    check("crafts" in seq(G.CLOSED), f"opening it closes the other tabs: {seq(G.CLOSED)}")
+    check(seq(G.TITLES)[-1] == "Crafting profit", f"the window's title: {seq(G.TITLES)}")
+    check(f.point is not None and f.point[1] == "BOTTOMRIGHT" and f.point[5] == (ns.BAR_H or 0) + 2,
+          f"it fills the content area above the price bar: {f.point}")
+    check(4 <= W.rowsShown() <= 12, f"rows that fit the auction house: {W.rowsShown()}")
+    check(not f.title.shown and not f.icon.shown, "no title of its own there (the auction house's title says it)")
+    check(f.make.label.text == "Buy materials", f"the gold button at the auction house: {f.make.label.text}")
+
+    # another tab closes it
+    ns.closeOthers("shopping")
+    check(not W.inAH and not f.shown, "another tab closes it")
+    check(seq(G.TITLES)[-1] is False and seq(G.BLIZZ)[-1] is True, "Blizzard's title and tabs come back")
+    ns.slash("profit")
+    check(W.inAH and f.shown and same(f.parent, ah), "/eah profit at the auction house opens the tab")
+    check(seq(G.HUB) == [], f"not the main window: {seq(G.HUB)}")
+
+    # Buy materials: the shopping list, then Buy this list on it
+    W.crafts[4238] = 2
+    W.footer()
+    f.make.scripts.OnClick(f.make)
+    check(seq(G.BEGUN) == ["Linen Bag"], f"Buy materials starts Buy this list on the plan: {seq(G.BEGUN)}")
+    W.crafts[4238] = None
+
+    # leaving the main window's page doesn't hide the tab's view; the page takes it back
+    W.undock()
+    check(f.shown and W.inAH, "leaving the main window's page leaves the tab alone")
+    holder = lua.eval("CreateFrame('Frame')")
+    W.dock(holder)
+    check(not W.inAH and same(f.parent, holder) and f.shown, "the main window's page takes the view back")
+    check(f.title.shown and f.make.label.text == "Make shopping list", "with its own title and the usual button there")
+    check(W.rowsShown() == 12, f"every row in the main window: {W.rowsShown()}")
+    tabs[0].onClick()
+    check(W.inAH and same(f.parent, ah), "the tab takes it again")
+
+    # the auction house closes
+    fire("AUCTION_HOUSE_CLOSED")
+    check(not W.inAH and not f.shown, "closing the auction house closes the tab")
+    ah.shown = False
+    ns.slash("profit")
+    check(seq(G.HUB) == ["crafts"] and not W.inAH, f"/eah profit away from it: the main window's page: {seq(G.HUB)}")
+    return failures
+
+
+def profit_scopes():
+    """Crafting profit's scopes (Profit.lua, ProfitWindow.lua): the recipes you know, the ones easy to get (a trainer,
+    vendor or the AH, near your skill) and every recipe, from EverlookDB Crafting's api.allRecipes (v7): how to
+    start and what it costs, the skill it needs against yours, after how many crafts it pays back, the "on the AH
+    now" filter, margin first, "source unknown" kept, and the recipe on the shopping list."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("profit scopes: " + what)
+
+    lua, ns, W, DB, _ = profit_window_setup(craft_api=True)
+    Pr = ns.profit
+    check(Pr.payback(300, 100) == 3 and Pr.payback(301, 100) == 4 and Pr.payback(0, 100) is None and Pr.payback(300, -5) is None,
+          "pays back after cost / profit crafts, rounded up")
+    check(Pr.paybackText(lua.eval("{ cost = 400 }"), 120) == "Learning 4s, profit 1s 20c per craft: pays back after 4 crafts.",
+          f"the payback line: {Pr.paybackText(lua.eval('{ cost = 400 }'), 120)}")
+
+    W.open()
+    f = W.frame
+    W.setScope("easy")
+    check("EverlookDB Crafting" in f.empty.text and f.empty.shown, f"without Crafting v7: says what it needs: {f.empty.text}")
+
+    lua.execute("""
+      MOCK_ITEMS[2580], MOCK_ITEMS[2598], MOCK_ITEMS[9999], MOCK_ITEMS[11082] = "Reinforced Linen Cape", "Pattern: Reinforced Linen Cape", "Fancy Robe", "Greater Magic Wand"
+      local items = MOCK_DB.houses[MOCK_HOUSE].items
+      items[2580] = { 900, 1, 1, 99000 }; items[2598] = { 300, 1, 1, 99000 }; items[9999] = { 5000, 1, 1, 99000 }
+      items[11082] = { 3000, 1, 1, 99000 }
+      EverlookCraftAPI.version = 7
+      EverlookCraftAPI.allRecipes = function() return {
+        { spell = 3755, name = "Linen Bag", skill = 197, prof = "Tailoring", learn = 45, creates = 4238, yield = 1, mats = { { 2996, 3 }, { 2320, 3 } }, tier = 0, why = "", trained = true },
+        { spell = 3843, name = "Heavy Linen Gloves", skill = 197, prof = "Tailoring", learn = 85, creates = 4307, yield = 1, mats = { { 2996, 2 } }, fee = 500, tier = 0, why = "", trained = true },
+        { spell = 3862, name = "Reinforced Linen Cape", skill = 197, prof = "Tailoring", learn = 60, creates = 2580, yield = 1, mats = { { 2996, 2 }, { 2320, 3 } }, item = 2598, tier = 3, why = "drop" },
+        { spell = 9001, name = "Fancy Robe", skill = 197, prof = "Tailoring", learn = 250, creates = 9999, yield = 1, mats = { { 2996, 4 } }, tier = 3, why = "" },
+        { spell = 14807, name = "Greater Magic Wand", skill = 333, prof = "Enchanting", learn = 70, creates = 11082, yield = 1, mats = { { 2589, 1 } }, tier = 0, why = "", trained = true },
+      } end
+    """)
+    W.forgetAll()
+    W.setScope("easy")
+
+    def shown():
+        return [f.rows[i].data for i in range(1, len(f.rows) + 1) if f.rows[i].shown]
+
+    rows = shown()
+    names = [r.name for r in rows]
+    check(sorted(names) == ["Heavy Linen Gloves", "Reinforced Linen Cape"],
+          f"easy to get: a trainer and an AH recipe near your Tailoring 75, not what you know, not too high: {names}")
+    check(W.sortState() == ("margin", True), f"easy to get: margin first: {W.sortState()}")
+    by = {r.name: r for r in rows}
+    cape, gloves = by.get("Reinforced Linen Cape"), by.get("Heavy Linen Gloves")
+    check(cape is not None and gloves is not None, "the cape and the gloves are rows")
+    if cape and gloves:
+        check(cape.start.how == "ah" and cape.start.cost == 300 and Pr.startText(cape.start) == "AH 3s",
+              f"the cape: its pattern on the AH: {cape.start.how} {cape.start.cost}")
+        check(gloves.start.how == "trainer" and Pr.startText(gloves.start) == "trainer 5s", f"the gloves: a trainer: {Pr.startText(gloves.start)}")
+        check(gloves.skill == 85 and Pr.skillText(gloves.start) == "Needs 85 Tailoring, you're 75.",
+              f"the skill it needs against yours: {Pr.skillText(gloves.start)}")
+        check(cape.payback == Pr.payback(300, cape.profit), f"the cape's payback: {cape.payback}")
+        rowtag = [f.rows[i].tag.text for i in range(1, len(f.rows) + 1) if f.rows[i].shown]
+        check(any("AH 3s" in t for t in rowtag), f"the row says how to start: {rowtag}")
+        # on the AH now
+        f.onAH.scripts.OnClick(f.onAH)
+        check([r.name for r in shown()] == ["Reinforced Linen Cape"], f"only recipes on the AH now: {[r.name for r in shown()]}")
+        f.onAH.scripts.OnClick(f.onAH)
+        # the plan's shopping list has the pattern too
+        W.crafts[2580] = 1
+        W.render()
+        W.makeList()
+        l = DB.lists and DB.lists[len(DB.lists)]
+        check(l is not None and l.want['name is "Pattern: Reinforced Linen Cape"'] == 1,
+              f"the pattern on the shopping list: {[(k, l.want[k]) for k in l.want] if l else None}")
+        W.crafts[2580] = None
+
+    W.setScope("all")
+    names = [r.name for r in shown()]
+    check("Fancy Robe" in names and "Greater Magic Wand" in names and "Linen Bag" not in names,
+          f"all recipes: every profession, too high ones too, not what you know: {names}")
+    robe = [r for r in shown() if r.name == "Fancy Robe"]
+    if robe:
+        check(Pr.startText(robe[0].start) == "source unknown", f"a recipe without a known source says so: {Pr.startText(robe[0].start)}")
+    wand = [r for r in shown() if r.name == "Greater Magic Wand"]
+    check(len(robe) == 1 and len(wand) == 1, "the robe and the wand are rows")
+    if wand:
+        check(Pr.skillText(wand[0].start) == "You don't have Enchanting; it needs 70.", f"another profession: {Pr.skillText(wand[0].start)}")
+    check(f.scopes[3].line.shown and not f.scopes[1].line.shown, "the scope shown is marked")
+    W.setScope("known")
+    check(sorted(r.name for r in shown()) == ["Bolt of Linen Cloth", "Linen Bag", "Linen Shirt"] and W.sortState()[0] == "profit",
+          "back to the recipes you know, best profit first")
+    check(f.canMake.shown and not f.onAH.shown, "the recipes you know: Only what I can make now")
+    return failures
 
 
 def upgrades():

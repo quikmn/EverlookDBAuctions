@@ -209,11 +209,13 @@ function H.toggle(page)
   if H.isOpen(page) then H.close(); return end
   H.open(page)
 end
--- The page matching what the auction house shows now (its price bar's "Open in EverlookDB Auctions"): Gear upgrades
--- or Advanced search, else nil (the page used last).
+-- The page matching what the auction house shows now (its price bar's "Open in EverlookDB Auctions"): Gear upgrades,
+-- Crafting profit or Advanced search, else nil (the page used last).
 function H.ahPage()
   local V = ns.upgradesView
   if V and V.inAH then return "gear" end
+  local P = ns.profitWindow
+  if P and P.inAH then return "crafts" end
   local q = rawget(_G, "EverlookAuctionsQueryResults")
   if q and q:IsVisible() then return "search" end
   return nil
@@ -610,7 +612,21 @@ local function hideGear() if ns.upgradesView and ns.upgradesView.undock then ns.
 
 local function showLog(holder) if ns.purchases and ns.purchases.dock then ns.purchases.dock(holder) end end
 local function hideLog() if ns.purchases and ns.purchases.undock then ns.purchases.undock() end end
-local function showCrafts(holder) if ns.profitWindow and ns.profitWindow.dock then ns.profitWindow.dock(holder) end end
+local crafts = {}
+local function buildCrafts(holder)
+  crafts.holder = holder
+  crafts.note = awayNote(holder, "Crafting profit")
+  crafts.note:Hide()
+end
+-- The note behind the page while the auction house's Crafting tab has the view (it says where it went).
+function H.away()
+  local W = ns.profitWindow
+  if crafts.note then crafts.note:SetShown(not (W and W.frame and W.frame:GetParent() == crafts.holder and W.frame:IsShown())) end
+end
+local function showCrafts(holder)
+  if ns.profitWindow and ns.profitWindow.dock then ns.profitWindow.dock(holder) end
+  H.away()
+end
 local function hideCrafts() if ns.profitWindow and ns.profitWindow.undock then ns.profitWindow.undock() end end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -629,7 +645,7 @@ function H.addPages(a)
   page("home", buildHome, function() fillHome() end)
   page("search", buildSearch, showSearch, hideSearch)
   page("log", function() end, showLog, hideLog)
-  page("crafts", function() end, showCrafts, hideCrafts)
+  page("crafts", buildCrafts, showCrafts, hideCrafts)
   page("gear", buildGear, showGear, hideGear)
   page("favor", buildFavor, function() fillFavor() end)
   -- Disenchanting (DisenchantLog.lua): a page of cards like the settings pages, listed with the addon's own pages
