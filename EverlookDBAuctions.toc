@@ -31,6 +31,8 @@ AHQuery.lua
 Sell.lua
 Formula.lua
 Search.lua
+SellRules.lua
+SellAll.lua
 ListImport.lua
 Shopping.lua
 Buy.lua

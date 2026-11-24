@@ -1089,6 +1089,22 @@ function ns.formulaFor(text, id)
   return fn(row)
 end
 
+-- One price formula over a row of your own (a sell rule's floor and normal price, SellRules.lua), with extra names
+-- only it knows (`deposit`: the deposit for one). extra[name] = number, or false for "not known". Returns copper or
+-- nil; nil and the mistake when it can't be read.
+function ns.formulaRow(text, row, extra)
+  local okC, fn = pcall(function()
+    return F.compile(F.parse(text), function(name)
+      local x = extra and extra[name:lower()]
+      if x ~= nil then return function() return x or nil end end
+      return resolveName(name)
+    end)
+  end)
+  if not okC then return nil, type(fn) == "table" and fn.query or tostring(fn) end
+  Q.run = Q.run + 1
+  return fn(row or {})
+end
+
 local function textMatch(have, op, want)
   have, want = tostring(have or ""):lower(), tostring(want):lower()
   if op == "eq" then return have == want end

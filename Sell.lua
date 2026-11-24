@@ -1090,6 +1090,7 @@ end
 
 function onLive(c)
   if not S.frame or not S.frame:IsShown() then return end
+  if ns.sellAllEvent then pcall(ns.sellAllEvent, "live", c) end
   if S.sel and S.sel.ckey == c then
     if S.holdLive == S.sel.key then S.holdLive = nil end
     applySuggestion()
@@ -1132,24 +1133,15 @@ end
 -- system, and then other popups' buttons can be blocked).
 local function askConfirm(job)
   S.posting, S.warned = nil, job
+  if job.onConfirm then job.onConfirm(job); return end   -- Sell all asks in its own panel
   S.frame.confirm:Show()
   setStatus(("Confirm: post %s x %s at %s each, or don't."):format(num(job.qty), job.name, money(job.unit)), T.accent)
   updateTotals()
 end
 
--- Post: one click, one post. The price, quantity and duration are remembered for this item.
-local function post()
-  local g = S.sel
-  if not g or S.posting or S.warned then return end
-  if GetTime() < (S.holdUntil or 0) or (S.holdLive ~= nil and S.holdLive == g.key) then return end
-  local loc = locate(g)
-  if not loc then
-    setStatus("That item is no longer in your bags.", T.bad)
-    refreshBags()
-    return
-  end
-  local qty, unit, dur = S.qty or 0, S.unit or 0, S.dur or 2
-  if qty < 1 or unit < priceStep() or qty > (S.avail or 0) then return end
+-- One post to the auction house (one call): g is the item, loc where it is in the bags. `extra` goes into the job
+-- (Sell all's callbacks: onDone, onConfirm, owner). Returns the job, or nil when nothing was sent.
+local function postJob(g, loc, qty, unit, dur, extra)
   local okCall, needsConfirm
   if g.commodity then
     if not AH.PostCommodity then setStatus("This client can't post commodities.", T.bad); return end
@@ -1166,11 +1158,30 @@ local function post()
     return
   end
   local job = { name = g.name, qty = qty, unit = unit, commodity = g.commodity, loc = loc, dur = dur, id = g.id, key = g.key }
+  for k, v in pairs(extra or {}) do job[k] = v end
   -- several of an item go up one auction at a time; count them until the last one is up
   if not g.commodity and qty > 1 then job.multi = { 0, qty } end
   if needsConfirm == true then askConfirm(job) else waitForPost(job) end
+  return job
 end
 
+-- Post: one click, one post. The price, quantity and duration are remembered for this item.
+local function post()
+  local g = S.sel
+  if not g or S.posting or S.warned then return end
+  if GetTime() < (S.holdUntil or 0) or (S.holdLive ~= nil and S.holdLive == g.key) then return end
+  local loc = locate(g)
+  if not loc then
+    setStatus("That item is no longer in your bags.", T.bad)
+    refreshBags()
+    return
+  end
+  local qty, unit, dur = S.qty or 0, S.unit or 0, S.dur or 2
+  if qty < 1 or unit < priceStep() or qty > (S.avail or 0) then return end
+  postJob(g, loc, qty, unit, dur)
+end
+
+local confirmJob   -- below
 -- The confirm: one more click posts it.
 local function confirmPost()
   local job = S.warned
@@ -1188,6 +1199,18 @@ local function confirmPost()
     updateTotals()
     return
   end
+  confirmJob(job)
+end
+
+-- The confirm call for a post the auction house asked about (one call). True when it was sent.
+confirmJob = function(job)
+  S.warned = nil
+  local there = job.loc and C_Item and C_Item.DoesItemExist and C_Item.DoesItemExist(job.loc)
+    and C_Item.GetItemID and C_Item.GetItemID(job.loc) == job.id
+  if not there then
+    setStatus("That item moved in your bags: nothing was posted.", T.bad)
+    return false
+  end
   local okCall
   if job.commodity and AH.ConfirmPostCommodity then
     okCall = pcall(AH.ConfirmPostCommodity, job.loc, job.dur, job.qty, job.unit)
@@ -1200,9 +1223,10 @@ local function confirmPost()
     setStatus("Couldn't confirm the post.", T.bad)
     updateTotals()
   end
+  return okCall and true or false
 end
 
--- Cancel: one click, one auction.
+-- Cancel: one click, one auction. True when the cancel was sent.
 local function cancelAuction(a)
   if not a or a.sold or a.cancelling then return end
   if not AH.CancelAuction then setStatus("This client can't cancel auctions.", T.bad); return end
@@ -1226,6 +1250,7 @@ local function cancelAuction(a)
     end)
     setStatus(("Cancelling %s..."):format(a.name), T.dim)
     renderOwned()
+    return true
   else
     setStatus("Couldn't cancel: " .. tostring(err), T.bad)
   end
@@ -1430,14 +1455,23 @@ local function makeFrame()
   head:SetText(UI.hex(PLACE) .. "Quick sell|r")
   local headNote = UI.text(f, "mute")
   headNote:SetPoint("LEFT", head, "RIGHT", 10, 0)
-  headNote:SetPoint("RIGHT", f, "RIGHT", -12, 0)
+  headNote:SetPoint("RIGHT", f, "RIGHT", -112, 0)
+  headNote:SetWordWrap(false)
   headNote:SetText("EverlookDB's selling: everything in your bags, priced from the live auctions. Blizzard's Sell tab is separate.")
+  -- Sell all (SellAll.lua): the whole bag through your sell rules, one click per post
+  f.sellAllBtn = UI.button(f, "Sell all", 92, 20, "small")
+  UI.place(f.sellAllBtn, "sell")
+  f.sellAllBtn:SetPoint("TOPRIGHT", -10, -5)
+  f.sellAllBtn:SetScript("OnClick", function() if ns.sellAll then ns.sellAll.toggle() end end)
+  UI.tip(f.sellAllBtn, "Sell all", "Everything in your bags your sell rules cover, one after the other: one click posts one, at the price the rule picks. Cancel undercut is there too.")
+  f.mainParts = {}
 
   ------------------------------------------------------------------------------------------------ bags (left)
   local left = UI.panel(CreateFrame("Frame", nil, f), UI.tint(T.surface, PLACE, UI.WASH_INNER), UI.tint(T.edge, PLACE, UI.WASH_EDGE))
   left:SetPoint("TOPLEFT", 8, -28)
   left:SetPoint("BOTTOMLEFT", 8, 30)
   left:SetWidth(256)
+  f.mainParts[#f.mainParts + 1] = left
   local title = UI.text(left, "title")
   title:SetPoint("TOPLEFT", 10, -10)
   title:SetText("Your bags")
@@ -1487,6 +1521,7 @@ local function makeFrame()
   local RLAB_W = 80                          -- right column: its labels start this far left of its controls
   local STAT_W, FOOT_W = 136, 112            -- stat blocks in the item band and in the summary band
   P:SetHeight(280)
+  f.mainParts[#f.mainParts + 1] = P
   f.needItem = {}
   local function needs(w) f.needItem[#f.needItem + 1] = w; return w end
 
@@ -1827,6 +1862,7 @@ local function makeFrame()
   local Lw = UI.panel(CreateFrame("Frame", nil, f), UI.tint(T.surface, PLACE, UI.WASH_INNER), UI.tint(T.edge, PLACE, UI.WASH_EDGE))
   Lw:SetPoint("TOPLEFT", P, "BOTTOMLEFT", 0, -8)
   Lw:SetPoint("BOTTOMRIGHT", -8, 30)
+  f.mainParts[#f.mainParts + 1] = Lw
   f.curBtn = UI.button(Lw, "Current auctions", 128, 22, "small")
   UI.place(f.curBtn, "sell")   -- the view toggles light up in Quick sell's colour, not the gold of an action
   f.curBtn:SetPoint("TOPLEFT", 10, -8)
@@ -1896,6 +1932,7 @@ local function makeFrame()
   f.status:SetPoint("RIGHT", f, "RIGHT", -12, 0)
 
   f:SetScript("OnShow", function()
+    if ns.sellAll then ns.sellAll.onShow() end
     f.cut:SetText(undercutShort())
     collect()
     renderBags()
@@ -1921,6 +1958,15 @@ local function makeFrame()
   end)
   return f
 end
+
+-- What Sell all (SellAll.lua) uses of Quick sell: the same bags, live prices, posts, cancels and your auctions.
+ns.sellCore = {
+  S = S, Live = Live, request = request, liveFor = liveFor, collect = collect, prepare = prepare, locate = locate,
+  available = available, priceStep = priceStep, undercut = undercut, queryOwned = queryOwned, ownedState = ownedState,
+  ownedUnit = ownedUnit, cancelAuction = cancelAuction, postJob = postJob, confirmJob = confirmJob, sdb = sdb,
+  setStatus = setStatus, makeFrame = makeFrame, open = function() return ns.openSelling() end,
+  qualityHex = qualityHex, buildOwnRow = buildOwnRow, checkOwned = checkOwned,
+}
 
 ---------------------------------------------------------------------------------------------------------------------
 -- The tab under the auction house, after Blizzard's tabs
@@ -2219,7 +2265,7 @@ local function posted(job)
   -- remembered only once it went up (not on a refused or cancelled post)
   local s = sdb()
   if s and job.key then s.memory[job.key] = { p = job.unit, d = job.dur, q = job.qty, at = time() } end
-  S.advance = job.key   -- when that was the last of it, the next item in the list gets picked
+  if job.onDone then pcall(job.onDone, job) else S.advance = job.key end   -- when that was the last of it, the next item in the list gets picked
   setStatus(("Posted %s x %s at %s each."):format(num(job.qty), job.name, money(job.unit)), T.good)
   updateTotals()
   queryOwned()
@@ -2321,7 +2367,11 @@ end
 
 local ev = CreateFrame("Frame")
 for e in pairs(events) do pcall(ev.RegisterEvent, ev, e) end   -- some events may not exist in this client
-ev:SetScript("OnEvent", function(_, e, ...) events[e](...) end)
+ev:SetScript("OnEvent", function(_, e, ...)
+  events[e](...)
+  -- Sell all (SellAll.lua) shows the same posts, cancels, bags and auctions
+  if ns.sellAllEvent then pcall(ns.sellAllEvent, e) end
+end)
 
 local prevSlash, prevHelp = ns.slash, ns.help
 function ns.slash(msg)

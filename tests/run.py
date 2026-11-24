@@ -148,6 +148,7 @@ def main() -> int:
     failures += list_import()
     failures += buy_list()
     failures += reload_nudge()
+    failures += sell_all()
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from inventory import inventory
     failures += inventory(source_of, VENDOR_SETUP)
@@ -7092,6 +7093,319 @@ def buy_list():
     W.stop()
     W.stop()
     check(not f.shown, "Stop, then Close")
+    return failures
+
+
+def sell_all():
+    """Sell all (SellRules.lua, SellAll.lua): rules in order, floor / normal / undercut with formulas, never under the
+    floor, keep N, at most N up, the queue from the bags, which undercut auctions to cancel, and one auction house
+    call per click."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("wipe = function(t) for k in pairs(t) do t[k] = nil end return t end")
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    db = run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Search.lua", "SellRules.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    R = ns.sellRules
+    tbl = lua.eval("function(...) return { ... } end")
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("sell all: " + what)
+
+    # rules and their order: the first one that is on and matches wins; Everything comes last
+    rules = R.all(db)
+    check(len(rules) == 1 and rules[1].base is True and rules[1].name == "Everything", "a default rule with no setup")
+    check(rules[1].floor == "max(vendor + deposit, deposit)" and rules[1].below == "skip", "the default floor never posts at a loss")
+    _cloth, _i = R.add(db, lua.table(name="Cloth", query="name has cloth"))
+    wool, _i = R.add(db, lua.table(name="Wool", query='name is "Wool Cloth"', keep=5))
+    linen, wool_row, sword = ns.queryItemRow(2589), ns.queryItemRow(2592), ns.queryItemRow(3000)
+    rules = R.all(db)
+    check(len(rules) == 3 and rules[3].base is True, "new rules go above Everything")
+    r, i = R.ruleFor(rules, linen)
+    check(r.name == "Cloth" and i == 1, f"Linen Cloth: the Cloth rule ({r.name})")
+    r, i = R.ruleFor(rules, wool_row)
+    check(r.name == "Cloth", "Wool Cloth matches both: the first one wins")
+    check(R.move(db, 2, -1) is True, "move Wool up")
+    r, i = R.ruleFor(R.all(db), wool_row)
+    check(r.name == "Wool" and i == 1, f"after moving it up, Wool wins ({r.name})")
+    check(R.move(db, 1, -1) is False and R.move(db, 2, 1) is False, "nothing moves past the ends (Everything stays last)")
+    wool.on = False
+    r, _i = R.ruleFor(R.all(db), wool_row)
+    check(r.name == "Cloth", "a rule that is off is passed over")
+    wool.on = True
+    r, _i = R.ruleFor(R.all(db), sword)
+    check(r.name == "Everything", "what no rule covers falls to Everything")
+    R.add(db, lua.table(name="Bad", query="price lt"))
+    r, _i = R.ruleFor(R.all(db), linen)
+    check(r.name != "Bad", "a rule whose search can't be read matches nothing")
+    check(R.checkQuery("price lt") is not None and R.checkQuery("name has cloth") is None, "searches are checked before they are saved")
+    check(R.checkFormula("max(vendor + deposit, deposit)") is None, "deposit is a price in a rule's formula")
+    check(R.checkFormula("max(vendor,") is not None and R.checkFormula("bogus * 2") is not None, "a bad formula is refused")
+    check(R.remove(db, 3) is True and len(R.all(db)) == 3, "remove a rule")
+    check(R.remove(db, 9) is False, "removing one that isn't there does nothing")
+    # an older saved rule gets what it lacks
+    old = R.norm(lua.table(name="  Old ", keep="7", below="nonsense", duration=9))
+    check(old.name == "Old" and old.keep == 7 and old.below == "skip" and old.duration == 3 and old.floor == R.DEFAULT_FLOOR,
+          "an old rule is filled in and tidied")
+
+    # undercut
+    check(R.parseUndercut("") is None, "empty: the Undercut by setting")
+    check(R.parseUndercut("1c").copper == 1 and R.parseUndercut("1g50s").copper == 15000 and R.parseUndercut("5%").pct == 5,
+          "1c, 1g50s and 5%")
+    check(R.parseUndercut("0").copper == 0, "0 matches")
+    okU, why = R.parseUndercut("1.5s")
+    check(okU is False and "isn't an undercut" in why, "1.5s is refused")
+    check(R.undercutBy(1000, lua.table(copper=1), 1) == 999, "1c under 10s")
+    check(R.undercutBy(80, lua.table(copper=100), 1) == 79, "1s under 80c is 79c (never more than 5% off)")
+    check(R.undercutBy(10000, lua.table(pct=5), 1) == 9500, "5% under 1g")
+    check(R.undercutBy(250, lua.table(copper=1), 100) == 200, "whole silver only: 1c under 2s50c is 2s")
+    check(R.undercutBy(500, lua.table(copper=0), 1) == 500, "0 matches the cheapest")
+
+    # prices: floor, normal, undercut, with formulas; never under the floor
+    rule = R.newRule("T")
+    rule.undercut = "1c"
+    row = lua.table(id=2589, name="Linen Cloth", sell=13, median=100, pcRun=True, median30=False, low30=False)
+
+    def price(live=None, deposit=5, step=1, last=None, r=None, u=None):
+        c = lua.table(row=row, step=step, deposit=deposit, live=live, last=last, undercut=u)
+        return R.price(r or rule, c)
+    res = price(lua.table(lowestOther=30))
+    check(res.action == "post" and res.price == 29 and res.floor == 18, f"1c under 30c, floor vendor 13c + deposit 5c: {res.price} {res.floor}")
+    check(res.why[1] == "1c under the cheapest, 30c.", res.why[1])
+    res = price(lua.table(lowestOther=15))
+    check(res.action == "skip" and res.short == "under the floor" and "under your floor, 18c: not posted" in res.why[1],
+          f"14c is under the 18c floor: not posted ({res.why[1]})")
+    rule.below = "floor"
+    res = price(lua.table(lowestOther=15))
+    check(res.action == "post" and res.price == 18, f"below = floor: posted at the floor ({res.price})")
+    rule.below = "vendor"
+    res = price(lua.table(lowestOther=15))
+    check(res.action == "vendor" and "sell it to a vendor" in res.why[1], "below = vendor: left for a vendor")
+    rule.below = "skip"
+    res = price(lua.table(full=True))
+    check(res.action == "post" and res.price == 100 and "normal price" in res.why[1], f"nobody selling: the normal price, the scan median ({res.price})")
+    rule.normal = "120% of median"
+    res = price(lua.table(full=True))
+    check(res.price == 120, f"a formula as the normal price: {res.price}")
+    rule.normal = "10c"
+    rule.below = "floor"
+    res = price(lua.table(full=True))
+    check(res.price == 18, f"a normal price under the floor is raised to it: {res.price}")
+    rule.below = "skip"
+    rule.normal = R.DEFAULT_NORMAL
+    rule.floor = "80% of median"
+    res = price(lua.table(lowestOther=79))
+    check(res.floor == 80 and res.action == "skip", f"a formula floor: 80% of a 1s median is 80c ({res.floor})")
+    rule.floor = "max(vendor + deposit, deposit)"
+    res = price(lua.table(lowestOther=10, lone=True, second=40))
+    check(res.price == 39 and "skipped a lone one" in res.why[1], f"a lone cheap one is passed over: {res.price}")
+    res = price(lua.table(lowestOther=50, lowestMine=40))
+    check(res.price == 40 and "your own" in res.why[1], "your own cheaper auction is matched, never undercut")
+    res = price(lua.table(lowestOther=250), step=100)
+    check(res.price == 200 and res.floor == 100, f"whole silver: price 2s, floor rounded up to 1s ({res.price} {res.floor})")
+    row.median = None
+    res = price(lua.table(full=True))
+    check(res.action == "skip" and res.short == "no price", "nobody selling and no normal price: not posted")
+    res = price(lua.table(full=True), last=77)
+    check(res.action == "post" and res.price == 77, "your last price when there is no normal one")
+    res = price(None)
+    check(res.action == "skip", "no live answer: nothing is posted")
+    row.median = 100
+    rule.undercut = ""
+    res = price(lua.table(lowestOther=10000), u=lua.table(pct=10))
+    check(res.price == 9000, f"an empty undercut uses the setting (10%): {res.price}")
+    rule.undercut = "0"
+    res = price(lua.table(lowestOther=300))
+    check(res.price == 300 and res.why[1].startswith("Matches the cheapest"), res.why[1])
+    rule.undercut = "1c"
+    # never under the floor, whatever the numbers
+    worst = []
+    for below in ("skip", "floor", "vendor"):
+        rule.below = below
+        for cheapest in (1, 7, 17, 18, 19, 40, 101, 999):
+            for step in (1, 100):
+                for dep in (0, 5, 33):
+                    res = price(lua.table(lowestOther=cheapest), deposit=dep, step=step)
+                    if res.action == "post" and res.floor is not None and res.price < res.floor:
+                        worst.append((below, cheapest, step, dep, res.price, res.floor))
+    check(not worst, f"a posted price is never under the floor: {worst[:3]}")
+    rule.below = "skip"
+    ex = R.explain(rule, price(lua.table(lowestOther=30)))
+    check("Rule T" in ex and "floor 18c" in ex and "undercut 1c" in ex, ex)
+
+    # how many
+    check(R.quantity(lua.table(keep=20, maxUp=0, stack=0), 50, 0) == 30, "keep 20 of 50: post 30")
+    n, why = R.quantity(lua.table(keep=60, maxUp=0, stack=0), 50, 0)
+    check(n == 0 and why == "keeping 60 in your bags", f"keep more than you have: {why}")
+    check(R.quantity(lua.table(keep=0, maxUp=40, stack=0), 50, 30) == 10, "at most 40 up, 30 up: post 10")
+    n, why = R.quantity(lua.table(keep=0, maxUp=40, stack=0), 50, 40)
+    check(n == 0 and "at most 40" in why, f"at most 40 up and 40 are: {why}")
+    check(R.quantity(lua.table(keep=0, maxUp=0, stack=20), 50, 0) == 20, "posts of at most 20")
+    check(R.quantity(lua.table(keep=10, maxUp=100, stack=20), 15, 0) == 5, "keep, max up and stack together")
+
+    # the queue from the bags
+    groups = tbl(lua.table(key="2589:0", id=2589, count=40, name="Linen Cloth"),
+                 lua.table(key="2592:0", id=2592, count=3, name="Wool Cloth"),
+                 lua.table(key="3000:0", id=3000, count=1, name="Old Sword"),
+                 lua.table(key="7001:0", id=7001, count=1, name="Lesser Magic Wand"))
+    o = lua.table(rules=R.all(db),
+                  rowOf=lambda g: ns.queryItemRow(g.id),
+                  upOf=lambda g: 0,
+                  hidden=lambda g: g.id == 7001)
+    entries = R.queue(groups, o)
+    names = [entries[k].g.name for k in range(1, len(entries) + 1)]
+    check(names == ["Linen Cloth", "Wool Cloth", "Old Sword"], f"in bag order, hidden ones left out: {names}")
+    check(entries[1].rule.name == "Cloth" and entries[1].qty == 40, "Linen: Cloth rule, all 40")
+    check(entries[2].rule.name == "Wool" and entries[2].qty == 0 and entries[2].why == "keeping 5 in your bags", "Wool: keeps 5, has 3")
+    check(entries[3].rule.name == "Everything", "the sword: Everything")
+    check(R.nextOpen(entries, 1) == 1 and R.nextOpen(entries, 2) == 3, "the next open entry passes over kept ones")
+    entries[3].skipped = "you"
+    check(R.nextOpen(entries, 2) == 1, "and skipped ones, wrapping round")
+    entries[1].done = True
+    check(R.nextOpen(entries, 1) is None, "nothing open: none")
+
+    # cancel undercut: which of your auctions
+    lives = {
+        1: lua.table(at=1000, lowestOther=95),            # undercut by 5
+        2: lua.table(at=1000, lowestOther=60),            # you're the cheapest
+        3: lua.table(at=1000, lowestOther=10),            # undercut, but a repost would go under the floor
+        4: lua.table(at=900, lowestOther=50),             # undercut by 50, old answer
+        5: lua.table(at=1000, lowestOther=80),            # has a bid
+        6: lua.table(at=1000, lowestOther=5, lone=True, second=200),   # only a lone bait one is cheaper
+        7: lua.table(at=1000, lowestOther=10),            # a stackable good whose own price isn't sure yet
+    }
+    ow = lambda **kw: lua.table(**kw)
+    own = tbl(ow(id=1, itemID=2589, unit=100, qty=1, name="A"), ow(id=2, itemID=2589, unit=50, qty=1, name="B"),
+              ow(id=3, itemID=2589, unit=100, qty=1, name="C"), ow(id=4, itemID=2589, unit=100, qty=1, name="D"),
+              ow(id=5, itemID=2589, unit=100, qty=1, name="E", hasBid=True), ow(id=6, itemID=2589, unit=100, qty=1, name="F"),
+              ow(id=7, itemID=2589, unit=100, qty=1, name="G", commodity=True), ow(id=8, itemID=2589, unit=100, sold=True, name="H"))
+    rowC = lua.table(id=2589, sell=13, pcRun=True)
+    cl = R.cancelQueue(own, lua.table(live=lambda a: lives.get(a.id), rule=lambda a: R.newRule("Everything"),
+                                      row=lambda a: rowC, step=1, undercut=lua.table(copper=1), now=1000,
+                                      deposit=lambda a: 5, sure=lambda a: not a.commodity))
+    got = [(cl[k].a.name, bool(cl[k].ok)) for k in range(1, len(cl) + 1)]
+    check(got == [("D", True), ("A", True), ("C", False), ("E", False)], f"most undercut first, kept ones after: {got}")
+    check(cl[2].repost == 94 and cl[2].by == 5 and cl[2].fresh is True, f"A: repost 94c, undercut by 5c ({cl[2].repost})")
+    check(cl[1].fresh is False, "D's live price is 100 s old: checked again first")
+    check("under your floor, 18c" in cl[3].why, cl[3].why)
+    check("bid" in cl[4].why, cl[4].why)
+    check(R.cancelLabel(cl[2], 1, 4) == "Cancel A · undercut by 5c (1 of 4)", R.cancelLabel(cl[2], 1, 4))
+
+    # one auction house call per click
+    def st(**kw):
+        return R.state(lua.table(**kw), 1000)
+    fresh, old = lua.table(at=990), lua.table(at=900)
+    post_res, skip_res = lua.table(action="post", price=29), lua.table(action="skip")
+    check(st() == "check", "no live price: Check price")
+    check(st(job=True) == "checking", "a search is out: wait")
+    check(st(live=old) == "check" and st(live=old, job=True) == "checking", "a price over a minute old is checked again")
+    check(st(live=fresh, result=post_res) == "post", "a fresh price: Post")
+    check(st(live=fresh, result=post_res, held=True) == "wait", "the button rests a moment after the queue moved")
+    check(st(live=fresh, result=skip_res) == "skip", "the rule doesn't post it")
+    check(st(posting=True, live=fresh, result=post_res) == "posting" and st(warned=True) == "confirm" and st(done=True) == "done",
+          "posting, confirm, done")
+    calls = {s_: R.clickCall(s_) for s_ in ("check", "checking", "post", "wait", "skip", "posting", "confirm", "done")}
+    check(calls == {"check": "search", "checking": None, "post": "post", "wait": None, "skip": None, "posting": None,
+                    "confirm": "confirm", "done": None}, f"each click makes at most one call: {calls}")
+    check(R.clickCall("post", True) == "cancel", "in Cancel undercut the click cancels")
+    label = R.postLabel(lua.table(qty=20, g=lua.table(name="Linen Cloth")), 1200, 3, 14)
+    check(label == "Post 20 Linen Cloth · 1200c each (3 of 14)", label)
+
+    # the view's click, over a fake Quick sell: check price, then post, never both in one click
+    lua.execute("""
+      MOCK_CALLS = { search = 0, post = 0 }
+      C_AuctionHouse = { CalculateCommodityDeposit = function(_, _, q) return 20 * q end }
+      function C_Timer.After(_, fn) end
+    """)
+    G = lua.globals()
+    core = lua.eval("""function(ns)
+      local S = { owned = {}, ownedLoaded = true, groups = { { key = "2589:0", id = 2589, count = 40, name = "Linen Cloth" } } }
+      local Live = { cache = {}, byId = {}, jobs = {}, failed = {} }
+      local s = { memory = {}, hidden = {}, fav = {} }
+      ns.sellCore = {
+        S = S, Live = Live, collect = function() end, sdb = function() return s end,
+        prepare = function(g) g.itemKey = { itemID = g.id }; g.ckey = g.id .. ":0:0"; g.commodity = true end,
+        liveFor = function(c) return c and Live.cache[c] or nil end,
+        request = function(k) MOCK_CALLS.search = MOCK_CALLS.search + 1; Live.jobs[k.itemID .. ":0:0"] = true end,
+        priceStep = function() return 1 end, undercut = function() return { copper = 1 } end,
+        locate = function() return "loc" end, available = function(g) return g.count end,
+        postJob = function(g, loc, qty, unit, dur, extra)
+          MOCK_CALLS.post = MOCK_CALLS.post + 1
+          MOCK_CALLS.last = { qty = qty, unit = unit }
+          S.posting = { entry = extra.entry, qty = qty, unit = unit }
+          return S.posting
+        end,
+        setStatus = function() end, qualityHex = function() return "" end, queryOwned = function() end,
+      }
+      return S, Live
+    end""")
+    S, Live = core(ns)
+    run(source_of("SellAll.lua"), "SellAll.lua", "EverlookDBAuctions", ns)
+    A = ns.sellAll
+    R.store(db).list[1].keep = 0
+    A.build()
+    check(A.current() is not None and A.current().g.name == "Linen Cloth", "the queue starts at Linen Cloth")
+    check(A.click() == "search" and G.MOCK_CALLS.search == 1 and G.MOCK_CALLS.post == 0, "first click: one price check, no post")
+    check(A.click() is None and G.MOCK_CALLS.search == 1, "while it is out a click does nothing")
+    Live.jobs["2589:0:0"] = None
+    Live.cache["2589:0:0"] = lua.table(at=1000, lowestOther=40)
+    check(A.click() == "post" and G.MOCK_CALLS.post == 1 and G.MOCK_CALLS.search == 1, "next click: one post, no search")
+    check(G.MOCK_CALLS.last is not None and G.MOCK_CALLS.last.unit == 39 and G.MOCK_CALLS.last.qty == 40,
+          f"posted 40 at 39c: {G.MOCK_CALLS.last and G.MOCK_CALLS.last.unit}")
+    check(A.click() is None and G.MOCK_CALLS.post == 1, "while the post is out a click does nothing")
+    S.posting = None
+    Live.cache["2589:0:0"] = lua.table(at=1000, lowestOther=15)
+    A.build()
+    st_, _res = A.stateOf(A.current())
+    check(st_ == "skip", f"14c would be under the 33c floor (13c vendor + 20c deposit): the rule skips it ({st_})")
+    Live.cache["2589:0:0"] = lua.table(at=900, lowestOther=40)
+    check(A.click() == "search" and G.MOCK_CALLS.post == 1, "a stale price: the click checks, it doesn't post")
+
+    # the Sell rules page in the settings window, and its settings as commands
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("""
+        CHAT = {}
+        DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) CHAT[#CHAT + 1] = m end }
+        STANDARD_TEXT_FONT = "font"
+        wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
+    """)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua"):
+        run(source_of(lib), lib)
+    ns = lua.table()
+    db = run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Search.lua", "SellRules.lua", "SellAll.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    ns.sellSettings = lua.eval("function() local t = {}; return function() return t end end")()
+    ns.undercutShort = lua.eval("function() return '1s' end")
+    ns.setUndercut = lua.eval("function() return true end")
+    ns.tipOn = lua.eval("function() return true end")
+    run(source_of("Options.lua"), "Options.lua", "EverlookDBAuctions", ns)
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then pcall(f.scripts.OnEvent, f, e, a) end end end")
+    fire("ADDON_LOADED", "EverlookDBAuctions")
+    check(ns.optionsError is None, f"the settings window builds: {ns.optionsError}")
+    app = ns.app
+    check(app.sections.sellrules is not None, "a Sell rules page")
+    built = lua.eval("""function(app)
+      local okB, err = pcall(app.BuildSection, app, "sellrules")
+      return okB, tostring(err)
+    end""")(app)
+    check(built[0], f"the Sell rules page builds: {built[1]}")
+    base = ns.sellRules.all(db)[1]
+    check(ns.slash("rulefloor 80% of median") is True and base.floor == "80% of median", f"/eah rulefloor sets the edited rule's floor: {base.floor}")
+    ns.slash("rulefloor max(vendor,")
+    check(base.floor == "80% of median", "a floor that can't be read isn't saved")
+    ns.slash("rulesearch name has cloth")
+    check(base.query == "", "Everything keeps covering every item")
+    ns.slash("rulekeep 20")
+    check(base.keep == 20, f"keep 20: {base.keep}")
+    ns.slash("rulebelow floor")
+    check(base.below == "floor", f"under the floor: post at the floor ({base.below})")
     return failures
 
 
