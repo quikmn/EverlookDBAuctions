@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.29.0 (2026-11-25)
 - Price formulas in Advanced search, the same as on EverlookDB.com: do sums with prices, like `price lt 60% of median`, `price lt devalue - 50s` (cheaper than disenchanting it is worth) or `sort by median - price desc` (the biggest bargain first). Use + - * / and ( ), min(...), max(...), first(...) (the first price that is known), money like 5g or 2g50s, and "80% of".
 - New prices to search and sort by: `low30` and `median30` (the lowest and the middle daily price of the last 30 days), `craftcost` (what the materials of the cheapest recipe cost), `devalue` (what disenchanting it is worth), and from your own log `avgbuy` and `avgsell` (what you paid and got for one on average). `now` means `price`.
 - My prices: save a formula under a name in Settings, Selling (or `/eah myprices myfloor = max(vendor * 1.5, 80% of low30)`), then search with it like any price: `price lt myfloor`, `sort by myfloor`.
