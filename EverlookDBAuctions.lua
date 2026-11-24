@@ -322,6 +322,20 @@ local function refreshFeedLine()
   local okF, line = pcall(function()
     return ns.shared and ns.shared.feedLine(house, house:match("%-(%a+)$")) or nil
   end)
+  -- the Price Feed may have newer prices than this session read: a quiet Reload beside Update prices (FeedNudge.lua)
+  local okS, stale = pcall(function() return ns.feedNudge and ns.feedNudge.stale() end)
+  stale = okS and stale or nil
+  if okF and line and stale then line = line .. " · newer may be ready" end
+  if panel.reload and panel.reload:IsShown() ~= (stale ~= nil) then
+    panel.reload:SetShown(stale ~= nil)
+    local right = stale and panel.reload or panel.button
+    for _, t in ipairs({ panel.text, panel.feed }) do
+      local y = t == panel.text and 6 or -7
+      t:ClearAllPoints()
+      t:SetPoint("LEFT", panel.mark, "RIGHT", 8, y)
+      t:SetPoint("RIGHT", right, "LEFT", -12, y)
+    end
+  end
   local fs = panel.feed
   fs:SetText(okF and line or "")
   -- one size down when it would be cut off ("Price Feed: off · the EverlookDB App brings..." is about the width)
@@ -499,6 +513,14 @@ local function makePanel(parent)
   f.button:SetPoint("RIGHT", -2, 0)
   f.button:SetScript("OnClick", function() startScan() end)
   UI.tip(f.button, "Update prices", tipText)
+  f.mark = mark
+
+  -- the Price Feed may hold newer prices than the game read at login: one click reloads (shown by refreshFeedLine)
+  f.reload = UI.button(f, "Reload (1 s)", 84, 18, "quiet")
+  f.reload:SetPoint("RIGHT", f.button, "LEFT", -6, 0)
+  f.reload:SetScript("OnClick", function() if ns.feedNudge then ns.feedNudge.reload() end end)
+  UI.tip(f.reload, "Reload for newer prices", "The EverlookDB App usually brings new prices every hour, but the game only reads them at login or /reload. This reloads the interface (about a second).")
+  f.reload:Hide()
 
   local bar = CreateFrame("Frame", nil, f)
   bar:SetAllPoints(f.button)
@@ -1341,6 +1363,7 @@ local function auctionLines(t, id, tooltip)
     local key, sfx = variantOf(id, okItem and ok(link) or nil)
     if key and sfx and sfx ~= 0 then vkey = key end
   end
+  local hinted
   for _, key in ipairs(keys) do
     local h = db.houses[key]
     local side = key:match("%-(%a+)$")
@@ -1355,6 +1378,14 @@ local function auctionLines(t, id, tooltip)
         time(), GetServerTime and GetServerTime() or time())
       if left then
         t:Line(left, price and Tip.Money(each(price)) or word, { note = note, stale = not fresh })
+        -- with Shift only: the Price Feed may have newer prices than this game session read (FeedNudge.lua)
+        if not hinted and it and it.shared and IsShiftKeyDown() and ns.feedNudge then
+          local okS, age = pcall(ns.feedNudge.stale)
+          if okS and age then
+            hinted = true
+            t:Detail("/reload for newer prices", nil, { always = true })
+          end
+        end
       end
     end
     if d and tipOn("history") then

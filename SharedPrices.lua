@@ -218,6 +218,26 @@ function S.statusLines()
   return out
 end
 
+-- When the EverlookDB App wrote the copy the game loaded (its own `written`), on this computer's clock; nil when the
+-- copy doesn't say (or is the shipped empty one). The game reads the file only at login and /reload, so newer data
+-- can only be on disk when this was a while ago.
+function S.copyAt()
+  local d = rawget(_G, "EverlookDBAuctionsShared")
+  local w = type(d) == "table" and d.written
+  if not plain(w) or w <= 0 then return nil end
+  local server = GetServerTime and GetServerTime() or time()
+  return w - (server - time())
+end
+
+-- The raw `written` of the loaded copy (server time), to tell after a reload whether the file changed.
+function S.written()
+  local d = rawget(_G, "EverlookDBAuctionsShared")
+  local w = type(d) == "table" and d.written
+  return plain(w) and w > 0 and w or nil
+end
+
+S.oldText = old
+
 -- Tests: read the global again.
 function S.reset() houses = nil end
 

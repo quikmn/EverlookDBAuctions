@@ -53,4 +53,5 @@ Options.lua
 ProfitWindow.lua
 Hub.lua
 MinimapButton.lua
+FeedNudge.lua
 API.lua

@@ -127,6 +127,23 @@ local function build()
     set = function(v) db().ignoreShared = (not v) or nil end,
   })
   app:Setting({
+    key = "reloadhint", type = "bool", label = "Offer to reload for newer prices",
+    chatLabel = "Offer to reload for newer prices",
+    keywords = { "reload", "newer", "fresh", "old", "stale", "price feed", "feed", "app", "nudge", "hint", "remind", "minimap", "dot" },
+    desc = "When the Price Feed's prices you see are old and the EverlookDB App has probably brought newer ones, a small line under the minimap offers a reload, only at a quiet moment (resting in a city or inn, or just after a mailbox, vendor or flight). At most once an hour, never in a fight; x keeps it away for 2 hours. The minimap button gets a small dot then too (Shift-click reloads).",
+    get = function() return db().reloadNudge ~= false end,
+    set = function(v) if v then db().reloadNudge = nil else db().reloadNudge = false end end,
+    after = function() if ns.feedNudge then pcall(ns.feedNudge.check) end end,
+  })
+  app:Setting({
+    key = "reloadafter", type = "choice", label = "Offer it when prices are older than", width = 160,
+    chatLabel = "Offer a reload after", keywords = { "reload", "age", "old", "minutes", "hours", "newer", "price feed", "threshold" },
+    choices = { { value = 60, text = "1 hour" }, { value = 90, text = "90 minutes" }, { value = 120, text = "2 hours" },
+      { value = 180, text = "3 hours" }, { value = 360, text = "6 hours" } },
+    get = function() return ns.feedNudge and ns.feedNudge.minutes() or tonumber(db().reloadAfter) or 90 end,
+    set = function(v) db().reloadAfter = tonumber(v) end,   -- one of the choices (the chat parser checks)
+  })
+  app:Setting({
     key = "skin", type = "bool", label = "EverlookDB look for Blizzard's auction house (after /reload)", keywords = { "skin", "theme", "style" },
     get = function() return db().skin ~= false end,
     set = function(v) db().skin = v end,
@@ -296,6 +313,8 @@ local function build()
     app:Widget(stack, "auto")
     app:Widget(stack, "feed")
     UI.Note(stack, function() return ns.shared and ns.shared.feedLine() or "" end)
+    app:Widget(stack, "reloadhint")
+    app:Widget(stack, "reloadafter")
     app:Widget(stack, "minimap")
     app:Widget(stack, "skin")
     app:Widget(stack, "compareshift")

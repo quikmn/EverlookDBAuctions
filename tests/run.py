@@ -143,6 +143,7 @@ def main() -> int:
     failures += disenchanting()
     failures += list_import()
     failures += buy_list()
+    failures += reload_nudge()
 
     if failures:
         for f in failures:
@@ -1977,6 +1978,21 @@ def ux_flows():
     check(ns.slash("duration 30") is True and sell.duration == 2 and "Example" in G.CHAT[len(G.CHAT)],
           "a wrong value is refused with an example")
     check(ns.slash("skin off") is True and ns.db().skin is False, "/eah skin off")
+    check(ns.slash("reloadhint off") is True and ns.db().reloadNudge is False, "/eah reloadhint off")
+    check(ns.slash("reloadhint on") is True and ns.db().reloadNudge is None, "/eah reloadhint on")
+    check(ns.slash("reloadafter 120") is True and ns.db().reloadAfter == 120, f"/eah reloadafter 120: {ns.db().reloadAfter}")
+    check(ns.slash("reloadafter 45") is True and ns.db().reloadAfter == 120 and "Example" in G.CHAT[len(G.CHAT)],
+          "/eah reloadafter 45 is refused with an example")
+    hits = lua.eval('''function(app)
+      local out = {}
+      for _, key in ipairs({ "reloadhint", "reloadafter" }) do
+        local d = app:GetSetting(key)
+        local words = table.concat(d.keywords or {}, " ") .. " " .. d.label
+        out[#out + 1] = words:lower():find("reload", 1, true) and words:lower():find("newer", 1, true) and key or nil
+      end
+      return #out
+    end''')(ns.app)
+    check(hits == 2, "both reload settings can be found by searching reload or newer")
     check(ns.slash("scan") is False, "a command that isn't a setting is left to the core")
 
     # /eah goes through the shared EverlookUI command pattern once the options are built
@@ -2566,6 +2582,268 @@ def price_feed_lines(start):
     return failures
 
 
+NUDGE_SETUP = """
+COMBAT, LOCKDOWN, INSTANCE, RESTING, TAXI, CASTING, TYPING, DEAD = false, false, false, false, false, false, false, false
+GROUP, PARTY_FIGHT = false, false
+function InCombatLockdown() return LOCKDOWN end
+function UnitAffectingCombat(u) if u == "player" then return COMBAT end return PARTY_FIGHT and u == "party2" end
+function IsInInstance() return INSTANCE, INSTANCE and "pvp" or "none" end
+function IsResting() return RESTING end
+function UnitOnTaxi() return TAXI end
+function UnitIsDeadOrGhost() return DEAD end
+function UnitCastingInfo() if CASTING then return "Hearthstone" end end
+function UnitChannelInfo() end
+function GetCurrentKeyBoardFocus() if TYPING then return {} end end
+function IsInGroup() return GROUP end
+function IsInRaid() return false end
+function GetNumGroupMembers() return GROUP and 4 or 0 end
+RELOADS = 0
+function ReloadUI() RELOADS = RELOADS + 1 end
+-- our own scan is old; the feed's copy (and its scan) is 30 minutes old when the game loads it
+EverlookAuctionsDB.houses["Test-Alliance"].scanned = MOCK_TIME - 10 * 3600
+EverlookDBAuctionsShared.written = MOCK_TIME - 30 * 60
+EverlookDBAuctionsShared.houses["EU-4-Alliance"].at = MOCK_TIME - 30 * 60
+"""
+
+
+def reload_nudge():
+    """The offer to reload for newer Price Feed prices (FeedNudge.lua): only when the feed's prices shown are older than
+    the setting and the app looks like it is writing, only at a calm moment (resting, or just after a mailbox, vendor,
+    landing or loading screen; never in a fight, an instance, a group fight, while typing, casting or flying), at most
+    once an hour, the x keeps it away 2 hours, a fight hides it, a reload that brought nothing new keeps it quiet; the
+    minimap dot and the Shift-only tooltip hint."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("reload nudge: " + what)
+
+    def start(extra=""):
+        lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+        lua.execute(source_of("tests/mock.lua"))
+        run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+        lua.execute(CORE_SETUP)
+        lua.execute(SHARED_SETUP)
+        lua.execute(NUDGE_SETUP)
+        lua.execute(extra)
+        for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookTooltip.lua"):
+            run(source_of(lib), lib)
+        ns = lua.table()
+        for name in ("EverlookDBAuctions.lua", "SharedPrices.lua", "FeedNudge.lua"):
+            run(source_of(name), name, "EverlookDBAuctions", ns)
+        fire = lua.eval("function(e, ...) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then pcall(f.scripts.OnEvent, f, e, ...) end end end")
+        fire("ADDON_LOADED", "EverlookDBAuctions")
+        lua.execute("BADGE = nil")
+        ns.minimapButton = lua.eval("{ badge = function(on) BADGE = on end }")
+        return lua, ns, fire
+
+    def reason(N):
+        r = N.stale()
+        return r[1] if isinstance(r, tuple) else r
+
+    MIN = 60
+    lua, ns, fire = start()
+    G = lua.globals()
+    N = ns.feedNudge
+    T0 = G.MOCK_TIME
+    check(N is not None and N.loaded == T0, "loaded with the feed")
+
+    def at(minutes):
+        G.MOCK_TIME = T0 + int(minutes * MIN)
+
+    # the copy is 30 min old at login; 20 min later it's 50: fresh
+    at(20)
+    check(reason(N) == "fresh", f"50 min old: fresh: {reason(N)}")
+    check(N.check() is False and not N.shown(), "nothing while fresh")
+    check(G.BADGE is False, "no minimap dot while fresh")
+    # an hour in: 91 min old, but out in the world (not resting, no moment): no line, but the dot
+    at(61)
+    age = N.stale()
+    check(age == 91 * MIN, f"91 min old: stale: {age}")
+    check(N.calm()[1] == "place", f"out in the world: not a calm place: {N.calm()}")
+    check(N.check() is False and not N.shown(), "no line out in the world")
+    check(G.BADGE is True, "the minimap dot shows (no rate limit, no calm moment needed)")
+
+    # each thing that isn't calm, while resting
+    G.RESTING = True
+    for flag, why in (("COMBAT", "combat"), ("LOCKDOWN", "combat"), ("INSTANCE", "instance"), ("TAXI", "flying"),
+                      ("CASTING", "casting"), ("TYPING", "typing"), ("DEAD", "dead")):
+        G[flag] = True
+        c = N.calm()
+        check(c[0] is False and c[1] == why, f"{flag}: not calm ({why}): {c}")
+        check(N.check() is False and not N.shown(), f"{flag}: no line")
+        G[flag] = False
+    G.GROUP, G.PARTY_FIGHT = True, True
+    check(N.calm()[1] == "group", "a group member fighting: not calm")
+    G.PARTY_FIGHT = False
+    check(N.calm() is True, f"in a quiet group, resting: calm: {N.calm()}")
+    G.GROUP = False
+    keep = ns.house
+    ns.house = lua.eval("function() return 'Test-Alliance' end")
+    check(N.calm()[1] == "auctionhouse", "at the auction house its bar offers it instead")
+    ns.house = keep
+
+    # resting and calm: the line, once
+    check(N.check() is True and N.shown(), "resting in a city: the line shows")
+    text = N.frame.text.text
+    check(text.startswith("Prices: 2 h old") and "Reload" in text and "(1 s)" in text, f"the line's text: {text}")
+    check(N.check() is False and N.shown(), "shown once, not again on top")
+    # a fight hides it at once
+    fire("PLAYER_REGEN_DISABLED")
+    check(not N.shown(), "a fight hides it")
+    # never more than once an hour
+    check(N.check() is False and N.allowed()[1] == "hourly", "not again within the hour")
+    at(61 + 59)
+    check(N.check() is False, "59 minutes later: still not")
+    at(61 + 61)
+    check(N.check() is True and N.shown(), "an hour later: again")
+    # it goes by itself after a minute
+    G.MOCK_TIME = G.MOCK_TIME + N.SHOW_FOR
+    N.check()
+    check(not N.shown(), "gone by itself after a minute")
+    # the x: quiet for 2 hours
+    at(200)
+    check(N.check() is True, "shown at 200 min")
+    N.dismiss()
+    check(not N.shown() and N.allowed()[1] == "dismissed", "dismissed")
+    at(200 + 119)
+    check(N.check() is False, "dismissed: quiet for 2 hours")
+    at(200 + 121)
+    check(N.check() is True, "after 2 hours: again")
+    # right-click on the line is the x too; a click reloads
+    f = N.frame
+    f.scripts.OnClick(f, "RightButton")
+    check(not N.shown() and ns.db().nudge.quietTill == G.MOCK_TIME + N.QUIET, "right-click: not now")
+    f.scripts.OnClick(f, "LeftButton")
+    check(G.RELOADS == 1, "a click reloads")
+    G.RELOADS = 0
+
+    # a calm moment away from a city: a mailbox, a loading screen (not the login one), a landing
+    lua, ns, fire = start()
+    G, N = lua.globals(), ns.feedNudge
+    G.MOCK_TIME = T0 + 61 * MIN
+    check(N.check() is False, "not resting: no line")
+    fire("MAIL_SHOW")
+    check(N.shown(), "at a mailbox: the line")
+    lua, ns, fire = start()
+    G, N = lua.globals(), ns.feedNudge
+    G.MOCK_TIME = T0 + 61 * MIN
+    fire("PLAYER_ENTERING_WORLD", True, False)
+    check(not N.shown(), "the login's own loading screen is no moment")
+    fire("PLAYER_ENTERING_WORLD", False, False)
+    check(N.shown(), "after a loading screen: the line")
+    lua, ns, fire = start()
+    G, N = lua.globals(), ns.feedNudge
+    G.MOCK_TIME = T0 + 61 * MIN
+    G.COMBAT = True
+    fire("PLAYER_CONTROL_GAINED")
+    check(not N.shown(), "a moment in a fight: nothing")
+    G.COMBAT = False
+    N.check()
+    check(N.shown(), "the moment lasts a little while: once the fight is over, the line")
+    N.hide()
+    ns.db().nudge.shown = None
+    G.MOCK_TIME = G.MOCK_TIME + 5 * MIN
+    check(N.check() is False, "the moment is over after 90 seconds")
+
+    # the reload remembers which copy was loaded; never in combat
+    check(N.reload() is True and G.RELOADS == 1 and ns.db().nudge.reloadFrom == T0 - 30 * MIN, "the reload")
+    G.LOCKDOWN = True
+    check(N.reload() is False and G.RELOADS == 1, "never a reload in combat")
+    G.LOCKDOWN = False
+    # after that reload the same copy came back (the app isn't writing): one chat line, quiet for 2 hours
+    lua, ns, fire = start("EverlookAuctionsDB.nudge = { reloadFrom = MOCK_TIME - 30 * 60 }")
+    G, N = lua.globals(), ns.feedNudge
+    fire("PLAYER_LOGIN")
+    check(ns.db().nudge.reloadFrom is None and ns.db().nudge.nothingTill == T0 + N.QUIET, "same copy: quiet 2 hours")
+    check(any("no newer prices" in p for p in G.PRINTED.values()), f"says so once: {list(G.PRINTED.values())}")
+    G.RESTING = True
+    G.MOCK_TIME = T0 + 61 * MIN
+    check(reason(N) == "nothingnew", "quiet while nothing new")
+    G.MOCK_TIME = T0 + 121 * MIN
+    check(N.check() is True, "after 2 hours, again")
+    # a newer copy came: nothing said
+    lua, ns, fire = start("EverlookAuctionsDB.nudge = { reloadFrom = MOCK_TIME - 90 * 60 }")
+    G = lua.globals()
+    fire("PLAYER_LOGIN")
+    check(ns.db().nudge.nothingTill is None and not any("no newer" in p for p in G.PRINTED.values()),
+          "a newer copy: quiet about it")
+
+    # when it never fires
+    cases = (
+        ("EverlookAuctionsDB.reloadNudge = false", "off"),
+        ("EverlookAuctionsDB.ignoreShared = true", "nofeed"),
+        ("EverlookDBAuctionsShared = nil", "nofeed"),
+        ("EverlookDBAuctionsShared = { version = 1, written = 0, houses = {} }", "nofeed"),
+        ("EverlookDBAuctionsShared.houses['EU-4-Alliance'].realm = 'Other'", "nohouse"),
+        ("EverlookAuctionsDB.houses['Test-Alliance'].scanned = MOCK_TIME + 50 * 60", "own"),
+        ("EverlookDBAuctionsShared.written = MOCK_TIME - 7 * 3600; EverlookDBAuctionsShared.houses['EU-4-Alliance'].at = MOCK_TIME - 7 * 3600", "appidle"),
+        ("EverlookAuctionsDB.reloadAfter = 120", "fresh"),
+    )
+    for extra, why in cases:
+        lua, ns, fire = start(extra)
+        G, N = lua.globals(), ns.feedNudge
+        G.RESTING = True
+        G.MOCK_TIME = T0 + 61 * MIN
+        got = reason(N)
+        check(got == why, f"{extra}: {why}: {got}")
+        check(N.check() is False and not N.shown() and G.BADGE is False, f"{extra}: no line, no dot")
+    # just reloaded: nothing in the first 15 minutes, even with an old copy
+    lua, ns, fire = start("EverlookDBAuctionsShared.written = MOCK_TIME - 3 * 3600; EverlookDBAuctionsShared.houses['EU-4-Alliance'].at = MOCK_TIME - 3 * 3600")
+    G, N = lua.globals(), ns.feedNudge
+    G.RESTING = True
+    G.MOCK_TIME = T0 + 10 * MIN
+    check(reason(N) == "justloaded", "just loaded: quiet")
+    G.MOCK_TIME = T0 + 16 * MIN
+    check(N.check() is True and "3 h old" in N.frame.text.text, f"then 'Prices: 3 h old': {N.frame.text.text}")
+    check(N.minutes() == 90, "the default age is 90 minutes")
+    lua.execute("EverlookAuctionsDB.reloadAfter = 45")
+    check(N.minutes() == 90, "an age that isn't a choice falls back to 90")
+
+    # the tooltip: "/reload for newer prices" only while Shift is held
+    lua, ns, fire = start()
+    G = lua.globals()
+    G.MOCK_TIME = T0 + 61 * MIN
+    show = lua.eval("""function(id)
+      local tip = { lines = {} }
+      function tip:GetOwner() return nil end
+      function tip:AddLine(l) self.lines[#self.lines + 1] = l end
+      function tip:AddDoubleLine(l, r) self.lines[#self.lines + 1] = l .. " = " .. r end
+      HOOKS[0](tip, { id = id })
+      return table.concat(tip.lines, " ;; ")
+    end""")
+    tip = show(2589)
+    check("/reload" not in tip, f"no hint without Shift: {tip}")
+    G.SHIFT = True
+    tip = show(2589)
+    check(tip.count("/reload for newer prices") == 1, f"the hint with Shift, once: {tip}")
+    G.MOCK_TIME = T0 + 20 * MIN
+    check("/reload" not in show(2589), "no hint while fresh, even with Shift")
+    check(len(G.ERRORS) == 0, f"no errors: {list(G.ERRORS.values())}")
+
+    # the auction house's bar: a quiet Reload button beside Update prices, and the feed line says newer may be ready
+    lua, ns, fire = scan_lua(SHARED_SETUP + NUDGE_SETUP)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    for name in ("SharedPrices.lua", "FeedNudge.lua"):
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    G = lua.globals()
+    bar = G.EverlookAuctionsBar
+    check(bar is not None and bar.reload is not None, "the bar has a Reload button")
+    if bar is not None and bar.reload is not None:
+        ns.shared.reset()
+        ns.feedNudge.loaded = T0
+        ns.db().houses["Test-Alliance"].scanned = T0 - 10 * 3600
+        G.MOCK_TIME = T0 + 20 * MIN
+        bar.scripts.OnUpdate(bar, 2)
+        check(not bar.reload.shown and "newer" not in bar.feed.text, f"fresh: no Reload: {bar.feed.text}")
+        G.MOCK_TIME = T0 + 61 * MIN
+        bar.scripts.OnUpdate(bar, 2)
+        check(bar.reload.shown and bar.feed.text.endswith("newer may be ready"), f"old: Reload shows: {bar.feed.text}")
+        bar.reload.scripts.OnClick(bar.reload)
+        check(G.RELOADS == 1, "the bar's Reload reloads")
+    return failures
+
+
 def reload_logged():
     """An update cut off by a reload or logout shows in /eah status's update log once, as the bar already says."""
     failures = []
@@ -2822,7 +3100,7 @@ def scan_lua(extra=""):
       local color = { 1, 1, 1 }
       ns.T = setmetatable({ places = setmetatable({}, { __index = function() return color end }) },
         { __index = function() return color end })
-      ns.UI = setmetatable({ hex = function() return "|cffffffff" end },
+      ns.UI = setmetatable({ hex = function() return "|cffffffff" end, own = function(f) return f end },
         { __index = function() return function() return CreateFrame("Frame") end end })
     end""")(ns)
     fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a) end end end")

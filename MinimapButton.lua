@@ -1,6 +1,7 @@
 -- EverlookDB Auctions: the minimap button and the Everlook Bar launcher, both a way into the main window (Hub.lua).
 --   Left-click   the main window (Home, or the page used last)
 --   Right-click  the settings (General)
+--   Shift-click  reload for newer Price Feed prices, while the small yellow dot says there may be some
 --   Drag         around the minimap's edge: on the circle of a round minimap, out to the edge of a square one
 --                (GetMinimapShape, which Everlook Bar and other minimap addons answer)
 -- The tooltip: income today and this week, how old the newest prices are. The button is our own (no LibDBIcon): a
@@ -43,13 +44,31 @@ function M.tooltip(tip)
       tip:AddDoubleLine("Prices", "none yet: open the auction house", 1, 1, 1, 0.6, 0.6, 0.6)
     end
   end
+  local stale = M.staleAge()
+  if stale then
+    tip:AddLine(("Prices %s: Shift-click to reload for newer prices"):format(ns.feedNudge.ageText(stale)), 1, 0.82, 0, true)
+  end
   tip:AddLine(" ")
   tip:AddDoubleLine("Click", "open", 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
   tip:AddDoubleLine("Right-click", "settings", 0.6, 0.6, 0.6, 0.6, 0.6, 0.6)
+  if stale then tip:AddDoubleLine("Shift-click", "reload for newer prices", 0.6, 0.6, 0.6, 0.6, 0.6, 0.6) end
+end
+
+-- How old the prices are when the Price Feed may have newer ones (FeedNudge.lua), else nil.
+function M.staleAge()
+  local N = ns.feedNudge
+  if not N then return nil end
+  local okS, age = pcall(N.stale)
+  return okS and age or nil
 end
 
 function M.click(button)
   local H = ns.hub
+  -- Shift-click: reload for the Price Feed's newer prices, only while the dot says there may be some
+  if button ~= "RightButton" and IsShiftKeyDown and IsShiftKeyDown() and M.staleAge() then
+    ns.feedNudge.reload()
+    return
+  end
   if button == "RightButton" then
     if H and H.isOpen("general") then H.close() elseif H then H.open("general") end
     return
@@ -95,6 +114,13 @@ local function make()
   border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
   border:SetPoint("TOPLEFT")
   b.border = border
+  -- the dot: the prices shown are old and the Price Feed may have newer ones (FeedNudge.lua); it travels with the
+  -- button into Everlook Bar's drawer or another collector
+  b.dot = b:CreateTexture(nil, "OVERLAY", nil, 7)
+  b.dot:SetSize(10, 10)
+  b.dot:SetPoint("TOPRIGHT", -3, -3)
+  b.dot:SetTexture("Interface\\COMMON\\Indicator-Yellow")
+  b.dot:Hide()
   b:SetScript("OnClick", function(_, which) GameTooltip:Hide(); M.click(which) end)
   b:SetScript("OnEnter", function(self)
     if self.dragging then return end
@@ -125,6 +151,11 @@ local function make()
   button = b
   M.button = b
   return b
+end
+
+-- The dot on or off (FeedNudge.lua looks every 10 seconds).
+function M.badge(on)
+  if button and button.dot then button.dot:SetShown(on and true or false) end
 end
 
 -- Shows or hides the button as the setting says, and puts it in its place.

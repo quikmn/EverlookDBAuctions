@@ -1,5 +1,10 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Fresher Price Feed prices: the EverlookDB App brings new prices about every hour, but the game only reads them when you log in or /reload. When the prices you see are over 90 minutes old, a small line under the minimap offers "Prices: 2 h old · Reload (1 s)". It only comes at a quiet moment: resting in a city or inn, or right after a mailbox, a vendor, a flight or a loading screen. Never in a fight, a dungeon or a battleground, or while you type or cast; at most once an hour, and the x keeps it away for 2 hours. Click it to reload.
+- The minimap button gets a small yellow dot while newer prices may be ready; Shift-click it to reload. At the auction house a Reload button sits next to Update prices, and item tooltips say "/reload for newer prices" while you hold Shift.
+- Settings, General: "Offer to reload for newer prices" (on) and how old prices must be first (90 minutes). In chat: `/eah reloadhint off`, `/eah reloadafter 120`.
+
 ## v0.26.0 (2026-11-24)
 - New Crafting tab at the auction house: your crafting profit list right where you buy and sell. Plan your crafts, then Buy materials walks you through buying everything they need. Right-click a recipe you've made to sell it in Quick sell. `/eah profit` opens it while you're at the auction house.
 - Crafting profit has three views at the top: Recipes I know, Easy to get (recipes you can learn now from a trainer, a vendor or the auction house, close to your skill) and All recipes (every profession, to find the best margins anywhere). Each new recipe shows how to learn it and what that costs, the skill it needs against yours, and after how many crafts it pays for itself. Tick "Only recipes on the AH now" to see the ones you can buy today, and type a price in "Recipe under" (like 5g or 2g50s) to see only recipes that cost at most that to learn (remembered per character); right-click one at the auction house to find its recipe in Buy. Easy to get and All recipes need EverlookDB Crafting.
