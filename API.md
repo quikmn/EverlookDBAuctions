@@ -32,4 +32,6 @@ end
 
 - `api.mail` (version 4): lets a mail addon tell the income ledger what it read and took from the mailbox, so every mail is counted once however it was opened. See the comments at the top of `API.lua`.
 
+- `api.inventory` (version 7): what each of your characters on this realm and faction has, and where: bags, bank, mail (with mail on its way from another of your characters), auctions, worn gear, the guild bank, and gold. One store for every EverlookDB addon. `count(item)`, `usable(item[, withAlts])`, `owned([withAlts])`, `bagsOf(name, realmID)`, `characters()`, `gold()`, `onChange(fn)`. See the comments at the top of `API.lua`.
+
 `item` is an item ID or an item link. A link carries its random-stat version ("of the Bear"), and `price` then looks up that version. With an ID, pass the version's suffix ID as `suffix`. Prices are for the player's realm and their own faction's auction house, or for the one that is open now. Pass `side` (`"Alliance"`, `"Horde"` or `"Neutral"`) to pick one. Returned tables are copies, and the API table can't be written to.

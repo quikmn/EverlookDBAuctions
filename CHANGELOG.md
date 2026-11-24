@@ -1,5 +1,11 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Your items on every character: item tooltips show how many you have and where your alts keep theirs, like "You have 52  Mara 40 (bank) · Thorn 12 (mail)", with the total on the right. Hold Shift to see every character's bags, bank, mail, auctions and worn gear. It counts the characters on this realm and faction, the mailbox, mail you sent to an alt that hasn't been picked up yet, your auctions and your guild bank (once you open it). Turn it off under Settings, Tooltips.
+- New "Where is it?" page: search everything your characters have, with the same words as Advanced search: an item's name, or `have gt 20 and name has cloth`, `char is Mara`, `place is bank`, `mail gt 0`. Each item shows who has it and where. `/eah where linen` answers in chat too. Advanced search knows the same words (`have gt 0 and price gt 1g`).
+- Home has a "Your characters" card with your gold on all of them; the Where is it? page lists each character's gold and what waits in their mail.
+- Buy this list and Crafting profit's shopping list now take off what waits in your mailbox and what your alts have in their bags, bank and mail.
+- Each alt is counted once it logs in with this version; its bank, mailbox and guild bank once you open them.
 ## v0.27.0 (2026-11-24)
 - Fresher Price Feed prices: the EverlookDB App brings new prices about every hour, but the game only reads them when you log in or /reload. When the prices you see are over 90 minutes old, a small line under the minimap offers "Prices: 2 h old · Reload (1 s)". It only comes at a quiet moment: resting in a city or inn, or right after a mailbox, a vendor, a flight or a loading screen. Never in a fight, a dungeon or a battleground, or while you type or cast; at most once an hour, and the x keeps it away for 2 hours. Click it to reload.
 - The minimap button gets a small yellow dot while newer prices may be ready; Shift-click it to reload. At the auction house a Reload button sits next to Update prices, and item tooltips say "/reload for newer prices" while you hold Shift.

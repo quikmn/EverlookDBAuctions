@@ -58,7 +58,11 @@ local function qualityColor(id)
   if c then return c.r, c.g, c.b end
   return 1, 1, 1
 end
-local function haveOf(id) return try(C_Item.GetItemCount, id, true, false, true) or 0 end
+-- materials on hand for the shopping list: bags and bank, your mail and your alts' (Buy this list counts the same)
+local function haveOf(id)
+  if ns.buyList and ns.buyList.haveOf then return ns.buyList.haveOf(id) end
+  return try(C_Item.GetItemCount, id, true, false, true) or 0
+end
 local function bagCount(id) return try(C_Item.GetItemCount, id) or 0 end   -- bags only: what you can craft with now
 local function priceOf(id)
   local it = ns.itemFor and ns.itemFor(id)

@@ -5,7 +5,8 @@
 --   General   automatic price updates, the Price Feed, the minimap button, the EverlookDB look for Blizzard's auction
 --             house, compare with what you wear only while holding Shift
 --   Selling   undercut, default duration
---   Tooltips  auction price, 30-day low and median, disenchant value, vendor price, full-stack price with Shift, the hovered stack's with Ctrl
+--   Tooltips  auction price, 30-day low and median, disenchant value, vendor price, full-stack price with Shift, the hovered stack's with Ctrl,
+--             how many your characters have (Where.lua)
 --   Logging   what the AH log keeps, loot cards, the sale celebration
 --   Disenchanting  the breakdown, your own results, the lesser essence cap, the chat line (DisenchantLog.lua)
 --   Specs and weights (UpgradesOptions.lua), Crafting (ProfitWindow.lua)
@@ -27,6 +28,7 @@ local TIP_LINES = {
   { "tipvendor", "vendor", "Vendor price, where the game doesn’t show one (quest rewards, loot, links)" },
   { "tipverdict", "verdict", "Sell on AH / Sell to vendor: how much more the better one pays (after the AH cut: 5%, 15% at a neutral one)" },
   { "tipstack", "stack", "Hold Shift for the price of a full stack, Ctrl for the stack under the mouse" },
+  { "tiphave", "have", "How many you and your alts have, and where (hold Shift for every place)" },
 }
 
 local HOURS = { 12, 24, 48 }   -- the auction house's durations 1, 2, 3
@@ -319,7 +321,7 @@ local function build()
     app:Widget(stack, "skin")
     app:Widget(stack, "compareshift")
     UI.Header(stack, "Chat commands")
-    UI.Note(stack, "/eah  this window (Home, or the page you used last)\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah feed  the Price Feed (/eah feed off turns it off)\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah prices  Advanced search, anywhere\n/eah bought, /eah forsale, /eah income, /eah loot  the AH log\n/eah profit  Crafting profit\n/eah up  Gear upgrades (/eah up help for its commands)\n/eah minimap  show or hide the minimap button\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\nKey Bindings, AddOns: a key for this window")
+    UI.Note(stack, "/eah  this window (Home, or the page you used last)\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah feed  the Price Feed (/eah feed off turns it off)\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah prices  Advanced search, anywhere\n/eah where <item>  which of your characters has it, and where\n/eah bought, /eah forsale, /eah income, /eah loot  the AH log\n/eah profit  Crafting profit\n/eah up  Gear upgrades (/eah up help for its commands)\n/eah minimap  show or hide the minimap button\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\nKey Bindings, AddOns: a key for this window")
   end, { icon = "gear" })
   app:Section("selling", "Selling", function(stack)
     UI.Header(stack, "Selling", "Quick sell's price is the cheapest live auction minus your undercut. Blizzard's own Sell tab gets the same undercut when you pick an auction in its list.")

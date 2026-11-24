@@ -19,6 +19,9 @@
 -- enchant: the enchants players put on the gear up for sale, as a list ("Fiery Weapon, Crusader"), from your last
 -- full scan: `enchant is "Fiery Weapon"`, `enchant like "*crusader*"`, `has enchant` (any). Clicking such a result
 -- picks the cheapest auction with that enchant.
+-- What you own (Inventory.lua, your characters on this realm and faction): have, mine, alts, bags, bank, mail, listed,
+-- worn, guildbank (numbers), char (who has it) and place (where): `have gt 0 and name has cloth`, `char is Mara`,
+-- `place is bank`. The same words work in /eah where and on the "Where is it?" page.
 
 local ADDON, ns = ...
 local UI, T = ns.UI, ns.T
@@ -96,6 +99,12 @@ KIND.stats = "text"   -- every stat on the item as text, e.g. "Stamina 5, Agilit
 KIND.effect = "text"  -- "Equip: ... / Use: ...": `effect has "run speed"`
 KIND.text = "text"    -- everything on the tooltip: `text has "fire damage"`, or `has "fire damage"` on its own
 KIND.enchant = "text" -- enchants on the gear up for sale: `enchant is "Fiery Weapon"`, `has enchant`
+-- What your characters on this realm have (Inventory.lua): have (all of them), mine, alts, bags, bank, mail, listed
+-- (your auctions), worn, guildbank; char (who has it, "Mara, Thorn") and place (where: "bags, mail") are lists.
+local INV = { have = true, mine = true, alts = true, bags = true, bank = true, mail = true, listed = true, worn = true,
+  guildbank = true, char = true, place = true }
+for k in pairs(INV) do KIND[k] = "number" end
+KIND.char, KIND.place = "text", "text"
 local ALIAS = {
   rarity = "quality", subtype = "type", subclass = "type", itemclass = "category", level = "reqlevel", lvl = "reqlevel",
   req = "reqlevel", reqlvl = "reqlevel", lvlreq = "reqlevel", levelreq = "reqlevel", minlevel = "reqlevel", vendor = "sell", low = "price", lowest = "price",
@@ -106,9 +115,13 @@ local ALIAS = {
   vendorprofit = "profit", flip = "profit", totalprofit = "dealprofit", dealsprofit = "dealprofit", stack_profit = "stackprofit", perstack = "stackprofit",
   effects = "effect", tooltip = "text", enchants = "enchant", enchantment = "enchant", enchanted = "enchant",
   natureres = "nature_res", shadowres = "shadow_res", arcaneres = "arcane_res", blockvalue = "block", attackpower = "ap", spellpower = "sp", heal = "healing", def = "defense",
+  owned = "have", own = "have", onalts = "alts", bag = "bags", banked = "bank", mailbox = "mail",
+  posted = "listed", onah = "listed", selling = "listed", equipped = "worn", wearing = "worn", gbank = "guildbank",
+  guild = "guildbank", who = "char", character = "char", characters = "char", toon = "char", location = "place",
+  places = "place",
 }
 -- Columns that hold a comma list ("vendor, drop"): is, has, in, startswith... compare each element, as on the site.
-local LIST = { source = true, enchant = true }
+local LIST = { source = true, enchant = true, char = true, place = true }
 -- The ways to get an item, in Data.lua's order (ns.SOURCES bits); kept here so a shorter ns.SOURCES can't make a
 -- valid word an error. Other words for them, typed only: never shown.
 local SOURCES = { "vendor", "crafted", "drop", "quest", "skinning", "pickpocket", "fishing", "herbalism", "mining",
@@ -747,6 +760,10 @@ local function missOf(r)
 end
 
 local function get(row, col)
+  if INV[col] then
+    if not ns.inventory then return KIND[col] == "text" and "" or 0 end
+    return ns.inventory.column(row.id, col)
+  end
   if STATS[col] then return statsOf(row)[col] or 0 end
   if col == "deals" then return row.dealN end
   if col == "dealprofit" then return row.dealProfit end
@@ -1080,6 +1097,49 @@ end
 
 ns.queryRun = function(text) return run(text) end
 
+-- The same language over rows of your own (Inventory.lua's "Where is it?"): the where, sort, top and count steps.
+-- Returns the rows kept (or {} after count), the count (nil without count), or nil and the error.
+function ns.queryRows(text, rows, defaultSort)
+  local okParse, steps = pcall(parse, text)
+  if not okParse then return nil, type(steps) == "table" and steps.query or tostring(steps) end
+  local out, counted, ordered = {}, nil, false
+  for _, r in ipairs(rows or {}) do out[#out + 1] = r end
+  for _, st in ipairs(steps) do if st.k == "sort" or st.keys then ordered = true end end
+  if not ordered and defaultSort then sortRows(out, defaultSort) end
+  for _, st in ipairs(steps) do
+    if st.k == "where" then
+      local kept = {}
+      for _, r in ipairs(out) do if test(r, st.e) then kept[#kept + 1] = r end end
+      out = kept
+    elseif st.k == "sort" or st.k == "top" then
+      if st.keys then sortRows(out, st.keys) end
+      if st.k == "top" then
+        local kept = {}
+        for k = 1, math.min(st.n, #out) do kept[k] = out[k] end
+        out = kept
+      end
+    elseif st.k == "count" then
+      counted = #out
+    end
+  end
+  if counted then return {}, counted end
+  return out, nil
+end
+
+-- One item as a row of the language without a scan: its details, Data.lua's facts and the saved price (nil while the
+-- game is still loading the item).
+function ns.queryItemRow(id)
+  local c = itemInfo(id)
+  if not c then return nil end
+  local d = ns.ITEMDATA and ns.ITEMDATA[id] or EMPTY_DATA
+  local it = ns.itemFor and ns.itemFor(id)
+  return { key = id .. ":0", id = id, suffix = 0, icon = c[8], name = c[1], quality = QUALITY[(c[2] or 1) + 1],
+    ilvl = c[3], reqlevel = c[4], category = c[5], type = c[6], slot = EQUIP[c[7] or ""] or "none", stack = c[10],
+    sell = c[9], price = it and it[1] or nil, qty = it and it[2] or nil, auctions = it and it[3] or nil,
+    quest = V.isQuest(id, c[5]), source = sourceText(d[1]), profession = ns.PROFESSIONS and ns.PROFESSIONS[d[2] or 0] or "",
+    skill = d[3] or 0, slots = d[4] or 0, droprate = d[5] or 0, enchant = "" }
+end
+
 -- After a result's name: the enchants the search asked for with their price ("  Fiery Weapon 12g"), else the
 -- enchants seen on it ("  + Crusader, 2 more"); nothing for gear nobody enchanted.
 function Q.enchantTail(r)
@@ -1345,6 +1405,7 @@ local GUIDE = table.concat({
   "slot: head, neck, shoulder, back, chest, robe, shirt, tabard, wrist, hands, waist, legs, feet, finger, trinket, onehand, twohand, mainhand, offhand, holdable, shield, ranged, wand, thrown, relic, ammo, quiver, bag",
   "price (the cheapest buyout for one), median (the usual price: half the auctions cheaper, half dearer), qty (how many are up), auctions, sell (what a vendor pays), stack (how many fit in a stack)",
   "slots (bag size), profession, skill, droprate (best drop %)",
+  "What your characters have: " .. C_INFO .. "have|r (all of them), mine, alts, bags, bank, mail, listed, worn, guildbank, " .. C_INFO .. "char|r (who) and " .. C_INFO .. "place|r (where):  " .. C_GOOD .. "have gt 0 and price gt 1g|r  (/eah where searches only what you own)",
   C_INFO .. "source|r (or " .. C_INFO .. "from|r): every way you get it: vendor, crafted, drop, quest, skinning, pickpocket, fishing, herbalism, mining, object, world drop, container, disenchant. " .. C_GOOD .. "source is vendor|r finds every item vendors sell, also ones you can get other ways too:  " .. C_GOOD .. "source is vendor and profession is tailoring|r   " .. C_GOOD .. "source has \"world drop\"|r",
   "Money: 5g, 50s, 1g50s, 1g 50s, 2.5g, 20c. Or another column: " .. C_GOOD .. "price lt vendor|r",
   "Quality also takes colours (grey, white, green, blue, purple, orange); slot takes cloak, ring, helm, gloves, boots, belt, 1h, 2h.",

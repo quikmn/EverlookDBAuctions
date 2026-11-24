@@ -44,12 +44,20 @@ local function plain(text) return (tostring(text or ""):gsub("|", "||")) end
 ---------------------------------------------------------------------------------------------------------------------
 -- The logic (no frames; tests/run.py uses these directly)
 
--- What you have of an item: bags and bank, plus your alts' when EverlookDB Crafting knows them and counts them.
+-- What you have of an item: bags and bank (the game's count, right now), what waits in your mail, and your alts'
+-- bags, bank and mail (Inventory.lua), unless EverlookDB Crafting's "Don't count my alts' materials" is on.
 function W.haveOf(id)
   local n = try(C_Item and C_Item.GetItemCount, id, true, false, true) or 0
   local api, cdb = rawget(_G, "EverlookCraftAPI"), rawget(_G, "EverlookCraftDB")
   local noAlts = type(cdb) == "table" and type(cdb.settings) == "table" and cdb.settings.noAlts
-  if api and type(api.stock) == "function" and not noAlts then
+  local I = ns.inventory
+  if I and I.count and I.store() then
+    local r = I.count(id)
+    for _, e in ipairs(r and r.chars or {}) do
+      if e.me then n = n + e.mail
+      elseif not noAlts then n = n + e.bags + e.bank + e.mail end
+    end
+  elseif api and type(api.stock) == "function" and not noAlts then
     local s = try(api.stock, id)
     if type(s) == "table" and tonumber(s.alts) then n = n + s.alts end
   end

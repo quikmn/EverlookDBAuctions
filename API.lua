@@ -39,6 +39,22 @@
 --     api.mail.classifier()               the shared classifier (LibStub "EverlookMailClassify-1"), newest copy
 --     All three return quietly (false, never an error) when the ledger is off or not loaded yet.
 --
+--   api.inventory                         (version 7) what every character of the account has, and where: one store
+--                                         for every EverlookDB addon (Inventory.lua). Only the characters that share
+--                                         this auction house (this realm and faction) are counted. Copies, as always.
+--     .count(item)                        { total (your characters), mine, alts, guild (guild bank), chars = { { key,
+--                                         name, class, me, total, bags, bank, mail, listed, worn } } (you first, then
+--                                         the most), guilds = { { name, n } } }; nil for no item
+--     .usable(item[, withAlts])           how many count for crafting and buying: bags, bank and mail (with mail on
+--                                         its way from another of your characters); your alts' too unless withAlts
+--                                         is false
+--     .owned([withAlts])                  { [item] = n } of the same, for every item
+--     .bagsOf(name, realmID)              that character's bags as last seen: { [item] = n }, or nil when unknown
+--     .characters()                       { { key, name, class, me, money, at } } (you first)
+--     .gold()                             gold on all of them (with what waits in their mail), and the list: { { name,
+--                                         class, me, money, mail } }
+--     .onChange(fn)                       fn() after the counts change (a batch of reads: never per frame)
+--
 -- `item` is an item ID or an item link (a link carries its random-stat version, "of the Bear", so price() then
 -- looks that version up; with an ID, pass the version's suffix ID as the second argument). Prices are for the player's
 -- realm and their own faction's auction house, or the one that is open right now; `side` ("Alliance", "Horde" or
@@ -46,7 +62,7 @@
 -- returned are copies. addShoppingList is the one call that writes: it only adds or replaces a list.
 local _, ns = ...
 
-local api = { version = 6 }
+local api = { version = 7 }
 
 local function idOf(item)
   if type(item) == "number" then return item end
@@ -110,6 +126,42 @@ api.mail = setmetatable({}, {
     classifier = function() return (LibStub and LibStub("EverlookMailClassify-1", true)) end,
   },
   __newindex = function() error("EverlookDBAuctionsAPI.mail is read-only", 2) end,
+  __metatable = false,
+})
+
+-- version 7: the inventory of your characters (Inventory.lua does the work)
+local function copy(t)
+  if type(t) ~= "table" then return t end
+  local o = {}
+  for k, v in pairs(t) do o[k] = copy(v) end
+  return o
+end
+local function inv() return ns.inventory and ns.inventory.store() and ns.inventory or nil end
+api.inventory = setmetatable({}, {
+  __index = {
+    version = 1,
+    count = function(item) local I = inv(); local id = idOf(item); return I and id and copy(I.count(id)) or nil end,
+    usable = function(item, withAlts) local I = inv(); local id = idOf(item); return I and id and I.usable(id, withAlts) or 0 end,
+    owned = function(withAlts) local I = inv(); return I and I.owned(withAlts) or {} end,
+    bagsOf = function(name, realmID)
+      local I = inv()
+      local key = I and I.keyOf(name, nil, realmID)
+      local rec = key and I.store().chars[key]
+      if type(rec) ~= "table" or not rec.bagsAt and not rec.bags then return nil end
+      return copy(rec.bags or {})
+    end,
+    characters = function()
+      local I = inv()
+      local out = {}
+      for _, c in ipairs(I and I.chars() or {}) do
+        out[#out + 1] = { key = c.key, name = c.rec.name, class = c.rec.class, me = c.me, money = c.rec.money, at = c.rec.at }
+      end
+      return out
+    end,
+    gold = function() local I = inv(); if not I then return 0, {} end; local t, l = I.gold(); return t, copy(l) end,
+    onChange = function(fn) if ns.inventory then ns.inventory.onChange(fn) end end,
+  },
+  __newindex = function() error("EverlookDBAuctionsAPI.inventory is read-only", 2) end,
   __metatable = false,
 })
 

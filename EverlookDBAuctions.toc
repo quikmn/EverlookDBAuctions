@@ -46,12 +46,14 @@ Crafting.lua
 UpgradesData.lua
 Upgrades.lua
 UpgradesChars.lua
+Inventory.lua
 UpgradesTab.lua
 UpgradesExtras.lua
 UpgradesOptions.lua
 Options.lua
 ProfitWindow.lua
 Hub.lua
+Where.lua
 MinimapButton.lua
 FeedNudge.lua
 API.lua

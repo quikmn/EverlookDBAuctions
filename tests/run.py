@@ -144,6 +144,9 @@ def main() -> int:
     failures += list_import()
     failures += buy_list()
     failures += reload_nudge()
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from inventory import inventory
+    failures += inventory(source_of, VENDOR_SETUP)
 
     if failures:
         for f in failures:
@@ -4689,7 +4692,7 @@ def profit_api():
         if not cond:
             failures.append("profit api: " + what)
 
-    check(api.version == 6, "version 6")
+    check(api.version == 7, "version 7")
     ok_add, new = api.addShoppingList("Linen Bags", lua.eval("{ { 2589, 24 }, { 2320, 12 } }"))
     check(ok_add is True and new is True and len(DB.lists) == 1 and DB.lists[1].want['name is "Linen Cloth"'] == 24,
           "addShoppingList saves a list")
@@ -6591,7 +6594,7 @@ def ledger():
 
     # --- the AH API door ----------------------------------------------------------------------------------------------
     api = G.EverlookDBAuctionsAPI
-    check(api.version == 6 and api.mail.version == 1 and lua.eval("rawequal")(api.mail.classifier(), C), "API version 6 with mail")
+    check(api.version == 7 and api.mail.version == 1 and lua.eval("rawequal")(api.mail.classifier(), C), "API version 7 with mail")
     check(api.mail.scanned(lua.eval("{ { cat = 'player', subject = 'x', sender = 'y', exp = 1 } }")) is True, "scanned answers")
     check(api.mail.taken(lua.eval("{ }"), "money") is True, "taken ignores a mail without a category quietly")
     okW = lua.eval("function(a) return (pcall(function() a.mail.version = 2 end)) end")(api)

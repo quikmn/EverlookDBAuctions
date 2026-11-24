@@ -357,7 +357,8 @@ end
 
 local function buildHome(holder)
   home.frame = holder
-  local head = H.head(holder, "home", "Home", "Everything EverlookDB Auctions keeps for you, one click from here.")
+  local head = H.head(holder, "home", "Home",
+    "Everything EverlookDB Auctions keeps for you. At the auction house: the Quick sell, Shopping, Upgrades and Advanced search tabs.")
   home.head = head
 
   -- Prices anywhere: the remote auction house, a search box on Home
@@ -391,7 +392,7 @@ local function buildHome(holder)
     { "favor", "star", "Merchant's Favor", function() H.open("favor") end },
     { "gear", "sword", "Gear upgrades", function() H.open("gear") end },
     { "crafts", "hammer", "Crafting profit", function() H.open("crafts") end },
-    { "ah", "grid", "At the auction house", nil },
+    { "chars", "user", "Your characters", function() H.open("where") end },
   }
   home.cards = {}
   for i, d in ipairs(cards) do
@@ -503,10 +504,11 @@ local function fillHome()
     home.cards.crafts:Set("Recipes you know that sell for more than they cost", "Open each profession window once so the addon knows them")
   end
 
-  -- the auction house's own tabs
-  local atAH = _G.AuctionHouseFrame and AuctionHouseFrame:IsShown()
-  home.cards.ah:Set("Quick sell, Shopping, Upgrades, Advanced search",
-    atAH and "They are the tabs at the bottom of the auction house" or "Tabs of their own, at the auction house")
+  -- your characters: gold on all of them (Where.lua), and the "Where is it?" search
+  local l1g, l2g = nil, nil
+  if ns.where and ns.where.goldLines then l1g, l2g = ns.where.goldLines(3) end
+  home.cards.chars:Set(l1g and ("Gold: " .. l1g) or "Gold and items on every character",
+    l2g or "Where is it? finds any item on any of them")
 end
 H.fillHome = fillHome
 
@@ -650,6 +652,8 @@ function H.addPages(a)
   page("favor", buildFavor, function() fillFavor() end)
   -- Disenchanting (DisenchantLog.lua): a page of cards like the settings pages, listed with the addon's own pages
   if ns.deLog and ns.deLog.page then ns.deLog.page(a, EUI) end
+  -- Where is it? (Where.lua): what your characters have, and their gold
+  if ns.where and ns.where.page then ns.where.page(a, EUI) end
   -- open on the page used last (never Gear upgrades by itself)
   local d = db()
   local known = {}
