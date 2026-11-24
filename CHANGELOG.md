@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.30.0 (2026-11-25)
 - New: Sell all. The Sell all button on Quick sell lines up everything in your bags and posts it one click at a time. One button says what comes next, like "Post 20 Linen Cloth · 12s each (3 of 14)": each click posts one at the price its rule picks and moves on. Each item says why it gets its price (just under the cheapest, your normal price, or kept at your lowest price), Skip leaves one out for this visit, and a line says what your alts have that you could mail over and sell.
 - Cancel undercut in Sell all: your auctions someone undercut, most undercut first, "Cancel Silk Cloth · undercut by 5s (1 of 4)", one click per cancel. An auction stays up when posting it again would go under your lowest price.
 - Sell rules (`/eah rules`): with no setup everything is posted just under the cheapest auction and never under what a vendor pays plus the deposit. Add your own rules for some items (a search like `name has cloth`) with their lowest price, the price when nobody else sells (formulas like `80% of median` work), the undercut, how many to keep in your bags, at most how many up at once, how many per post, the duration, and what to do when the price is too low: don't post, post at the lowest price, or leave it for a vendor.
