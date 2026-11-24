@@ -23,6 +23,9 @@ def source_of(name):
         for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua"):
             libs += "(function(...) " + (ROOT / lib).read_text(encoding="utf-8") + chr(10) + "end)(...);" + chr(10)
         text = libs + text
+    if str(name) == "Search.lua":
+        # Formula.lua comes right before it in the TOC: the price formulas the search compiles
+        text = "(function(...) " + (ROOT / "Formula.lua").read_text(encoding="utf-8") + chr(10) + "end)(...);" + chr(10) + text
     return text
 
 
@@ -105,6 +108,7 @@ def main() -> int:
     failures += scroll_bars()
     failures += below_vendor()
     failures += query_language()
+    failures += price_formulas()
     failures += search_queue()
     failures += undercut()
     failures += quick_sell()
@@ -474,6 +478,95 @@ def below_vendor():
     check(V.flip(2589, 10) == 3 and V.flip(2589, 13) is None, "flip: profit when below, nothing when not")
     check(V.flip(1000, 0) is None and V.flip(1000, 1) is None, "flip: sell price 0 never counts")
     check(V.flip(5000, 5) is None, "flip: quest items never count")
+    return failures
+
+
+def price_formulas():
+    """Price formulas (Formula.lua and Search.lua) against the fixture EverlookDB.com's tests use too
+    (tests/formula_fixture.json, a copy of Quarry's crates/core/src/formula_fixture.json): the same values, the same
+    rows kept, the same order, the same refusals."""
+    import json
+    fx = json.loads((ROOT / "tests" / "formula_fixture.json").read_text(encoding="utf-8"))
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Search.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("price formulas: " + what)
+
+    my = chr(10).join(f"{n} = {f}" for n, f in fx["my"])
+    lua.globals().MY_TEXT = my
+    lua.execute("")
+    run("local ns = ...; ns.myPricesText = function() return MY_TEXT end", "my", ns)
+    rows = []
+    for r in fx["rows"]:
+        t = lua.table(id=r["id"], name=r["name"], key=f'{r["id"]}:0', stack=r["stack"], pcRun=True,
+                      sell=r["vendor"], price=r["price"], median=r["median"], low30=r["low30"],
+                      median30=r["median30"], craftcost=r["craftcost"], devalue=r["devalue"])
+        rows.append(t)
+    lrows = lua.table(*rows)
+
+    def ids(q):
+        out, err = ns.queryRows(q, lrows)
+        if out is None:
+            return "error: " + str(err)
+        return [out[i].id for i in range(1, len(out) + 1)]
+
+    value = lua.eval("""function(ns, text, row)
+      local f = ns.formula.parse(text)
+      local ok, fn = pcall(ns.formula.compile, f, function(name)
+        local l = name:lower()
+        local my = ns.myPriceNames()[l]
+        if my then return my end
+        local col = ({ now = "price", typical = "median", vendor = "sell" })[l] or l
+        return function(r)
+          local v = r[col]
+          if v == nil or (col ~= "stack" and v <= 0) then return nil end
+          return v
+        end
+      end)
+      if not ok then error(fn) end
+      return fn(row)
+    end""")
+    for case in fx["values"]:
+        got = [value(ns, case["f"], r) for r in rows]
+        same = all((a is None and b is None) or (a is not None and b is not None and abs(a - b) < 1e-9)
+                   for a, b in zip(got, case["want"]))
+        check(same, f'{case["f"]}: {got}, want {case["want"]}')
+    for case in fx["where"]:
+        got = ids(case["q"])
+        check(got == case["want"], f'where {case["q"]}: {got}, want {case["want"]}')
+    for case in fx["sort"]:
+        got = ids(case["q"])
+        check(got == case["want"], f'{case["q"]}: {got}, want {case["want"]}')
+    for q in fx["errors"]:
+        got = ids(q)
+        check(isinstance(got, str) and got.startswith("error: "), f"{q} must be refused, got {got}")
+    # the refusals say what to do, in plain words
+    check("60% of what?" in ids("price lt 60% median"), "a % without of says so")
+    check("min, max or first" in ids("price lt avg(price)"), "an unknown function names the ones there are")
+    check("uses itself" in ids("price lt loop1"), "My prices that use each other in a circle say so")
+    check("missing after -" in ids("price lt (median - )"), "a sum with a side missing says so")
+    # the plain ways keep working beside formulas
+    check(ids("name has cloth sort by price") == [1, 2], "a name search with a sort")
+    got = ids("price lt 60% of median sort by median - price desc")
+    check(got == [5, 1], f"the Guide's example: a formula, then a sort by one: {got}")
+    got = ids("price lt devalue - 50s and avgbuy gt 0")
+    check(got == [], f"avgbuy unknown in the fixture: {got}")
+    check(ids("price lt vendor sort by -price") == [5], "price lt vendor with sort by -price")
+    # My prices: checked before they are saved
+    okSet, why = ns.formula.parseMy("myfloor = max(vendor, ", None)
+    check(okSet is None and "myfloor:" in why, f"a broken My price is refused: {why}")
+    okSet, why = ns.formula.parseMy("max = 5g", None)
+    check(okSet is None and "word of the query language" in why, f"a My price can't be called max: {why}")
+    two = lua.eval("function(ns) local t, why = ns.formula.parseMy('a = 1g; b = a * 2'); return t and #t or why end")(ns)
+    check(two == 2, f"two My prices separated by ;: {two}")
     return failures
 
 
@@ -6655,6 +6748,8 @@ def list_import():
       db.itemInfo[2320] = { "Coarse Thread", 1, 10, 0, "Trade Goods", "Parts", "", 1, 2, 20 }
       ns.itemInfo = function(id) local c = db.itemInfo[id]; if type(c) == "string" then return { c:match("([^^]*)$") } end return c end
     """)
+    run(source_of("Formula.lua"), "Formula.lua", "EverlookDBAuctions", ns)
+    run("local ns = ...; ns.myPriceNames = function() return { myfloor = {} } end", "my", ns)
     run(source_of("ListImport.lua"), "ListImport.lua", "EverlookDBAuctions", ns)
     I = ns.listImport
     failures = []
@@ -6693,6 +6788,8 @@ def list_import():
         "12 Coarse Thread (max 1g 50s)": {"name": "Coarse Thread", "n": 12, "max": 15000},
         "Light Leather x60 under 30s": {"name": "Light Leather", "n": 60, "max": 3000},
         "60 Light Leather max 25": {"name": "Light Leather", "n": 60, "maxBad": True},
+        "60 Light Leather max 80% of median": {"name": "Light Leather", "n": 60, "max": "80% of median"},
+        "60 Light Leather max myfloor": {"name": "Light Leather", "n": 60, "max": "myfloor"},
         "Box 60": {"name": "Box", "n": 60},
         "Light Leather": {"name": "Light Leather"},
         "# Bags": {"header": "Bags"},

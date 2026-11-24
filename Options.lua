@@ -66,6 +66,19 @@ local function build()
     end,
     after = function() if ns.undercutChanged then ns.undercutChanged() end end,
   })
+  -- My prices: price formulas under a name, for searches and shopping lists (Formula.lua, Search.lua)
+  app:Setting({
+    key = "myprices", type = "string", label = "My prices", keywords = { "formula", "price", "myfloor", "max price", "shopping", "search", "low30", "median" },
+    width = 340, placeholder = "myfloor = max(vendor * 1.5, 80% of low30)",
+    desc = "Price formulas under a name, separated by ; (myfloor = max(vendor * 1.5, 80% of low30); cheap = 60% of median). Use the name in Advanced search (price lt myfloor, sort by myfloor) or as a shopping list's most to pay.",
+    example = "myfloor = max(vendor * 1.5, 80% of low30)",
+    get = function() return ns.myPricesText and (ns.myPricesText() or ""):gsub("%s*\n%s*", "; ") or "" end,
+    set = function(v)
+      if not ns.setMyPrices then return end
+      local okSet, why = ns.setMyPrices(v)
+      if not okSet then app:Print("My prices not saved: " .. why) end
+    end,
+  })
   app:Setting({
     key = "duration", type = "choice", label = "Default duration", keywords = { "time", "hours", "length", "posting" }, width = 160,
     desc = "For items you haven't posted before; the others keep the duration you used last.",
@@ -271,6 +284,15 @@ local function build()
   end, { "paste" })
   -- "/eah undercut 1s" keeps its own reply (it names the step); "/eah set undercut 1s" works as for any setting
   app:Command("undercut", "undercut", "", function(rest) ns.slash("undercut " .. rest) end).hidden = true
+  app:Command("myprices", "myprices [name = formula; ...]", "your price formulas, like myfloor = max(vendor * 1.5, 80% of low30)", function(rest)
+    rest = (rest or ""):match("^%s*(.-)%s*$")
+    if rest ~= "" then
+      local okSet, why = ns.setMyPrices(rest)
+      if not okSet then app:Print("My prices not saved: " .. why) return end
+    end
+    local text = ns.myPricesText() or ""
+    app:Print(text ~= "" and ("My prices: " .. text:gsub("%s*\n%s*", "; ")) or "No My prices yet. e.g. /eah myprices myfloor = max(vendor * 1.5, 80% of low30)")
+  end, { "myprice", "formulas" })
   -- for bug reports and testing: they work, but help doesn't list them
   app:Command("test", "test", "reload after every full scan, so it is saved at once", function()
     if ns.toggleTestMode then ns.toggleTestMode() end
@@ -321,12 +343,14 @@ local function build()
     app:Widget(stack, "skin")
     app:Widget(stack, "compareshift")
     UI.Header(stack, "Chat commands")
-    UI.Note(stack, "/eah  this window (Home, or the page you used last)\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah feed  the Price Feed (/eah feed off turns it off)\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah prices  Advanced search, anywhere\n/eah where <item>  which of your characters has it, and where\n/eah bought, /eah forsale, /eah income, /eah loot  the AH log\n/eah profit  Crafting profit\n/eah up  Gear upgrades (/eah up help for its commands)\n/eah minimap  show or hide the minimap button\n/eah run <list>  run a shopping list\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\nKey Bindings, AddOns: a key for this window")
+    UI.Note(stack, "/eah  this window (Home, or the page you used last)\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah feed  the Price Feed (/eah feed off turns it off)\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah prices  Advanced search, anywhere\n/eah where <item>  which of your characters has it, and where\n/eah bought, /eah forsale, /eah income, /eah loot  the AH log\n/eah profit  Crafting profit\n/eah up  Gear upgrades (/eah up help for its commands)\n/eah minimap  show or hide the minimap button\n/eah run <list>  run a shopping list\n/eah myprices  your price formulas\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\nKey Bindings, AddOns: a key for this window")
   end, { icon = "gear" })
   app:Section("selling", "Selling", function(stack)
     UI.Header(stack, "Selling", "Quick sell's price is the cheapest live auction minus your undercut. Blizzard's own Sell tab gets the same undercut when you pick an auction in its list.")
     app:Widget(stack, "undercut")
     app:Widget(stack, "duration")
+    UI.Header(stack, "My prices", "Price formulas under a name: price lt myfloor in Advanced search, or myfloor as a shopping list's most to pay. Prices: price, median, low30, median30, vendor, craftcost, devalue (disenchanting), avgbuy and avgsell (your own purchases and sales); + - * /, min, max, first, 5g, 80% of median.")
+    app:Widget(stack, "myprices")
   end, { icon = "share" })
   app:Section("tooltips", "Tooltips", function(stack)
     UI.Header(stack, "Tooltips", "Lines added to item tooltips: labels left, prices right with their coins in line. Every price says how old it is; prices over a day old are grey.")

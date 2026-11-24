@@ -29,6 +29,7 @@ Vendor.lua
 CommodityNote.lua
 AHQuery.lua
 Sell.lua
+Formula.lua
 Search.lua
 ListImport.lua
 Shopping.lua

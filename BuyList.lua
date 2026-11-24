@@ -84,7 +84,16 @@ function W.entries(l, idOf)
     local name = q:match('^name is "(.*)"$')
     if want and want > 0 and name then
       local id = l.items and l.items[q] or (idOf and idOf(name))
-      if id then out[#out + 1] = { q = q, id = id, name = name, max = l.max and l.max[q] } end
+      if id then
+        local max, maxText = l.max and l.max[q], nil
+        -- a price formula ("80% of median"): worked out for this item now; one that isn't known pays nothing
+        if type(max) == "string" then
+          maxText = max
+          max = ns.formulaFor and ns.formulaFor(max, id)
+          max = max and math.floor(max) or 0
+        end
+        out[#out + 1] = { q = q, id = id, name = name, max = max, maxText = maxText }
+      end
     end
   end
   return out
@@ -233,7 +242,7 @@ function ask(i)
     local need, want = W.need(r.list, e.q, have)
     if need > 0 then
       r.i, r.step = i, "ask"
-      r.cur = { e = e, need = need, want = want, have = have, max = e.max, n = 0, cost = 0, requotes = 0 }
+      r.cur = { e = e, need = need, want = want, have = have, max = e.max, maxText = e.maxText, n = 0, cost = 0, requotes = 0 }
       render()
       return
     end
@@ -496,15 +505,21 @@ function W.setMax(text)
   if not c then return end
   text = tostring(text or ""):match("^%s*(.-)%s*$")
   local m = (text ~= "" and text:lower() ~= "any") and ns.listImport.money(text) or nil
+  local formula
   if text ~= "" and text:lower() ~= "any" and not m then
-    setStatus("Type a price like 25s or 1g 50s (or leave it empty for any price).", T.bad)
-    render()
-    return
+    -- a price formula: 80% of median, max(vendor, low30), myfloor
+    local v, why = ns.formulaFor and ns.formulaFor(text, c.e.id)
+    if why then
+      setStatus("Type a price like 25s or 1g 50s, or a price formula like 80% of median (empty: any price). " .. why, T.bad)
+      render()
+      return
+    end
+    formula, m = text, v and math.floor(v) or 0
   end
-  c.max = m
+  c.max, c.maxText = m, formula
   local l = run.list
   l.max = l.max or {}
-  l.max[c.e.q] = m
+  l.max[c.e.q] = formula or m
   if run.step == "plan" and c.rows and not c.pending then makePlan() else render() end
 end
 
@@ -704,11 +719,11 @@ local function makeFrame()
 
   f.maxLabel = UI.label(f, "MAX EACH")
   f.maxLabel:SetPoint("BOTTOMLEFT", 12, 82)
-  f.max = UI.input(f, 90, 22, { hint = "any price", max = 16 })
+  f.max = UI.input(f, 90, 22, { hint = "any price", max = 60 })
   f.max:SetPoint("LEFT", f.maxLabel, "RIGHT", 8, 0)
   f.max:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
   f.max:HookScript("OnEditFocusLost", function(self) W.setMax(self:GetText()) end)
-  UI.tip(f.max, "The most to pay for one", "Like 25s or 1g 50s. Empty: any price. Saved in the list.")
+  UI.tip(f.max, "The most to pay for one", "Like 25s or 1g 50s, or a price formula like 80% of median or one of your My prices (myfloor). Empty: any price. Saved in the list.")
 
   f.status = UI.text(f, "dim")
   f.status:SetPoint("BOTTOMLEFT", 12, 44)
@@ -776,7 +791,13 @@ function render()
     showMax = r.step == "ask" or r.step == "plan"
     if r.step == "ask" then
       go:SetText("Yes")
-      if c.max then body[#body + 1] = ("Paying at most %s each."):format(money(c.max)) end
+      if c.maxText and c.max == 0 then
+        body[#body + 1] = ("Paying at most %s each: not known for this item yet, so nothing is bought."):format(c.maxText)
+      elseif c.maxText then
+        body[#body + 1] = ("Paying at most %s each (%s)."):format(money(c.max), c.maxText)
+      elseif c.max then
+        body[#body + 1] = ("Paying at most %s each."):format(money(c.max))
+      end
     elseif r.step == "search" then
       body[#body + 1] = "Looking at the auctions..."
       go:SetText("Looking...")
@@ -829,7 +850,7 @@ function render()
   f.maxLabel:SetShown(showMax)
   f.max:SetShown(showMax)
   if showMax and not f.max:HasFocus() then
-    f.max:SetText(c and c.max and ns.listImport.moneyText(c.max) or "")
+    f.max:SetText(c and (c.maxText or c.max and ns.listImport.moneyText(c.max)) or "")
   end
   f.status:SetText(r.status or "")
   f.status:SetTextColor(unpack(r.statusColor or T.dim))

@@ -93,6 +93,10 @@ local KIND = {   -- text, number, enum or money
   slots = "number", skill = "number", profession = "text", source = "text", droprate = "number",
   profit = "money", stackprofit = "money",
   deals = "number", dealprofit = "money",   -- below vendor: auctions under vendor price, and what they all make
+  -- prices for price formulas, as on EverlookDB.com (Formula.lua): the lowest and the middle daily low of the last 30
+  -- days, what the materials cost (Data.lua's recipes), what disenchanting it is worth, and from your own ledger what
+  -- you paid for one and got for one on average
+  low30 = "money", median30 = "money", craftcost = "money", devalue = "money", avgbuy = "money", avgsell = "money",
 }
 for k in pairs(STATS) do KIND[k] = "number" end
 KIND.stats = "text"   -- every stat on the item as text, e.g. "Stamina 5, Agility 3": `stats has agility`
@@ -118,7 +122,7 @@ local ALIAS = {
   owned = "have", own = "have", onalts = "alts", bag = "bags", banked = "bank", mailbox = "mail",
   posted = "listed", onah = "listed", selling = "listed", equipped = "worn", wearing = "worn", gbank = "guildbank",
   guild = "guildbank", who = "char", character = "char", characters = "char", toon = "char", location = "place",
-  places = "place",
+  places = "place", now = "price", disenchant = "devalue", craft = "craftcost",
 }
 -- Columns that hold a comma list ("vendor, drop"): is, has, in, startswith... compare each element, as on the site.
 local LIST = { source = true, enchant = true, char = true, place = true }
@@ -142,6 +146,13 @@ local function column(word)
   return KIND[word] and word or nil
 end
 
+-- Price formulas (Formula.lua): a name in a formula is a My price, else a number or money column. Set below, after
+-- get(), as resolveName(name) -> function(row) or a parsed My price.
+local F = ns.formula
+local resolveName
+local function compileFormula(f) return F.compile(f, resolveName) end
+local NUMERIC_OP = { lt = true, le = true, gt = true, ge = true }
+
 ---------------------------------------------------------------------------------------------------------------------
 -- Tokens and parsing
 
@@ -153,18 +164,18 @@ local function tokenize(s)
       i = i + 1
     elseif c == '"' or c == "'" then
       local j = s:find(c, i + 1, true) or (n + 1)
-      out[#out + 1] = { t = "str", v = s:sub(i + 1, j - 1) }
+      out[#out + 1] = { t = "str", v = s:sub(i + 1, j - 1), s = i, e = j + 1 }
       i = j + 1
     elseif s:sub(i, i + 1) == ".." then
-      out[#out + 1] = { t = "op", v = ".." }; i = i + 2
+      out[#out + 1] = { t = "op", v = "..", s = i, e = i + 2 }; i = i + 2
     elseif s:sub(i, i + 1):match("^[<>!=]=$") then
-      out[#out + 1] = { t = "op", v = s:sub(i, i + 1) }; i = i + 2
+      out[#out + 1] = { t = "op", v = s:sub(i, i + 1), s = i, e = i + 2 }; i = i + 2
     elseif c:match("[|(),<>!=]") then
-      out[#out + 1] = { t = "op", v = c }; i = i + 1
+      out[#out + 1] = { t = "op", v = c, s = i, e = i + 1 }; i = i + 1
     else
       local j = i
       while j <= n and not s:sub(j, j):match("[%s|(),<>!=\"']") and s:sub(j, j + 1) ~= ".." do j = j + 1 end
-      out[#out + 1] = { t = "word", v = s:sub(i, j - 1) }
+      out[#out + 1] = { t = "word", v = s:sub(i, j - 1), s = i, e = j }
       i = j
     end
   end
@@ -207,6 +218,82 @@ function Parser:isOp(v, o) local t = self:peek(o); return t and t.t == "op" and 
 function Parser:fail(msg) error({ query = msg }, 0) end
 
 local EG = "type has wand and reqlevel le 29 sort by price"   -- the example most errors end with
+
+-- A price formula at token k (default: the next one): the formula, the token after it, and whether it ends inside a
+-- token ("median-x"); nil when none starts there. Raises the formula's mistake.
+function Parser:formulaAt(k)
+  k = k or self.pos
+  local t = self.toks[k]
+  if not t then return nil end
+  local f, stop = F.parseAt(self.src, t.s)
+  if not f then return nil end
+  while self.toks[k] and self.toks[k].e <= stop do k = k + 1 end
+  local nt = self.toks[k]
+  return f, k, nt ~= nil and nt.s < stop
+end
+
+-- A My price's name (not also a column)
+local function myName(f)
+  return f.k == "name" and not column(f.v) and ns.myPriceNames and ns.myPriceNames()[f.v:lower()] ~= nil
+end
+-- Just a number, money or a column: the plain value the comparison reads itself (price lt vendor, price lt 1g 50s)
+local function plainValue(f)
+  return (F.isPlain(f) or f.k == "money") and not myName(f)
+end
+
+-- "(head, chest)": a list in parentheses, not a formula
+function Parser:listAhead()
+  if not self:isOp("(") then return false end
+  local depth = 0
+  for k = self.pos, #self.toks do
+    local t = self.toks[k]
+    if t.t == "op" and t.v == "(" then depth = depth + 1
+    elseif t.t == "op" and t.v == ")" then depth = depth - 1; if depth == 0 then return false end
+    elseif t.t == "op" and t.v == "," and depth == 1 then return true end
+  end
+  return false
+end
+
+-- The value side of a comparison as a price formula (compiled), or nil when it is a plain value the old way reads.
+-- force: a formula is the only thing that can come (the left side was one).
+function Parser:calcValue(op, force)
+  local t = self:peek()
+  if not t or self:listAhead() then return nil end
+  local ok, f, k, straddle = pcall(self.formulaAt, self)
+  if not ok then
+    if NUMERIC_OP[op] or op == "between" or force then error(f, 0) end
+    return nil
+  end
+  if not f then return nil end
+  if not force then
+    if plainValue(f) then return nil end
+    if (op == "eq" or op == "ne") and not F.hasMath(f) then return nil end
+  end
+  if straddle then self:fail("this can't be read in the price formula; put spaces around + - * /, e.g. price lt devalue - 50s") end
+  self.pos = k
+  return compileFormula(f)
+end
+
+-- A price formula on the left of a comparison: "median - price gt 1g", "(median - price) / median ge 50% of 1",
+-- "myfloor gt 5g". nil when what comes isn't one.
+local CALC_OP = { lt = true, le = true, gt = true, ge = true, eq = true, ne = true }
+function Parser:calcLeft()
+  local t = self:peek()
+  if not t or not (t.t == "word" or (t.t == "op" and t.v == "(")) then return nil end
+  local ok, f, k, straddle = pcall(self.formulaAt, self)
+  if not ok or not f or straddle or (plainValue(f) and not myName(f)) then return nil end
+  if F.isPlain(f) and not myName(f) then return nil end
+  local nt = self.toks[k]
+  local op = nt and nt.t ~= "str" and OPS[nt.v:lower()]
+  if not (op and CALC_OP[op]) then return nil end
+  self.pos = k + 1
+  local opWord = nt.v
+  if op == "eq" and nt.v:lower() == "is" and self:isWord("not") then self:next(); op = "ne" end
+  local left = compileFormula(f)
+  local right = self:calcValue(op, true)
+    or self:fail(("%s what? e.g. median - price %s 1g"):format(opWord, opWord))
+  return { k = "calc", l = left, op = op, r = right }
+end
 
 -- An example value for a column, for error messages: "reqlvl le what? e.g. reqlvl le 29"
 local EXAMPLE = { quality = "rare", slot = "trinket", type = "wand", category = '"Trade Goods"', name = '"of the bear"',
@@ -293,18 +380,27 @@ function Parser:comparison(col, word)
       word, word, exampleOp(col), example(col)))
   end
   local opWord = t.v
+  local numeric = KIND[col] == "money" or KIND[col] == "number"
   if op == "between" then
     local lo, hi = "20", "30"
     if KIND[col] == "money" then lo, hi = "1g", "5g" end
     local missing = ("%s between what? e.g. %s between (%s .. %s)"):format(word, word, lo, hi)
     if self:isOp("(") then self:next() end
-    local a = self:moneyMore(col, self:value(missing))
+    local af = numeric and self:calcValue("between") or nil
+    local a = not af and self:moneyMore(col, self:value(missing)) or nil
     if self:isOp("..") then self:next() elseif self:isWord("and") then self:next() end
-    local b = self:moneyMore(col, self:value(missing))
+    local bf = numeric and self:calcValue("between") or nil
+    local b = not bf and self:moneyMore(col, self:value(missing)) or nil
     if self:isOp(")") then self:next() end
-    self:check(col, word, op, a)
-    self:check(col, word, op, b)
-    return { k = "cmp", col = col, op = op, a = a, b = b, neg = negate }
+    if a then self:check(col, word, op, a) end
+    if b then self:check(col, word, op, b) end
+    return { k = "cmp", col = col, op = op, a = a, b = b, af = af, bf = bf, neg = negate }
+  end
+  -- a price formula: price lt 60% of median, price lt devalue - 50s, price lt myfloor
+  if numeric and (NUMERIC_OP[op] or op == "eq" or op == "ne") and not (self:isWord("any") or self:isWord("all")
+    or self:isWord("anyof") or self:isWord("allof")) then
+    local right = self:calcValue(op)
+    if right then return { k = "calc", l = resolveName(col), op = op, r = right, neg = negate } end
   end
   local mode
   if self:isWord("any") or self:isWord("anyof") then self:next(); mode = "any"
@@ -353,6 +449,8 @@ function Parser:atStep()
 end
 
 function Parser:primary()
+  local calc = self:calcLeft()
+  if calc then return calc end
   if self:isOp("(") then
     self:next()
     local e = self:orExpr()
@@ -428,7 +526,7 @@ local SORT_EG = "e.g. sort by price asc, or sort by ilvl desc, price"
 -- "type has wand and reqlevel le 29 sort by price desc top 10 by ilvl" -> list of steps. "items | where" in front
 -- and a | between steps are optional. A sort without a column sorts by price (the lowest buyout).
 local function parse(text)
-  local p = setmetatable({ toks = tokenize(text), pos = 1 }, Parser)
+  local p = setmetatable({ toks = tokenize(text), pos = 1, src = text }, Parser)
   local steps = {}
   if p:isWord("items") or p:isWord("item") then p:next() end
   if p:isWord("where") and p:atStep() then p:next() end
@@ -462,17 +560,32 @@ local function parse(text)
         if p:isWord("desc") or p:isWord("descending") then p:next(); desc = true
         elseif p:isWord("asc") or p:isWord("ascending") then p:next() end
         local t, name = p:peek(), nil
-        if #keys == 0 and (not t or t.t == "op" or (p:atStep() and not column(t.v))) then
+        local fn
+        if t and (t.t == "word" or (t.t == "op" and t.v == "(")) then
+          -- sort by median - price, sort by myfloor
+          local f, k, straddle = p:formulaAt()
+          if f and not (F.isPlain(f) and not myName(f)) and not (f.k == "neg" and f.x.k == "name" and column(f.x.v)) then
+            if straddle then p:fail("this can't be read in the price formula; put spaces around + - * /, e.g. sort by median - price") end
+            fn = compileFormula(f)
+            p.pos = k
+          end
+        end
+        if fn then
+          name = nil
+        elseif #keys == 0 and (not t or t.t == "op" or (p:atStep() and not column(t.v))) then
           name = "price"   -- no column: by the lowest buyout ("sort", "sort asc", "sort by desc")
         else
           name = p:value("sort by which column? " .. SORT_EG)
         end
-        if name:sub(1, 1) == "-" then desc, name = true, name:sub(2) end
-        local c = column(name)
-          or p:fail(("can't sort by %s; e.g. sort by price, or sort by ilvl desc"):format(name))
+        local c
+        if name then
+          if name:sub(1, 1) == "-" then desc, name = true, name:sub(2) end
+          c = column(name)
+            or p:fail(("can't sort by %s; e.g. sort by price, or sort by ilvl desc"):format(name))
+        end
         if p:isWord("desc") or p:isWord("descending") then p:next(); desc = true
         elseif p:isWord("asc") or p:isWord("ascending") then p:next(); desc = false end
-        keys[#keys + 1] = { col = c, desc = desc }
+        keys[#keys + 1] = { col = c or "formula", fn = fn, desc = desc }
         local more = p:isOp(",")
         if more then p:next() end
       until not more
@@ -759,7 +872,105 @@ local function missOf(r)
   if m and time() - m.at < LIVE_RETRY then return m end
 end
 
+-- The formula prices of a row, worked out the first time a search asks (once per search: Q.run). Unknown is false.
+-- Rows with pcRun = true carry their own (the offline tests).
+Q.run = 0
+local BUF = {}
+local function history(row)
+  local n = 0
+  local days = row.id and ns.historyDays and ns.historyDays(row.id)
+  if days then
+    local first = (ns.today and ns.today() or 0) - 29
+    for day, p in pairs(days) do
+      if day >= first and type(p) == "number" and p > 0 then n = n + 1; BUF[n] = p end
+    end
+  end
+  for k = #BUF, n + 1, -1 do BUF[k] = nil end
+  if n == 0 then row.low30, row.median30 = false, false; return end
+  table.sort(BUF)
+  row.low30 = BUF[1]
+  row.median30 = n >= 3 and BUF[math.floor((n + 1) / 2)] or false
+end
+-- a material at the lowest saved auction price, or the vendor's when that is less (Data.lua's ns.VENDORBUY)
+local function matPrice(id)
+  local it = ns.itemFor and ns.itemFor(id)
+  local p = it and it[1]
+  if not (type(p) == "number" and p > 0) then p = nil end
+  local v = ns.VENDORBUY and ns.VENDORBUY[id]
+  if v and (not p or v < p) then p = v end
+  return p
+end
+-- the cheapest recipe's materials for one (Data.lua's ns.RECIPES: { makes, material, count, ... }), rounded
+local function craftCost(id)
+  local rs = id and ns.RECIPES and ns.RECIPES[id]
+  if not rs then return false end
+  local best
+  for _, r in ipairs(rs) do
+    local total = 0
+    for k = 2, #r - 1, 2 do
+      local p = matPrice(r[k])
+      if not p then total = nil; break end
+      total = total + p * r[k + 1]
+    end
+    if total then
+      local each = total / (r[1] or 1)
+      if not best or each < best then best = each end
+    end
+  end
+  return best and math.floor(best + 0.5) or false
+end
+-- your own average per item at this auction house: what you paid (db.bought) and got (the ledger's sold auctions)
+local avgC, avgQ, sellC, sellQ = {}, {}, {}, {}
+local avgRun
+local function averages()
+  if avgRun == Q.run then return end
+  avgRun = Q.run
+  for _, t in ipairs({ avgC, avgQ, sellC, sellQ }) do for k in pairs(t) do t[k] = nil end end
+  local d = ns.db and ns.db()
+  if not d then return end
+  local house = (ns.house and ns.house()) or (ns.houseOrFaction and ns.houseOrFaction())
+  for _, e in ipairs(d.bought or {}) do
+    if e.id and (e.q or 0) > 0 and (e.c or 0) > 0 and (not e.h or e.h == house) then
+      avgC[e.id], avgQ[e.id] = (avgC[e.id] or 0) + e.c, (avgQ[e.id] or 0) + e.q
+    end
+  end
+  local led = type(d.ledger) == "table" and d.ledger.auctions or {}
+  for _, r in ipairs(led) do
+    if r.st == "sold" and r.item and (r.q or 0) > 0 and (r.gross or 0) > 0 and (not r.h or r.h == house) then
+      sellC[r.item], sellQ[r.item] = (sellC[r.item] or 0) + r.gross, (sellQ[r.item] or 0) + r.q
+    end
+  end
+end
+local function avgOf(c, q, id)
+  local n = id and q[id]
+  return n and n > 0 and math.floor(c[id] / n + 0.5) or false
+end
+local function formulaPrice(row, col)
+  if row.pcRun ~= true then
+    if row.pcRun ~= Q.run then
+      row.pcRun = Q.run
+      row.low30, row.median30, row.craftcost, row.devalue, row.avgbuy, row.avgsell = nil, nil, nil, nil, nil, nil
+    end
+    if row[col] == nil then
+      if col == "low30" or col == "median30" then
+        history(row)
+      elseif col == "craftcost" then
+        row.craftcost = craftCost(row.id)
+      elseif col == "devalue" then
+        local okDe, v = pcall(ns.disenchantValue or tostring, row.id)
+        row.devalue = okDe and type(v) == "number" and v > 0 and v or false
+      else
+        averages()
+        row.avgbuy, row.avgsell = avgOf(avgC, avgQ, row.id), avgOf(sellC, sellQ, row.id)
+      end
+    end
+  end
+  return row[col] or nil
+end
+local FORMULA_PRICE = { low30 = true, median30 = true, craftcost = true, devalue = true, avgbuy = true, avgsell = true }
+
 local function get(row, col)
+  if FORMULA_PRICE[col] then return formulaPrice(row, col) end
   if INV[col] then
     if not ns.inventory then return KIND[col] == "text" and "" or 0 end
     return ns.inventory.column(row.id, col)
@@ -786,6 +997,96 @@ local function get(row, col)
   if col == "text" then return textOf(row) end
   if col == "scanprice" then return row.price end
   return row[col]
+end
+
+-- A name in a price formula: a My price (parsed), else a number or money column as function(row) -> number or nil.
+-- Prices of 0 or less and a vendor price of a quest item or one vendors don't buy are unknown, as on EverlookDB.com.
+local POSITIVE = { price = true, median = true, low30 = true, median30 = true, craftcost = true, devalue = true,
+  avgbuy = true, avgsell = true }
+local GETTER = {}
+local function getterOf(col)
+  local g = GETTER[col]
+  if g then return g end
+  if col == "sell" then
+    g = function(row)
+      if row.quest then return nil end
+      local v = get(row, "sell")
+      return type(v) == "number" and v > 0 and v or nil
+    end
+  elseif POSITIVE[col] then
+    g = function(row)
+      local v = get(row, col)
+      return type(v) == "number" and v > 0 and v or nil
+    end
+  else
+    g = function(row)
+      local v = get(row, col)
+      return type(v) == "number" and v or nil
+    end
+  end
+  GETTER[col] = g
+  return g
+end
+
+-- My prices: `name = formula`, separated by ; or new lines, saved in the settings (EverlookAuctionsDB.myPrices)
+local myText, myMap
+function ns.myPricesText()
+  local d = ns.db and ns.db()
+  return d and d.myPrices or ""
+end
+function ns.myPriceNames()
+  local text = ns.myPricesText() or ""
+  if text ~= myText then
+    myText, myMap = text, {}
+    for part in (text .. "\n"):gmatch("([^\n;]*)[\n;]") do
+      local name, f = part:match("^%s*([%w_]+)%s*=(.*)$")
+      if name then
+        local okF, ast = pcall(F.parse, f)
+        myMap[name:lower()] = okF and ast
+          or { bad = type(ast) == "table" and ast.query or tostring(ast), name = name, text = f:match("^%s*(.-)%s*$") }
+      end
+    end
+  end
+  return myMap
+end
+-- Saves My prices after checking them: true, or false and what is wrong in plain words.
+function ns.setMyPrices(text)
+  text = tostring(text or ""):match("^%s*(.-)%s*$")
+  local pairs_, why = F.parseMy(text, function(l) return column(l) ~= nil end)
+  if not pairs_ then return false, why end
+  local d = ns.db and ns.db()
+  if not d then return false, "the settings aren't loaded yet" end
+  d.myPrices = text ~= "" and text or nil
+  return true
+end
+
+resolveName = function(name)
+  local lower = name:lower()
+  local my = ns.myPriceNames()[lower]
+  if my and not column(lower) then
+    if my.bad then error({ query = ("the My price %s = %s has a mistake: %s"):format(my.name, my.text, my.bad) }, 0) end
+    return my
+  end
+  local col = column(lower)
+  if col then
+    if KIND[col] ~= "money" and KIND[col] ~= "number" then
+      error({ query = ("%s isn't a number, so it can't be in a price formula; e.g. 80%% of median"):format(col) }, 0)
+    end
+    return getterOf(col)
+  end
+  error({ query = ("there is no price or column '%s'. Prices: price, median, low30, median30, vendor, craftcost, "
+    .. "devalue, avgbuy, avgsell, or a My price (in the settings)"):format(name) }, 0)
+end
+
+-- One price formula for one item, outside a search (a shopping list's max price): copper, or nil when it isn't known;
+-- nil and the mistake when it can't be read.
+function ns.formulaFor(text, id)
+  local okC, fn = pcall(function() return compileFormula(F.parse(text)) end)
+  if not okC then return nil, type(fn) == "table" and fn.query or tostring(fn) end
+  local row = ns.queryItemRow and ns.queryItemRow(id)
+  if not row then return nil end
+  Q.run = Q.run + 1
+  return fn(row)
 end
 
 local function textMatch(have, op, want)
@@ -876,12 +1177,19 @@ local function test(row, e)
     return test(row, a) or test(row, b)
   end
   if e.k == "not" then return not test(row, e.e) end
+  if e.k == "calc" then
+    local a, r = e.l(row), false
+    if a ~= nil then r = compare(a, e.op, e.r(row)) end
+    if e.neg then return not r end
+    return r
+  end
   local col, op = e.col, e.op
   local kind = KIND[col]
   local r
   if op == "between" then
     local v = kind == "enum" and ENUMS[col][tostring(get(row, col))] or get(row, col)
-    local a, b = valueOf(row, col, e.a), valueOf(row, col, e.b)
+    local a = e.af and e.af(row) or (e.a ~= nil and valueOf(row, col, e.a)) or nil
+    local b = e.bf and e.bf(row) or (e.b ~= nil and valueOf(row, col, e.b)) or nil
     r = v ~= nil and a ~= nil and b ~= nil and v >= a and v <= b
   else
     local one = function(want)
@@ -984,7 +1292,8 @@ local function sortRows(rows, keys)
   table.sort(rows, function(a, b)
     for _, key in ipairs(keys) do
       local c = key.col
-      local x, y = get(a, c), get(b, c)
+      local x, y
+      if key.fn then x, y = key.fn(a), key.fn(b) else x, y = get(a, c), get(b, c) end
       if KIND[c] == "enum" then x, y = ENUMS[c][tostring(x)], ENUMS[c][tostring(y)] end
       if x ~= y then
         if x == nil then return false end
@@ -1004,6 +1313,7 @@ ns.sortRows = sortRows
 ns.queryParse = function(text) return parse(text) end   -- for the offline tests
 
 local function run(text)
+  Q.run = Q.run + 1
   local lower = " " .. (text or ""):lower() .. " "
   Q.extra = lower:find("[^%w_]slots[^%w_]") and "slots" or lower:find("[^%w_]skill[^%w_]") and "skill"
     or lower:find("[^%w_]droprate[^%w_]") and "droprate" or nil
@@ -1100,6 +1410,7 @@ ns.queryRun = function(text) return run(text) end
 -- The same language over rows of your own (Inventory.lua's "Where is it?"): the where, sort, top and count steps.
 -- Returns the rows kept (or {} after count), the count (nil without count), or nil and the error.
 function ns.queryRows(text, rows, defaultSort)
+  Q.run = Q.run + 1
   local okParse, steps = pcall(parse, text)
   if not okParse then return nil, type(steps) == "table" and steps.query or tostring(steps) end
   local out, counted, ordered = {}, nil, false
@@ -1374,6 +1685,8 @@ end
 local EXAMPLES = {
   { "belowvendor", "Cheaper than a vendor pays: buy and vendor" },
   { "slot is trinket sort by price", "Every trinket, cheapest first" },
+  { "price lt 60% of median sort by median - price desc", "Under 60% of the usual price, biggest bargain first" },
+  { "price lt devalue - 50s", "Cheaper than disenchanting it is worth, by 50s or more" },
   { "slot is back and agi ge 5 sort by price", "Cloaks with 5+ agility" },
   { "name like \"*of the eagle\" and reqlevel le 40", "Every \"of the Eagle\" item you can wear by 40" },
   { "type has wand and reqlevel le 29 sort by dps desc", "Best wands up to level 29" },
@@ -1409,6 +1722,11 @@ local GUIDE = table.concat({
   C_INFO .. "source|r (or " .. C_INFO .. "from|r): every way you get it: vendor, crafted, drop, quest, skinning, pickpocket, fishing, herbalism, mining, object, world drop, container, disenchant. " .. C_GOOD .. "source is vendor|r finds every item vendors sell, also ones you can get other ways too:  " .. C_GOOD .. "source is vendor and profession is tailoring|r   " .. C_GOOD .. "source has \"world drop\"|r",
   "Money: 5g, 50s, 1g50s, 1g 50s, 2.5g, 20c. Or another column: " .. C_GOOD .. "price lt vendor|r",
   "Quality also takes colours (grey, white, green, blue, purple, orange); slot takes cloak, ring, helm, gloves, boots, belt, 1h, 2h.",
+  "",
+  C_PLACE .. "Price formulas|r   the same as on EverlookDB.com",
+  "Prices: " .. C_INFO .. "price|r (also now), " .. C_INFO .. "median|r, " .. C_INFO .. "low30|r and " .. C_INFO .. "median30|r (the lowest and the middle daily low of the last 30 days), " .. C_INFO .. "vendor|r, " .. C_INFO .. "craftcost|r (the materials of the cheapest recipe), " .. C_INFO .. "devalue|r (what disenchanting it is worth), " .. C_INFO .. "avgbuy|r and " .. C_INFO .. "avgsell|r (what you paid and got for one on average, from your own log)",
+  "Sums with + - * / and ( ), " .. C_INFO .. "min|r(...), " .. C_INFO .. "max|r(...), " .. C_INFO .. "first|r(...) (the first price that is known), money (5g, 2g50s) and " .. C_INFO .. "80% of|r median:  " .. C_GOOD .. "price lt 60% of median|r   " .. C_GOOD .. "price lt devalue - 50s|r   " .. C_GOOD .. "sort by median - price desc|r",
+  "A price nobody knows yet makes a condition false and sorts last. " .. C_INFO .. "My prices|r (Settings, Selling, or /eah myprices) save a formula under a name:  " .. C_GOOD .. "myfloor = max(vendor * 1.5, 80% of low30)|r, then  " .. C_GOOD .. "price lt myfloor|r. A shopping list's most to pay takes one too.",
   "",
   C_PLACE .. "Below vendor price|r",
   C_GOOD .. "belowvendor|r lists every auction in the last full scan that is cheaper than a vendor pays and makes at least 10s, biggest total first. Buy them and sell them to any vendor: vendors take no cut. Quest items and items vendors don't buy never count. " .. C_INFO .. "deals|r is how many such auctions, " .. C_INFO .. "dealprofit|r what they make together. Start buying opens them one after another.",

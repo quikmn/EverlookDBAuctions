@@ -1,5 +1,11 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Price formulas in Advanced search, the same as on EverlookDB.com: do sums with prices, like `price lt 60% of median`, `price lt devalue - 50s` (cheaper than disenchanting it is worth) or `sort by median - price desc` (the biggest bargain first). Use + - * / and ( ), min(...), max(...), first(...) (the first price that is known), money like 5g or 2g50s, and "80% of".
+- New prices to search and sort by: `low30` and `median30` (the lowest and the middle daily price of the last 30 days), `craftcost` (what the materials of the cheapest recipe cost), `devalue` (what disenchanting it is worth), and from your own log `avgbuy` and `avgsell` (what you paid and got for one on average). `now` means `price`.
+- My prices: save a formula under a name in Settings, Selling (or `/eah myprices myfloor = max(vendor * 1.5, 80% of low30)`), then search with it like any price: `price lt myfloor`, `sort by myfloor`.
+- Shopping lists take a formula as the most to pay for one: type `80% of median` or `myfloor` in the max box, or paste "60 Light Leather max 80% of median". It is worked out for each item when buying starts; when it can't be worked out yet, nothing is bought.
+
 ## v0.28.0 (2026-11-24)
 - Your items on every character: item tooltips show how many you have and where your alts keep theirs, like "You have 52  Mara 40 (bank) · Thorn 12 (mail)", with the total on the right. Hold Shift to see every character's bags, bank, mail, auctions and worn gear. It counts the characters on this realm and faction, the mailbox, mail you sent to an alt that hasn't been picked up yet, your auctions and your guild bank (once you open it). Turn it off under Settings, Tooltips.
 - New "Where is it?" page: search everything your characters have, with the same words as Advanced search: an item's name, or `have gt 20 and name has cloth`, `char is Mara`, `place is bank`, `mail gt 0`. Each item shows who has it and where. `/eah where linen` answers in chat too. Advanced search knows the same words (`have gt 0 and price gt 1g`).

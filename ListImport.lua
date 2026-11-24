@@ -6,11 +6,12 @@
 --     60 Light Leather #2318  (everlookdb.com's "Copy for the addon": the ID after # wins over the name)
 --     name is "Light Leather"  buy 60  (this addon's own Export)
 --   Bullets, numbering ("1. ") and check boxes ("[ ]") in front are left out. "max 25s" (or "max 1g 50s", "under
---   25s") anywhere after the item sets the most to pay for one. "# Name" starts a list of that name.
+--   25s") anywhere after the item sets the most to pay for one; a price formula works too, worked out for the item
+--   when buying starts ("max 80% of median", "max myfloor"). "# Name" starts a list of that name.
 --   A line without an amount that reads like a search ("slot is trinket", quotes, "price lt 5g") stays a search; one
 --   that names an item buys one. Lines are never dropped: what can't be read or found is returned to show.
 -- Saved shape (Shopping.lua): list.queries (one 'name is "X"' per item), list.want[q] how many, list.items[q] the
--- item ID, list.max[q] the most to pay for one (copper), list.countHave = true when what you have counts against it.
+-- item ID, list.max[q] the most to pay for one (copper, or a price formula as text), list.countHave = true when what you have counts against it.
 local _, ns = ...
 local I = {}
 ns.listImport = I
@@ -70,8 +71,13 @@ function I.parseLine(raw)
   if not p then p, q = lower:find("<=?") end
   if p then
     local after = s:sub(q + 1):gsub("^%s*[Pp]rice", ""):gsub("^%s*[:=]?%s*", ""):gsub("%)%s*$", "")
-    if after:match("%d") then
+    local myName = ns.myPriceNames and after:match("^[%a_][%w_]*$") and ns.myPriceNames()[after:lower()]
+    if after:match("%d") or myName then
       local m = I.money(after)
+      if not m and ns.formula then   -- "max 80% of median", "max myfloor" (a bare number has no g, s or c: an error)
+        local okF, f = pcall(ns.formula.parse, after)
+        if okF and f.k ~= "num" then m = after end
+      end
       if m then e.max = m else e.maxBad = true end
       s = trim(s:sub(1, p - 1):gsub("[%s,;%(]+$", ""))
     end
@@ -230,7 +236,7 @@ function I.read(text, lookup, defaultName)
             cur.items[#cur.items + 1] = it
           end
           it.n = it.n + (e.n or 1)
-          if e.max and (not it.max or e.max < it.max) then it.max = e.max end
+          if e.max and (not it.max or type(e.max) ~= type(it.max) or e.max < it.max) then it.max = e.max end
         end
       end
     end
@@ -289,7 +295,8 @@ function I.export(l, moneyText)
       local id = l.items and l.items[q]
       if id then line = line .. " #" .. id end
       local m = l.max and l.max[q]
-      if m then line = line .. " max " .. (moneyText and moneyText(m) or (m .. "c")) end
+      if type(m) == "string" then line = line .. " max " .. m
+      elseif m then line = line .. " max " .. (moneyText and moneyText(m) or (m .. "c")) end
       out[#out + 1] = line
     else
       out[#out + 1] = q

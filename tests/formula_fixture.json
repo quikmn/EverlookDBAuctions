@@ -1,0 +1,212 @@
+{
+  "about": "Price formulas: the same answers on EverlookDB.com (crates/core/src/formula.rs, tests.rs) and in the EverlookDB Auctions addon (Formula.lua, tests/run.py, which reads a copy that tools/addon_data.py writes). Money is copper; null is unknown. values: a formula's value per row; where: the ids a condition keeps; sort: the ids in order; errors: conditions that must be refused.",
+  "rows": [
+    { "id": 1, "name": "Linen Cloth", "price": 9000, "median": 16000, "low30": 8000, "median30": 14000, "vendor": 2500, "craftcost": null, "devalue": null, "stack": 20 },
+    { "id": 2, "name": "Wool Cloth", "price": 20000, "median": 18000, "low30": 15000, "median30": 17000, "vendor": 0, "craftcost": 12000, "devalue": 25000, "stack": 20 },
+    { "id": 3, "name": "Strange Dust", "price": null, "median": null, "low30": 3000, "median30": 3500, "vendor": 100, "craftcost": null, "devalue": null, "stack": 20 },
+    { "id": 4, "name": "Lesser Magic Wand", "price": 50000, "median": 61000, "low30": null, "median30": null, "vendor": 7000, "craftcost": 30000, "devalue": 52000, "stack": 1 },
+    { "id": 5, "name": "Copper Ring", "price": 1000, "median": 100000, "low30": 900, "median30": 90000, "vendor": 1500, "craftcost": null, "devalue": 40000, "stack": 1 }
+  ],
+  "my": [
+    ["myfloor", "max(vendor * 1.5, 80% of low30)"],
+    ["cheap", "min(median, vendor * 4)"],
+    ["deep", "myfloor + 1s"],
+    ["loop1", "loop2 + 1"],
+    ["loop2", "loop1 * 2"]
+  ],
+  "values": [
+    {
+      "f": "60% of median",
+      "want": [9600.0, 10800.0, null, 36600.0, 60000.0]
+    },
+    {
+      "f": "median - price",
+      "want": [7000, -2000, null, 11000, 99000]
+    },
+    {
+      "f": "devalue - 50s",
+      "want": [null, 20000.0, null, 47000.0, 35000.0]
+    },
+    {
+      "f": "max(vendor * 1.5, 80% of low30)",
+      "want": [6400.0, 12000.0, 2400.0, 10500.0, 2250.0]
+    },
+    {
+      "f": "min(median, vendor * 4)",
+      "want": [10000.0, 18000, 400.0, 28000.0, 6000.0]
+    },
+    {
+      "f": "first(price, median, low30)",
+      "want": [9000, 20000, 3000, 50000, 1000]
+    },
+    {
+      "f": "first(craftcost, devalue)",
+      "want": [null, 12000, null, 30000, 40000]
+    },
+    {
+      "f": "price / vendor",
+      "want": [3.6, null, null, 7.142857142857143, 0.6666666666666666]
+    },
+    {
+      "f": "2g50s",
+      "want": [25000.0, 25000.0, 25000.0, 25000.0, 25000.0]
+    },
+    {
+      "f": "1g 50s",
+      "want": [15000.0, 15000.0, 15000.0, 15000.0, 15000.0]
+    },
+    {
+      "f": "30s",
+      "want": [3000.0, 3000.0, 3000.0, 3000.0, 3000.0]
+    },
+    {
+      "f": "5gold",
+      "want": [50000.0, 50000.0, 50000.0, 50000.0, 50000.0]
+    },
+    {
+      "f": "1.5g",
+      "want": [15000.0, 15000.0, 15000.0, 15000.0, 15000.0]
+    },
+    {
+      "f": "(median - price) * 2",
+      "want": [14000.0, -4000.0, null, 22000.0, 198000.0]
+    },
+    {
+      "f": "-price + 1g",
+      "want": [1000.0, -10000.0, null, -40000.0, 9000.0]
+    },
+    {
+      "f": "price * stack",
+      "want": [180000, 400000, null, 50000, 1000]
+    },
+    {
+      "f": "myfloor",
+      "want": [6400.0, 12000.0, 2400.0, 10500.0, 2250.0]
+    },
+    {
+      "f": "deep",
+      "want": [6500.0, 12100.0, 2500.0, 10600.0, 2350.0]
+    },
+    {
+      "f": "max(craftcost)",
+      "want": [null, 12000, null, 30000, null]
+    },
+    {
+      "f": "10 / 4",
+      "want": [2.5, 2.5, 2.5, 2.5, 2.5]
+    },
+    {
+      "f": "price / 0",
+      "want": [null, null, null, null, null]
+    },
+    {
+      "f": "80% of (median + 1s)",
+      "want": [12880.0, 14480.0, null, 48880.0, 80080.0]
+    },
+    {
+      "f": "median - price - 1s",
+      "want": [6900.0, -2100.0, null, 10900.0, 98900.0]
+    },
+    {
+      "f": "median / 2 / 2",
+      "want": [4000.0, 4500.0, null, 15250.0, 25000.0]
+    },
+    {
+      "f": "75.5% of price",
+      "want": [6795.0, 15100.0, null, 37750.0, 755.0]
+    },
+    {
+      "f": "median - (price - 1s)",
+      "want": [7100.0, -1900.0, null, 11100.0, 99100.0]
+    },
+    {
+      "f": "now + typical",
+      "want": [25000, 38000, null, 111000, 101000]
+    }
+  ],
+  "where": [
+    {
+      "q": "price lt 60% of median",
+      "want": [1, 5]
+    },
+    {
+      "q": "price lt devalue - 50s",
+      "want": [5]
+    },
+    {
+      "q": "price lt vendor",
+      "want": [5]
+    },
+    {
+      "q": "price le myfloor",
+      "want": [5]
+    },
+    {
+      "q": "median - price gt 1g",
+      "want": [4, 5]
+    },
+    {
+      "q": "price between (1g .. 90% of median)",
+      "want": [4]
+    },
+    {
+      "q": "price lt 5g and devalue gt price * 1.2",
+      "want": [2, 5]
+    },
+    {
+      "q": "not price lt 60% of median",
+      "want": [2, 3, 4]
+    },
+    {
+      "q": "craftcost lt price",
+      "want": [2, 4]
+    },
+    {
+      "q": "price is 2g",
+      "want": [2]
+    },
+    {
+      "q": "price gt 0",
+      "want": [1, 2, 4, 5]
+    },
+    {
+      "q": "price lt cheap",
+      "want": [1, 5]
+    },
+    {
+      "q": "(median - price) / median ge 50% of 1",
+      "want": [5]
+    },
+    {
+      "q": "price lt 1g 50s",
+      "want": [1, 5]
+    },
+    {
+      "q": "price ge low30 * 1.1 or devalue gt 4g",
+      "want": [1, 2, 4, 5]
+    }
+  ],
+  "sort": [
+    {
+      "q": "sort by median - price",
+      "want": [2, 1, 4, 5, 3]
+    },
+    {
+      "q": "sort by median - price desc",
+      "want": [5, 4, 1, 2, 3]
+    },
+    {
+      "q": "sort by devalue desc",
+      "want": [4, 5, 2, 1, 3]
+    },
+    {
+      "q": "sort by first(devalue, price) desc",
+      "want": [4, 5, 2, 1, 3]
+    },
+    {
+      "q": "sort by myfloor",
+      "want": [5, 3, 1, 4, 2]
+    }
+  ],
+  "errors": ["price lt 60% median", "price lt max(vendor", "price lt median +", "price lt avg(price)", "price lt mediun", "price lt loop1", "price lt (median - )"]
+}
