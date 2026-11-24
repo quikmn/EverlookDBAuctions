@@ -2,7 +2,7 @@
 
 ## Unreleased
 - New Crafting tab at the auction house: your crafting profit list right where you buy and sell. Plan your crafts, then Buy materials walks you through buying everything they need. Right-click a recipe you've made to sell it in Quick sell. `/eah profit` opens it while you're at the auction house.
-- Crafting profit has three views at the top: Recipes I know, Easy to get (recipes you can learn now from a trainer, a vendor or the auction house, close to your skill) and All recipes (every profession, to find the best margins anywhere). Each new recipe shows how to learn it and what that costs, the skill it needs against yours, and after how many crafts it pays for itself. Tick "Only recipes on the AH now" to see the ones you can buy today; right-click one at the auction house to find its recipe in Buy. Easy to get and All recipes need EverlookDB Crafting.
+- Crafting profit has three views at the top: Recipes I know, Easy to get (recipes you can learn now from a trainer, a vendor or the auction house, close to your skill) and All recipes (every profession, to find the best margins anywhere). Each new recipe shows how to learn it and what that costs, the skill it needs against yours, and after how many crafts it pays for itself. Tick "Only recipes on the AH now" to see the ones you can buy today, and type a price in "Recipe under" (like 5g or 2g50s) to see only recipes that cost at most that to learn (remembered per character); right-click one at the auction house to find its recipe in Buy. Easy to get and All recipes need EverlookDB Crafting.
 
 ## v0.25.1 (2026-11-23)
 - Gear upgrades for alts: gear the game is still loading at login no longer counts as an empty slot.

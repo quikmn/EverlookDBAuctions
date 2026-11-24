@@ -86,6 +86,14 @@ function W.characters()
 end
 
 -- the alts ticked on this character
+-- This character's own Crafting profit settings (EverlookAuctionsCharDB): recipeMax, the "Recipe under" box.
+function W.charSettings()
+  EverlookAuctionsCharDB = EverlookAuctionsCharDB or {}
+  local c = EverlookAuctionsCharDB
+  if type(c.profit) ~= "table" then c.profit = {} end
+  return c.profit
+end
+
 function W.altTicks()
   EverlookAuctionsCharDB = EverlookAuctionsCharDB or {}
   local c = EverlookAuctionsCharDB
@@ -214,7 +222,8 @@ local function compute(scope)
   end
   local rows, counts = Pr.list(ctx, { from = s.from or 1, to = s.to or 300, min = s.min, maxCost = s.maxCost,
     minMargin = s.minMargin, q = s.q, nameOf = rowName, who = who, recipes = list,
-    canMake = (scope == "known" and s.canMake) and crafterCan or nil, onAH = scope ~= "known" and s.onAH or nil })
+    canMake = (scope == "known" and s.canMake) and crafterCan or nil, onAH = scope ~= "known" and s.onAH or nil,
+    learnMax = scope ~= "known" and W.charSettings().recipeMax or nil })
   return ctx, rows, counts, sources
 end
 -- (the main window's start page counts the recipes you know, whatever the list shows)
@@ -448,7 +457,8 @@ end
 
 -- A box for money: "1g 20s", "120s", "1.2g" or a plain number of silver. A box that isn't money goes red and changes
 -- nothing; leaving it writes the amount back the same way every time ("1g 20s").
-local function moneyBox(parent, w, field, tip)
+local function moneyBox(parent, w, field, tip, store)
+  store = store or settings
   local b = EUI.EditBox(parent, w, 24)
   b:SetMaxLetters(16)
   b:SetJustifyH("RIGHT")
@@ -458,14 +468,14 @@ local function moneyBox(parent, w, field, tip)
     local c, good = Pr.parseMoney(self:GetText())
     if self.border and self.border.SetColor then self.border:SetColor(rgba(good and T.accent or T.danger)) end
     if not good then return end
-    settings()[field] = (c and c > 0) and c or nil
+    store()[field] = (c and c > 0) and c or nil
     W.offset = 0
     W.render()
   end)
   b:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
   b:HookScript("OnEditFocusLost", function(self)
     if self.border and self.border.SetColor then self.border:SetColor(rgba(T.border)) end
-    local v = settings()[field]
+    local v = store()[field]
     self:SetText(v and Pr.moneyText(v) or "")
   end)
   b:SetScript("OnEnter", function(self)
@@ -570,6 +580,8 @@ function W.fillBoxes()
   f.maxCost:SetText(s.maxCost and Pr.moneyText(s.maxCost) or "")
   f.canMake:SetOn(s.canMake)
   f.onAH:SetOn(s.onAH)
+  local rm = W.charSettings().recipeMax
+  f.recipeMax:SetText(rm and Pr.moneyText(rm) or "")
 end
 
 -- The scope buttons: the one shown bright and underlined; the tick that fits the scope.
@@ -584,10 +596,13 @@ function W.paintScopes()
   end
   f.canMake:SetShown(sc == "known")
   f.onAH:SetShown(sc ~= "known")
+  f.recipeL:SetShown(sc ~= "known")
+  f.recipeMax:SetShown(sc ~= "known")
 end
 
 function W.clearFilters()
   Pr.clearFilters(settings())
+  W.charSettings().recipeMax = nil
   W.offset = 0
   W.fillBoxes()
   W.render()
@@ -778,6 +793,17 @@ local function makeFrame()
     end)
     f.alts:HookScript("OnLeave", function() GameTooltip:Hide() end)
   end
+  f.recipeL = text(f, T.font, T.muted)
+  f.recipeL:SetPoint("LEFT", f.maxCost, "RIGHT", 14, 0)
+  f.recipeL:SetText("Recipe under")
+  f.recipeMax = moneyBox(f, 70, "recipeMax", "Recipe under", W.charSettings)
+  f.recipeMax:SetPoint("LEFT", f.recipeL, "RIGHT", 6, 0)
+  f.recipeMax:HookScript("OnEnter", function()
+    GameTooltip:AddLine("Recipes you don't know yet whose cheapest way to learn (the AH, a vendor or a trainer's fee) costs at most this. Empty: any. Kept for this character.", nil, nil, nil, true)
+    GameTooltip:Show()
+  end)
+  f.recipeL:Hide()
+  f.recipeMax:Hide()
   f.clearFilters = link(f, "Clear filters", function() W.clearFilters() end)
   f.clearFilters:SetPoint("TOPRIGHT", -20, -100)
 
@@ -927,10 +953,10 @@ function W.render(keep)
   W.paintHeads()
   W.paintScopes()
   if f.alts then
-    f.alts:SetShown(craftAPI() ~= nil)
+    f.alts:SetShown(craftAPI() ~= nil and W.scope() == "known")
     f.altsText:SetText(altsLabel())
   end
-  f.clearFilters:SetShown(Pr.filtered(s) or s.sort ~= nil)
+  f.clearFilters:SetShown(Pr.filtered(s) or s.sort ~= nil or (W.scope() ~= "known" and W.charSettings().recipeMax ~= nil))
   local h = d.houses and d.houses[houseKey()]
   local nPrices = 0
   if h and h.items then for _ in pairs(h.items) do nPrices = nPrices + 1 end end

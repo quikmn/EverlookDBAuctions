@@ -4328,7 +4328,8 @@ def profit_columns(lua, Pr, ctxOf, seq):
     # can make now: you have 2 cloth (a bolt), and the bag needs 3 bolts and 3 thread
     bags = {2589: 2}
     can_me = lambda c, r: Pr.canMake(r, lambda i: bags.get(i, 0))
-    check(names({"canMake": can_me}) == ["Bolt of Linen Cloth"], f"only what you can make now: {names({'canMake': can_me})}")
+    _cm = names({"canMake": can_me})
+    check(_cm == ["Bolt of Linen Cloth"], f"only what you can make now: {_cm}")
     check(Pr.canMake(G.RECIPES[2996], lambda i: 2) is True and Pr.canMake(G.RECIPES[2996], lambda i: 1) is False, "canMake counts")
     # crafters: Bob knows the bag and has its materials; you know everything and have cloth
     G.PRMERGE = Pr.merge
@@ -4939,6 +4940,18 @@ def profit_scopes():
         f.onAH.scripts.OnClick(f.onAH)
         check([r.name for r in shown()] == ["Reinforced Linen Cape"], f"only recipes on the AH now: {[r.name for r in shown()]}")
         f.onAH.scripts.OnClick(f.onAH)
+        # Recipe under: the cheapest way to learn costs at most this (kept per character)
+        check(f.recipeMax.shown and not f.alts.shown, "Recipe under shows for recipes you don't know, in place of Alts")
+        f.recipeMax.SetText(f.recipeMax, "4s")
+        f.recipeMax.scripts.OnTextChanged(f.recipeMax, True)
+        check(lua.eval("EverlookAuctionsCharDB.profit.recipeMax") == 400, "kept for this character, in copper")
+        check([r.name for r in shown()] == ["Reinforced Linen Cape"], f"recipe under 4s: the 5s trainer recipe goes: {[r.name for r in shown()]}")
+        f.recipeMax.SetText(f.recipeMax, "2g50s")
+        f.recipeMax.scripts.OnTextChanged(f.recipeMax, True)
+        check(lua.eval("EverlookAuctionsCharDB.profit.recipeMax") == 25000 and len(shown()) == 2, "2g50s: both again")
+        f.recipeMax.SetText(f.recipeMax, "")
+        f.recipeMax.scripts.OnTextChanged(f.recipeMax, True)
+        check(lua.eval("EverlookAuctionsCharDB.profit.recipeMax") is None, "empty: any price")
         # the plan's shopping list has the pattern too
         W.crafts[2580] = 1
         W.render()

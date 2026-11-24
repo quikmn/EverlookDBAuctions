@@ -157,6 +157,7 @@ function Pr.list(ctx, filter)
   local whole = from <= 1 and to >= 300
   local min = tonumber(filter.min)
   local minMargin, maxCost = tonumber(filter.minMargin), tonumber(filter.maxCost)
+  local learnMax = tonumber(filter.learnMax)   -- recipes you don't know: the cheapest way to learn, at most
   local q = filter.q and lower(filter.q):gsub("^%s+", ""):gsub("%s+$", "") or ""
   local out, counts = {}, { known = 0, noSale = 0, approx = 0 }
   for id, r in pairs(filter.recipes or ctx.recipes) do
@@ -177,6 +178,7 @@ function Pr.list(ctx, filter)
       and (not maxCost or row.cost <= maxCost)
       and (not minMargin or (row.margin and not row.approx and row.margin * 100 >= minMargin - 1e-9))
       and (not filter.onAH or (row.start and row.start.ah))
+      and (not learnMax or (row.start and row.start.cost and row.start.cost <= learnMax))
       and (q == "" or lower(row.name or (filter.nameOf and filter.nameOf(row))):find(q, 1, true)) then
       local who = filter.who and filter.who[id]
       local keep = true
