@@ -6868,6 +6868,10 @@ def list_import():
         "Light Leather (60)": {"name": "Light Leather", "n": 60},
         "Light Leather\t60": {"name": "Light Leather", "n": 60},
         "  - 60 Light Leather  ": {"name": "Light Leather", "n": 60},
+        "☐ 90x Rough Stone": {"name": "Rough Stone", "n": 90},           # a guide's table, check box copied along
+        "10x Green Dye (vendor)": {"name": "Green Dye", "n": 10, "vendor": True},
+        "Material": None,
+        "Material	Amount": None,
         "1. 20 Light Leather": {"name": "Light Leather", "n": 20},
         "[ ] 5 Light Leather": {"name": "Light Leather", "n": 5},
         "[Light Leather] x60": {"name": "Light Leather", "n": 60},

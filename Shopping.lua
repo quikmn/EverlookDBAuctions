@@ -223,7 +223,8 @@ local function showText(mode)
 end
 
 SH.HOW = 'One item per line: "60 Light Leather", "Light Leather x60", "Light Leather, 60", item links, or an item ID and '
-  .. 'how many ("2318 60"). Add "max 25s" to pay at most that for one. A line like "slot is trinket" stays a search.'
+  .. 'how many ("2318 60"). Add "max 25s" to pay at most that for one. A line like "slot is trinket" stays a search. '
+  .. "A leveling guide's shopping list pastes as it is; items it marks (vendor) are left out."
 
 local WHY = {
   unknown = "no item by that name (check the spelling, or paste its item link)",
@@ -257,6 +258,9 @@ function SH.import(text, saveAs, countHave, tries)
   end
   local lines = {}
   if #parts > 0 then lines[1] = C_GOOD .. "Saved " .. table.concat(parts, "; ") .. ".|r" end
+  if res.vendor then
+    lines[#lines + 1] = "Left out, buy these at a vendor: " .. plain(table.concat(res.vendor, ", "))
+  end
   if res.asSearch then
     lines[#lines + 1] = "Kept as searches (no item by that name, and no amount): " .. plain(table.concat(res.asSearch, ", "))
   end

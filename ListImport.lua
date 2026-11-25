@@ -18,6 +18,15 @@ ns.listImport = I
 
 local function trim(s) return (tostring(s or ""):match("^%s*(.-)%s*$")) end
 
+-- Heading rows of guides' shopping-list tables: left out.
+local HEADINGS = {}
+for _, h in ipairs({ "material", "materials", "item", "items", "reagent", "reagents", "amount", "quantity", "qty",
+  "material amount", "materials amount", "item amount", "amount material", "amount item", "material quantity",
+  "item quantity", "shopping list", "name", "count" }) do HEADINGS[h] = true end
+-- Notes guides put after a name: "Green Dye (vendor)". A vendor note marks it as bought from a vendor (not at the AH).
+local NOTES = { vendor = "vendor", ["sold by vendors"] = "vendor", ["from a vendor"] = "vendor", ["vendor item"] = "vendor",
+  optional = "note", ["or substitute"] = "note" }
+
 ---------------------------------------------------------------------------------------------------------------------
 -- Money: "25s", "1g 50s", "1g50s20c", "2.5g", "1 gold 5 silver". nil when there is no g, s or c.
 
@@ -58,11 +67,18 @@ function I.parseLine(raw)
     if head == "" then return nil end
     return { header = head }
   end
+  -- a table's heading row copied along with a guide's shopping list
+  local lowLine = line:lower():gsub("%s+", " ")
+  if HEADINGS[lowLine] then return nil end
   local e = { line = line }
   local s = (line:gsub("\195\151", "x"))   -- the times sign
   -- bullets, numbering, check boxes
   s = s:gsub("^[%-%*]+%s*", ""):gsub("^\226\128\162%s*", ""):gsub("^\194\183%s*", "")
   s = s:gsub("^%[[%sxX]?%]%s*", "")
+  -- check boxes copied from web pages: the ballot boxes and ticks
+  for _, g in ipairs({ "\226\152\144", "\226\152\145", "\226\152\146", "\226\156\147", "\226\156\148", "\226\150\161" }) do
+    if s:sub(1, #g) == g then s = trim(s:sub(#g + 1)) end
+  end
   if s:match("^%d+[%.%)]%s+.*%a") then s = s:gsub("^%d+[%.%)]%s+", "") end
   -- the most to pay: "max 25s", "max price: 1g", "(max 25s)", "under 25s", "<= 25s"
   local lower = s:lower()
@@ -135,6 +151,11 @@ function I.parseLine(raw)
     end
   end
   if name then
+    local note = name:match("%(([%a%s]+)%)%s*$")
+    if note and NOTES[trim(note):lower()] then
+      if NOTES[trim(note):lower()] == "vendor" then e.vendor = true end
+      name = name:gsub("%s*%([%a%s]+%)%s*$", "")
+    end
     name = trim(trim(name):gsub("^[\"']+", ""):gsub("[\"']+$", ""):gsub("[,;:]+$", ""))
     if name ~= "" and not e.name then e.name = name end
   end
@@ -211,6 +232,9 @@ function I.read(text, lookup, defaultName)
         cur.searches[#cur.searches + 1] = e.search
       elseif e.bad then
         res.bad[#res.bad + 1] = { line = e.line, why = e.bad }
+      elseif e.vendor then
+        res.vendor = res.vendor or {}
+        res.vendor[#res.vendor + 1] = e.line
       else
         if e.maxBad then res.maxBad[#res.maxBad + 1] = e.line end
         local id = e.id
