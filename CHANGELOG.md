@@ -1,5 +1,10 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Crafting profit and EverlookDB Crafting now share one crafting queue. With EverlookDB Crafting installed, click a recipe to queue 5 (or type how many in its box), and it shows up in Crafting's queue, where Craft next in your profession window crafts it.
+- Make shopping list and Buy materials at the auction house buy what the whole queue still needs, after what you have on all your characters and in the mail. Vendor goods stay off the list.
+- Without EverlookDB Crafting, planned crafts work as before.
+
 ## v0.31.0 (2026-11-25)
 - New: Deals. After every price update, and when the Price Feed comes in, the addon looks for bargains: auctions under 60% of the usual price, below what a vendor pays, below what disenchanting is worth, under a shopping list's max, and whatever your own Deal searches find (like `price lt 50% of median30 and quality ge rare`, the same words as Advanced search).
 - The price bar at the auction house and Home quietly say how many there are, like "4 deals". No popups, and no sound unless you turn it on.

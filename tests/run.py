@@ -140,6 +140,7 @@ def main() -> int:
     failures += upgrades_tab()
     failures += profit_tab()
     failures += profit_scopes()
+    failures += profit_queue()
     failures += upgrades_alts()
     failures += item_tip()
     failures += health()
@@ -5250,6 +5251,94 @@ def profit_tab():
     ah.shown = False
     ns.slash("profit")
     check(seq(G.HUB) == ["crafts"] and not W.inAH, f"/eah profit away from it: the main window's page: {seq(G.HUB)}")
+    return failures
+
+
+def profit_queue():
+    """Crafting profit with EverlookDB Crafting's crafting queue (API v8): the planned crafts are that queue. A row's
+    box shows and sets its queued count, a click on a row with nothing queued queues 5, the line under the list sums the
+    whole queue, Make shopping list / Buy materials buy what the whole queue misses (vendor goods left out) as the list
+    "Crafting queue", Clear queue takes two clicks, and a change in the queue repaints the boxes."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("profit queue: " + what)
+
+    lua, ns, W, DB, _ = profit_window_setup(craft_api=True)
+    lua.execute("""
+      C_Timer = { After = function() end }
+      QUEUE, LISTENERS = {}, {}
+      local function find(spell) for i, e in ipairs(QUEUE) do if e.spell == spell then return e, i end end end
+      local function changed() for _, fn in ipairs(LISTENERS) do fn() end end
+      local CREATES = { [1] = 2996, [2] = 4238, [3] = 2570 }
+      EverlookCraftAPI.version = 8
+      EverlookCraftAPI.queue = function()
+        local out = {}
+        for _, e in ipairs(QUEUE) do out[#out + 1] = { spell = e.spell, n = e.n, creates = CREATES[e.spell], profit = 100 } end
+        return out
+      end
+      EverlookCraftAPI.queueCount = function(spell) local e = find(spell); return e and e.n or 0 end
+      EverlookCraftAPI.queueSet = function(spell, n)
+        local e, i = find(spell)
+        if n <= 0 then if i then table.remove(QUEUE, i) end
+        elseif e then e.n = n else QUEUE[#QUEUE + 1] = { spell = spell, n = n } end
+        changed()
+        return true
+      end
+      EverlookCraftAPI.queueClear = function() QUEUE = {}; changed() end
+      EverlookCraftAPI.queueMissing = function() return { { 2589, 12, vendor = false }, { 2320, 9, vendor = true } } end
+      EverlookCraftAPI.onQueue = function(fn) LISTENERS[#LISTENERS + 1] = fn end
+    """)
+    G = lua.globals()
+    for f_ in lua.eval("MOCK_FRAMES").values():
+        h = f_.scripts and f_.scripts.OnEvent
+        if h:
+            h(f_, "PLAYER_LOGIN")
+    check(len(G.LISTENERS) == 1, "listens to the queue once logged in")
+    W.open()
+    f = W.frame
+    check(f.heads.crafts.label.text == "QUEUE", f"the column says QUEUE: {f.heads.crafts.label.text}")
+    check(f.clear.label.text == "Clear queue", f"Clear queue: {f.clear.label.text}")
+    check("shared with EverlookDB Crafting" in f.sum.text, f"empty queue line: {f.sum.text}")
+
+    def row_of(name):
+        for i in range(1, len(f.rows) + 1):
+            r = f.rows[i]
+            if r.shown and r.data and r.data.name == name:
+                return r
+    bag = row_of("Linen Bag")
+    bag.scripts.OnClick(bag, "LeftButton")
+    check(G.QUEUE[1] is not None and G.QUEUE[1].spell == 2 and G.QUEUE[1].n == 5, "a click queues 5 of the bag")
+    check(bag.crafts.text == "5", f"the box says 5: {bag.crafts.text}")
+    bag.scripts.OnClick(bag, "LeftButton")
+    check(G.QUEUE[1].n == 5, "a second click doesn't add more")
+    bag.crafts.SetText(bag.crafts, "8")
+    bag.crafts.scripts.OnTextChanged(bag.crafts, True)
+    check(G.QUEUE[1].n == 8, f"typing sets the queue: {G.QUEUE[1].n}")
+    check("Crafting queue: 1 recipe, 8 crafts" in f.sum.text, f"the queue line: {f.sum.text}")
+    # another addon (Crafting's window, a craft) changes the queue: the box follows
+    lua.execute("EverlookCraftAPI.queueSet(2, 3)")
+    check(bag.crafts.text == "3", f"the box follows the queue: {bag.crafts.text}")
+    shirt = row_of("Linen Shirt")
+    check(shirt.crafts.text == "", "nothing queued: an empty box")
+    check(f.make.usable is not False, "the button can be used")
+
+    W.makeList()
+    lists = DB.lists
+    l = lists and lists[len(lists)]
+    check(l is not None and l.name == "Crafting queue", f"the list is named Crafting queue: {l.name if l else None}")
+    if l is not None:
+        check(l.want['name is "Linen Cloth"'] == 12 and l.want['name is "Coarse Thread"'] is None,
+              f"what the whole queue misses, vendor goods left out: {[(k, l.want[k]) for k in l.want]}")
+    check(W.status and "whole queue" in W.status[1] and "Coarse Thread" in W.status[1], f"says so: {W.status and W.status[1]}")
+
+    # Clear queue: the first click asks, the second empties it
+    f.clear.scripts.OnClick(f.clear)
+    check(len(G.QUEUE) == 1 and f.clear.label.text == "Click again", "the first click only asks")
+    f.clear.scripts.OnClick(f.clear)
+    check(len(G.QUEUE) == 0, "the second click clears the queue")
+    check(f.clear.label.text == "Clear queue", "back to Clear queue")
     return failures
 
 

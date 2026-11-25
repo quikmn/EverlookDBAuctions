@@ -8,6 +8,10 @@
 --   (ticked per character; a row then says who can make it). "Clear filters" puts them all back.
 --   The one gold button, Make shopping list, saves what the planned crafts need (materials cheaper to craft broken
 --   down, minus what you have) as a list in the auction house's Shopping tab.
+--   With EverlookDB Crafting (API v8) the planned crafts are its crafting queue, one queue for both addons: a row's box
+--   shows and sets how many of that recipe are queued, a click on a row with an empty box queues 5, Clear queue empties
+--   it (two clicks), and Make shopping list / Buy materials buy what the whole queue still misses (Crafting works that
+--   out from what you have on every character, as its queue window shows it). Without it, planned crafts stay here.
 --   A missing price is said, never guessed: "≈" marks a row with a material that has no AH price (its real profit is
 --   lower), recipes whose result has no AH price are counted under the list, and prices over a day old are grey.
 -- Settings (db.profit = { v, from, to, min (copper), maxCost (copper), minMargin (whole %), q (the search words),
@@ -81,6 +85,48 @@ local function craftAPI()
   if api and (tonumber(api.version) or 0) >= 6 and api.characters and api.recipesOf then return api end
 end
 W.craftAPI = craftAPI
+
+-- EverlookDB Crafting (API v8) owns the crafting queue: then the planned crafts are that queue
+local function queueAPI()
+  local api = rawget(_G, "EverlookCraftAPI")
+  if api and (tonumber(api.version) or 0) >= 8 and api.queueSet and api.queueCount and api.queue and api.queueMissing then
+    return api
+  end
+end
+W.queueAPI = queueAPI
+
+-- How many crafts of a row are planned: queued in EverlookDB Crafting (by its recipe), else typed here.
+function W.planned(r)
+  local q = queueAPI()
+  if q and r and r.rid then
+    local n = tonumber(try(q.queueCount, r.rid)) or 0
+    return n > 0 and n or nil
+  end
+  return r and W.crafts[r.id]
+end
+
+-- Plan n crafts of a row (0: none): into the queue when there is one, else here.
+function W.setPlanned(r, n)
+  if not r then return end
+  n = math.max(0, math.floor(tonumber(n) or 0))
+  local q = queueAPI()
+  if q and r.rid then
+    try(q.queueSet, r.rid, n)
+  else
+    W.crafts[r.id] = n > 0 and n or nil
+  end
+end
+
+-- { [item made] = crafts planned } for sorting by the column
+function W.plannedMap()
+  local q = queueAPI()
+  if not q then return W.crafts end
+  local out = {}
+  for _, e in ipairs(try(q.queue) or {}) do
+    if e.creates and (e.n or 0) > 0 then out[e.creates] = (out[e.creates] or 0) + e.n end
+  end
+  return out
+end
 
 -- your characters with recipes (you first), from EverlookDB Crafting; {} without it
 function W.characters()
@@ -350,7 +396,14 @@ local function rowTooltip(self)
   if r.oldest and stale(r.oldest) then
     GameTooltip:AddLine("The oldest price used is from " .. ns.ago(r.oldest) .. ". Update prices at the auction house.", 0.6, 0.6, 0.6, true)
   end
-  GameTooltip:AddLine("Type how many crafts in its box to plan them. Shift-click links the item.", 0.55, 0.55, 0.55, true)
+  if queueAPI() and r.rid then
+    local n = W.planned(r)
+    GameTooltip:AddLine(n and ("In your crafting queue: %d. Change the box to queue more or fewer (0 takes it off)."):format(n)
+      or "Click: queue 5 in your crafting queue (EverlookDB Crafting); type another number in its box.", 0.55, 0.55, 0.55, true)
+    GameTooltip:AddLine("Shift-click links the item.", 0.55, 0.55, 0.55, true)
+  else
+    GameTooltip:AddLine("Type how many crafts in its box to plan them. Shift-click links the item.", 0.55, 0.55, 0.55, true)
+  end
   if W.inAH and not r.start then
     local n = bagCount(r.id)
     GameTooltip:AddLine(n > 0 and ("Right-click: sell it in Quick sell (%d in your bags)."):format(n)
@@ -377,7 +430,7 @@ local function makeRow(parent)
   row.crafts:SetScript("OnTextChanged", function(self, user)
     if not user or not row.data then return end
     local n = tonumber(self:GetText()) or 0
-    W.crafts[row.data.id] = n > 0 and n or nil
+    W.setPlanned(row.data, n)
     W.footer()
   end)
   row.crafts:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
@@ -414,6 +467,12 @@ local function makeRow(parent)
       if okInfo and link and ChatEdit_InsertLink then ChatEdit_InsertLink(link) end
       return
     end
+    -- with the crafting queue: a click on a row with nothing queued queues 5 (the box can change it)
+    if queueAPI() and r.rid and not W.planned(r) then
+      W.setPlanned(r, 5)
+      self.crafts:SetText("5")
+      W.footer()
+    end
     self.crafts:SetFocus()
   end)
   return row
@@ -441,8 +500,8 @@ local function paintRow(row, r)
   setMoney(row.profit, r.profit, { prefix = r.approx and "≈ " or nil, sign = not r.approx }, r.profit > 0 and T.ok or T.danger)
   -- no margin for a row with an unpriced material: its cost is too low, so the percentage would mean nothing
   row.margin:SetText((r.margin and not r.approx) and (("%+d%%"):format(math.floor(r.margin * 100 + 0.5))) or "")
-  local n = W.crafts[r.id]
-  row.crafts:SetText(n and tostring(n) or "")
+  local n = W.planned(r)
+  if not (row.crafts.HasFocus and row.crafts:HasFocus()) then row.crafts:SetText(n and tostring(n) or "") end
 end
 
 ---------------------------------------------------------------------------------------------------------------------
@@ -756,11 +815,7 @@ local function makeFrame()
     prevScope = b
     f.scopes[#f.scopes + 1] = b
   end
-  f.clear = EUI.Button(f, "Clear crafts", function()
-    wipe(W.crafts)
-    W.status = nil
-    W.render()
-  end, 110)
+  f.clear = EUI.Button(f, "Clear crafts", function() W.clearPlanned() end, 110)
   f.clear:SetHeight(24)
   f.clear:SetPoint("TOPRIGHT", -20, -70)
 
@@ -921,6 +976,10 @@ end
 function W.footer()
   local f = W.frame
   if not f then return end
+  local q = queueAPI()
+  f.clear:SetText(W.clearArmed and "Click again" or (q and "Clear queue" or "Clear crafts"))
+  if f.heads and f.heads.crafts then f.heads.crafts.label:SetText(q and "QUEUE" or "CRAFTS") end
+  if q then return W.queueFooter(q) end
   local picks = {}
   for _, r in ipairs(W.rows or {}) do
     if W.crafts[r.id] then picks[#picks + 1] = { row = r, crafts = W.crafts[r.id] } end
@@ -940,6 +999,57 @@ function W.footer()
   f.make:SetUsable(crafts > 0)
 end
 
+-- The line under the list with the crafting queue: what is queued (all of it, also what the filters hide), its profit
+-- where each recipe's is known, and what Buy materials will buy.
+function W.queueFooter(q)
+  local f = W.frame
+  local list = try(q.queue) or {}
+  local recipes, crafts, profit, unknown = 0, 0, 0, 0
+  local byRid = {}
+  for _, r in ipairs(W.rows or {}) do if r.rid then byRid[r.rid] = r end end
+  for _, e in ipairs(list) do
+    local n = tonumber(e.n) or 0
+    if n > 0 then
+      recipes, crafts = recipes + 1, crafts + n
+      local row = byRid[e.spell]
+      local each = (row and not row.approx and row.profit) or e.profit
+      if each then profit = profit + each * n else unknown = unknown + 1 end
+    end
+  end
+  W.picks = {}
+  if crafts == 0 then
+    f.sum:SetText("Click a recipe to queue 5, or type how many in its box. The queue is shared with EverlookDB Crafting.")
+    f.sum:SetTextColor(rgba(T.muted))
+  else
+    f.sum:SetText(("Crafting queue: %d %s, %d %s.  Profit %s%s%s"):format(recipes, recipes == 1 and "recipe" or "recipes",
+      crafts, crafts == 1 and "craft" or "crafts", unknown > 0 and "≈ " or "", (profit < 0 and "-" or "") .. ns.money(math.abs(profit)),
+      unknown > 0 and (" (%d without a price)"):format(unknown) or ""))
+    f.sum:SetTextColor(rgba(T.text))
+  end
+  f.make:SetText(W.inAH and "Buy materials" or "Make shopping list")
+  f.make:SetUsable(crafts > 0)
+end
+
+-- Clear crafts (here) or Clear queue (EverlookDB Crafting's, for both addons: a second click within 4 seconds).
+function W.clearPlanned()
+  local q = queueAPI()
+  if q then
+    local now = GetTime and GetTime() or 0
+    if not W.clearArmed or now - W.clearArmed > 4 then
+      W.clearArmed = now
+      W.footer()
+      if C_Timer and C_Timer.After then C_Timer.After(4, function() W.clearArmed = nil; if W.frame then W.footer() end end) end
+      return
+    end
+    W.clearArmed = nil
+    try(q.queueClear)
+  else
+    wipe(W.crafts)
+  end
+  W.status = nil
+  W.render()
+end
+
 -- Draws the window. keep: only scrolled, so the rows aren't worked out again.
 function W.render(keep)
   local f = W.frame
@@ -949,7 +1059,7 @@ function W.render(keep)
   if not keep or not W.rows then
     local _, rows, counts, sources = compute()
     local key, desc = W.sortState()
-    Pr.sort(rows, key, desc, { nameOf = rowName, crafts = W.crafts })
+    Pr.sort(rows, key, desc, { nameOf = rowName, crafts = W.plannedMap() })
     W.rows, W.counts = rows, counts
     W.multi = #sources > 1
   end
@@ -1065,7 +1175,44 @@ function W.render(keep)
 end
 
 -- Make shopping list: what the planned crafts need, as one list in the Shopping tab.
+-- With the crafting queue: what the whole queue still misses (EverlookDB Crafting works it out, after what you have on
+-- every character, materials you can make broken down), vendor goods left out; saved as the list "Crafting queue".
+function W.makeQueueList(q)
+  local d = db()
+  if not d then return end
+  local items, leftOut = {}, {}
+  for _, m in ipairs(try(q.queueMissing) or {}) do
+    local id, n = m[1], tonumber(m[2]) or 0
+    if id and n > 0 then
+      if m.vendor then leftOut[#leftOut + 1] = itemName(id) or ("item " .. id)
+      else items[#items + 1] = { id, n } end
+    end
+  end
+  if #items == 0 then
+    W.status = { #leftOut > 0 and ("Nothing to buy at the auction house; vendors sell the rest: " .. table.concat(leftOut, ", ") .. ".")
+      or "You have everything your crafting queue needs.", T.ok }
+    W.render(true)
+    return
+  end
+  d.lists = d.lists or {}
+  local l, new, i = R.saveCounts(d.lists, "Crafting queue", items, itemName)
+  if not l then
+    W.status = { new == "loading" and "Item names are still loading. Try again in a moment." or "Couldn't make the list.", T.danger }
+  else
+    d.listSel = i
+    local msg = ("%s \"%s\" in the auction house's Shopping tab: %d %s for the whole queue."):format(new and "Saved as" or "Updated",
+      l.name, #l.queries, #l.queries == 1 and "item" or "items")
+    if #leftOut > 0 then msg = msg .. " Left out, vendors sell them: " .. table.concat(leftOut, ", ") .. "." end
+    W.status = { msg, T.ok }
+    if ns.shoppingRefresh then pcall(ns.shoppingRefresh) end
+  end
+  W.render(true)
+  return l
+end
+
 function W.makeList()
+  local q = queueAPI()
+  if q then return W.makeQueueList(q) end
   local d = db()
   if not d or not W.picks or #W.picks == 0 then return end
   local ctx = compute()
@@ -1400,7 +1547,17 @@ end
 local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED")
 ev:RegisterEvent("BAG_UPDATE_DELAYED")
+ev:RegisterEvent("PLAYER_LOGIN")
 ev:SetScript("OnEvent", function(_, event, name)
+  if event == "PLAYER_LOGIN" then
+    -- the crafting queue changes (a craft, an add from the profession window): the boxes and the line follow
+    local q = queueAPI()
+    if q and q.onQueue and not W.listening then
+      W.listening = true
+      try(q.onQueue, function() if W.frame and W.frame:IsShown() then W.render(true) end end)
+    end
+    return
+  end
   if event == "BAG_UPDATE_DELAYED" then
     -- "Only what I can make now" follows your bags
     if settings().canMake then W.refresh() end
