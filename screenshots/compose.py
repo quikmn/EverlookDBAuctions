@@ -41,10 +41,14 @@ def place(ims, out, gap=70, maxw=1760, maxh=980, shadows=True, up=1.0):
 
 
 
-# Released features only (v0.15.0); Gear upgrades get their own shots when they ship.
-place([raw("quick-sell", key=False)], "1-quick-sell.png")
-place([raw("prices-away", key=False)], "2-prices-anywhere.png")
-place([raw("profit", key=False)], "3-crafting-profit.png")
-place([raw("ah-log-bought", key=False)], "4-ah-log.png")
-place([raw("loot-cards", crop=(2585, 405, 3190, 712), key=False)], "5-loot-cards.png", up=1.6)
-place([raw("search", key=False)], "6-settings.png")
+# v0.34 (current): best first. Names sort in gallery order (01-...); titles in curseforge.json screenshotTitles.
+place([raw("hub-home", key=False)], "01-home.png")
+place([raw("deals-ah", key=False)], "02-deals.png")
+place([raw("quick-sell", key=False)], "03-quick-sell.png")
+place([raw("sell-all", key=False)], "04-sell-all.png")
+place([raw("gold", key=False)], "05-gold.png")
+place([raw("profit-queue", key=False)], "06-crafting-profit.png")
+place([raw("shopping-import", key=False)], "07-shopping-lists.png")
+place([raw("where", key=False)], "08-where-is-it.png")
+place([raw("ah-log-bought", key=False)], "09-ah-log.png")
+place([raw("tooltip", crop=(34, 34, 655, 630), key=False)], "10-tooltips.png", up=1.3)   # the tooltip alone, without the slot button

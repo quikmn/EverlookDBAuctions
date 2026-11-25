@@ -9,5 +9,17 @@
   "categories": {
     "primary": "Auction & Economy",
     "additional": []
+  },
+  "screenshotTitles": {
+    "01-home.png": "Home: everything in one window",
+    "02-deals.png": "Deals at the auction house",
+    "03-quick-sell.png": "Quick sell",
+    "04-sell-all.png": "Sell all",
+    "05-gold.png": "Gold on all your characters",
+    "06-crafting-profit.png": "Crafting profit and the crafting queue",
+    "07-shopping-lists.png": "Shopping lists",
+    "08-where-is-it.png": "Where is it?",
+    "09-ah-log.png": "AH log",
+    "10-tooltips.png": "Item tooltips"
   }
 }
