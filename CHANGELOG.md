@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.34.0 (2026-11-25)
 - New: a Shopping lists page in the main window (/eah import or /eah shop, anywhere). Paste a list, like a leveling guide's shopping list, save it, and see or delete your lists without going to the auction house. Buying a list still happens at the auction house.
 
 ## v0.33.3 (2026-11-25)
