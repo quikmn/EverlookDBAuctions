@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.33.2 (2026-11-25)
 - Deals: stacks of goods now read "15s each, +36g for 397", so the price and the profit no longer look mismatched. The list is in order of the profit it shows, biggest first.
 
 ## v0.33.1 (2026-11-25)
