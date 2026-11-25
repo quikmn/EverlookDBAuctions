@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.33.1 (2026-11-25)
 - Hundreds more items now say where they come from, for searches like `source is quest` and in tooltips: quest rewards WoW Forever added, items you make by using another one, and more crate contents and fishing catches. Season of Discovery recipes that are not in WoW Forever no longer show up in Crafting profit.
 - New source word: `source is class`, for things a class ability makes (like Conjured Bread).
 
