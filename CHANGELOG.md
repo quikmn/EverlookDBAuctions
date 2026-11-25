@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- A much smaller download: 0.34.2 accidentally included pictures meant for the addon's web page.
+
 ## v0.34.2 (2026-11-26)
 - Shopping lists show what they should cost: "about 6g 76s at usual prices" for what you still need, on the Shopping tab and on the Shopping lists page, and per item on its Buy button.
 - Buying a list: it starts with what the whole list should cost and what this item should cost, and once it has looked at the auctions it says how the price compares, like "26% over the usual price".
