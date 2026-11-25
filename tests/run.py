@@ -7061,6 +7061,10 @@ def buy_list():
     W.begin(l)
     check("open the auction house first" in (G.SAID[len(G.SAID)] or ""), "the auction house must be open")
     G.AuctionHouseFrame.IsShown = lua.eval("function() return true end")
+    # a row's Buy button: only that item (Wool Cloth), straight to its question
+    check(W.begin(l, 'name is "Wool Cloth"') is True, "one row's Buy starts")
+    check(W.frame.head.text == "Buy 5 Wool Cloth?", f"only that item: {W.frame.head.text}")
+    W.stop()
     check(W.begin(l) is True, "it starts")
     f = W.frame
     check(f is not None and f.shown, "the panel shows beside the auction house")
@@ -8126,6 +8130,9 @@ def gold():
     saved = [l for l in ns.db().lists.values() if l.name == "BS 1-150"] if ns.db() and ns.db().lists else []
     check(len(saved) == 1 and len(list(saved[0].queries.values())) == 2, f"the guide's list is saved with 2 items: {got}")
     check(got and any("vendor" in x for x in got[0]), f"the vendor item is said: {got}")
+    check(got and any(x.endswith("vendor: 10 Green Dye") for x in got[0]), f"the vendor item reads as its amount and name: {got}")
+    src = source_of("Shopping.lua")
+    check('label = "Import", style = "accent"' in src, "Import is the page's one gold button (EverlookUI's style is accent)")
     P = ns.gold.pageState
     check(P.series is not None and P.series.n == 30, f"30 days by default: {P.series and P.series.n}")
     check(P.chart is not None and P.chart.drawError is False, f"the chart draws without an error: {P.chart and P.chart.drawError}")

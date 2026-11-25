@@ -523,10 +523,16 @@ function W.setMax(text)
   if run.step == "plan" and c.rows and not c.pending then makePlan() else render() end
 end
 
-function W.start(l)
+-- only: one search of the list (a row's Buy button): just that item, with the same price check and Buy click
+function W.start(l, only)
   if not l then return false, "no list" end
   if not (_G.AuctionHouseFrame and AuctionHouseFrame:IsShown()) then return false, "closed" end
   local entries = W.entries(l, ns.listImport and ns.listImport.idOf)
+  if only then
+    local one = {}
+    for _, e in ipairs(entries) do if e.q == only then one[1] = e end end
+    entries = one
+  end
   if #entries == 0 then return false, "empty" end
   if ns.closeBuy then pcall(ns.closeBuy) end
   if run then cancelQuote() end
@@ -866,8 +872,8 @@ local function lists()
 end
 
 -- Starts buying a list and says why when it can't.
-function W.begin(l)
-  local okStart, why = W.start(l)
+function W.begin(l, only)
+  local okStart, why = W.start(l, only)
   if okStart then return true end
   if why == "closed" then
     ns.say("open the auction house first, then press Buy this list on the Shopping tab (or /eah buy " .. plain(l and l.name:lower() or "<list>") .. ").")

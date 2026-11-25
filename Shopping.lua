@@ -122,7 +122,12 @@ local function buildQueryRow(L)
   b.text = UI.text(b, "body")
   b.text:SetPoint("LEFT", 10, 0)
   b.text:SetPoint("RIGHT", b.want, "LEFT", -8, 0)
-  b.run:SetScript("OnClick", function() if b.item then runOne(b.item) end end)
+  -- an item with an amount to buy: Buy (the item's price check, then one click buys what is still needed);
+  -- a search without an amount: Run (its results in Advanced search)
+  b.run:SetScript("OnClick", function()
+    if not b.item then return end
+    if b.buys and ns.buyList then ns.buyList.begin(picked(), b.item) else runOne(b.item) end
+  end)
   b.remove:SetScript("OnClick", function()
     local l = picked()
     if l and b.index then
@@ -154,6 +159,27 @@ local function fillQueryRow(b, q)
   else
     b.want:SetText(n and ((l.countHave and "need " or "buy ") .. num(n)) or "")
   end
+  -- Buy when this row is an item with something still to buy, else Run
+  local buys = false
+  if l and n and ns.buyList then
+    for _, e in ipairs(ns.buyList.entries(l, ns.listImport and ns.listImport.idOf)) do
+      if e.q == q then buys = not (g and g.n >= n); break end
+    end
+  end
+  b.buys = buys
+  b.run:SetText(buys and "Buy" or "Run")
+  b.run:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+    if buys then
+      GameTooltip:SetText("Buy " .. num(n) .. " " .. plain(q:match('^name is "(.*)"$') or q))
+      GameTooltip:AddLine("Shows the cheapest way to get what you still need and its price. Nothing is bought until you press Buy.", 1, 1, 1, true)
+    else
+      GameTooltip:SetText("Run this search")
+      GameTooltip:AddLine("Its results show in Advanced search.", 1, 1, 1, true)
+    end
+    GameTooltip:Show()
+  end)
+  b.run:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
 function render()
@@ -680,7 +706,7 @@ function SH.page(app, UI)
       placeholder = "Shopping list", set = function(v) pg.name = v or "" end })
     UI.Toggle(stack, { label = "Count what I already have", desc = "Bags, bank, mail and your other characters count against the amounts.",
       get = function() return pg.have end, set = function(on) pg.have = on and true or false end })
-    UI.ButtonRow(stack, { { label = "Import", style = "primary", width = 120, onClick = function()
+    UI.ButtonRow(stack, { { label = "Import", style = "accent", width = 120, onClick = function()
       local text = pg.box:GetText() or ""
       if not text:match("%S") then pg.report = "Paste one item per line first, like 90x Rough Stone."; pg.note:Refresh(); return end
       pg.report = "Reading..."

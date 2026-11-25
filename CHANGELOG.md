@@ -1,5 +1,11 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Shopping lists: each item with an amount now has its own Buy button. It goes straight to that item, shows the cheapest way to get what you still need and its price, and one more click buys it. Searches without an amount keep Run.
+
+## Unreleased
+- Shopping lists page: Import is now the page's gold button, and items a guide marks "(vendor)" are named plainly in the note ("12 Coarse Thread"), without the guide's check box.
+
 ## v0.34.0 (2026-11-25)
 - New: a Shopping lists page in the main window (/eah import or /eah shop, anywhere). Paste a list, like a leveling guide's shopping list, save it, and see or delete your lists without going to the auction house. Buying a list still happens at the auction house.
 
