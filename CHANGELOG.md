@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Over 100 more items now say where they come from, for searches like `source is drop` and in tooltips: mostly recipes and other drops that only one or two players have seen so far.
+
 ## v0.32.0 (2026-11-25)
 - Crafting profit and EverlookDB Crafting now share one crafting queue. With EverlookDB Crafting installed, click a recipe to queue 5 (or type how many in its box), and it shows up in Crafting's queue, where Craft next in your profession window crafts it.
 - Make shopping list and Buy materials at the auction house buy what the whole queue still needs, after what you have on all your characters and in the mail. Vendor goods stay off the list.
