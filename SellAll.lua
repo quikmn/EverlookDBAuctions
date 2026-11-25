@@ -867,7 +867,7 @@ function A.settings(app, EUI)
   app:Setting({
     key = "rulebelow", type = "choice", label = "When the price is under the floor", chatLabel = "Sell rule being edited: under the floor",
     keywords = { "floor", "below", "under", "vendor", "skip" }, width = 200, choices = R.BELOW,
-    desc = "When the cheapest auction minus your undercut is under the floor: don't post it, post it at the floor, or leave it for a vendor.",
+    desc = "Under the floor after your undercut: don't post it, post it at the floor, or leave it for a vendor.",
     get = function() return edited().below or "skip" end,
     set = function(v) edited().below = v; R.norm(edited()) end,
     after = changed,

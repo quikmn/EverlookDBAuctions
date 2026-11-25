@@ -861,7 +861,7 @@ function D.settingsFor(app, EUI)
     desc = "Off by default: Deals never pops up, the count just changes on the price bar and on Home.",
     get = function() return D.settings().sound end, set = set("dealSound") })
   app:Setting({ key = "dealsearches", type = "string", label = "Deal searches", width = 340,
-    placeholder = "cheap blues = price lt 50% of median30 and quality ge rare",
+    placeholder = "blues = price lt 50% of median30 and quality ge rare",
     keywords = { "deal", "deals", "search", "query", "formula", "sniper", "watch" },
     desc = "Your own searches for deals, name = search, separated by ; (cheap blues = price lt 50% of median30 and quality ge rare; cloth = name has cloth and price lt 80% of median). Everything they find is a deal.",
     get = function() local d = db(); return d and d.dealSearches and d.dealSearches:gsub("%s*\n%s*", "; ") or "" end,

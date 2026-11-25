@@ -1,10 +1,11 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Settings: the Sell rules line "When the price is under the floor" and the Deal searches example are shorter, so neither is cut off.
+
 ## v0.34.1 (2026-11-26)
 - Shopping lists: each item with an amount now has its own Buy button. It goes straight to that item, shows the cheapest way to get what you still need and its price, and one more click buys it. Searches without an amount keep Run.
 - Buying from a shopping list: a row's Buy looks at the auctions straight away (no extra Yes). Getting the price no longer stalls: it waits until the auction house is ready instead of asking too early, and clicking again while it waits doesn't start over. The summary at the end shows coins again instead of garbled text.
-
-## Unreleased
 - Shopping lists page: Import is now the page's gold button, and items a guide marks "(vendor)" are named plainly in the note ("12 Coarse Thread"), without the guide's check box.
 - Deals at the auction house: the note under the list is shorter, so it is no longer cut off.
 - Home: the Gold and income card's week line rounds to whole gold ("income 12g, costs 5g, net +7g"), so it fits the card.
