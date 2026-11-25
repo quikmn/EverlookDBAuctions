@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.32.1 (2026-11-25)
 - Over 100 more items now say where they come from, for searches like `source is drop` and in tooltips: mostly recipes and other drops that only one or two players have seen so far.
 
 ## v0.32.0 (2026-11-25)
