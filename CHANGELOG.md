@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.33.3 (2026-11-25)
 - Shopping lists: paste a leveling guide's shopping list straight from the web page into Import. Check boxes and the table's heading are skipped, and items marked "(vendor)" are left out with a note to buy them at a vendor.
 
 ## v0.33.2 (2026-11-25)
