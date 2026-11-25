@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Shopping lists: paste a leveling guide's shopping list straight from the web page into Import. Check boxes and the table's heading are skipped, and items marked "(vendor)" are left out with a note to buy them at a vendor.
+
 ## v0.33.2 (2026-11-25)
 - Deals: stacks of goods now read "15s each, +36g for 397", so the price and the profit no longer look mismatched. The list is in order of the profit it shows, biggest first.
 
