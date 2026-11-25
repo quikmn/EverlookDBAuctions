@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.34.1 (2026-11-26)
 - Shopping lists: each item with an amount now has its own Buy button. It goes straight to that item, shows the cheapest way to get what you still need and its price, and one more click buys it. Searches without an amount keep Run.
 - Buying from a shopping list: a row's Buy looks at the auctions straight away (no extra Yes). Getting the price no longer stalls: it waits until the auction house is ready instead of asking too early, and clicking again while it waits doesn't start over. The summary at the end shows coins again instead of garbled text.
 
