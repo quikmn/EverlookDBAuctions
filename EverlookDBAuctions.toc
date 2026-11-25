@@ -58,6 +58,7 @@ Options.lua
 ProfitWindow.lua
 Hub.lua
 Where.lua
+Gold.lua
 MinimapButton.lua
 FeedNudge.lua
 API.lua

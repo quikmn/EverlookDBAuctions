@@ -398,7 +398,8 @@ local function buildHome(holder)
 
   -- the cards, two columns
   local cards = {
-    { "income", "coins", "Income", function() if ns.purchases then ns.purchases.mode = "income" end; H.open("log") end },
+    { "income", "bars", "Gold and income", function() if ns.gold and H.open("gold") then return end
+      if ns.purchases then ns.purchases.mode = "income" end; H.open("log") end },
     { "loot", "bag", "Loot", function() if ns.purchases then ns.purchases.mode = "looted" end; H.open("log") end },
     { "favor", "star", "Merchant's Favor", function() H.open("favor") end },
     { "gear", "sword", "Gear upgrades", function() H.open("gear") end },
@@ -447,9 +448,12 @@ local function fillHome()
   -- income
   local d = db() or {}
   local today, week, waiting, est = H.income(d.income, d.soldPending, now)
-  home.cards.income:Set(("Today %s  \194\183  last 7 days %s"):format(money(today), money(week)),
+  -- the Gold page's numbers (Gold.lua): gold on all characters, this week's income and costs
+  local g1, g2
+  if ns.gold and ns.gold.homeLines then g1, g2 = try(ns.gold.homeLines, now) end
+  home.cards.income:Set(g1 or ("Income today %s  \194\183  last 7 days %s"):format(money(today), money(week)),
     waiting > 0 and (("%d sold, waiting in your mail%s"):format(waiting, est > 0 and (" (about " .. money(est) .. ")") or ""))
-      or "Sales and other gold you take from the mail")
+      or g2 or "Sales and other gold you take from the mail")
 
   -- loot: today's, and what to do with what is in the bags
   local n, worth, coins = 0, 0, 0
@@ -663,6 +667,8 @@ function H.addPages(a)
   -- Deals (Deals.lua): cheap auctions in the newest scan
   if ns.deals and ns.deals.page then ns.deals.page(a, EUI) end
   page("log", function() end, showLog, hideLog)
+  -- Gold (Gold.lua): gold per day on all characters, income and costs per week, best sellers, flips
+  if ns.gold and ns.gold.page then ns.gold.page(a, EUI) end
   page("crafts", buildCrafts, showCrafts, hideCrafts)
   page("gear", buildGear, showGear, hideGear)
   page("favor", buildFavor, function() fillFavor() end)

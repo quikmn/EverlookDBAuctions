@@ -1302,7 +1302,7 @@ function B.makeLedgerCard(f)
     col.title = text(col, T.fontSmall, T.gold)
     col.title:SetPoint("TOPLEFT", 0, 0)
     col.lines = {}
-    for k = 1, 6 do
+    for k = 1, 8 do
       local ln = CreateFrame("Frame", nil, col)
       ln:SetHeight(SUM_LINE)
       ln:SetPoint("TOPLEFT", 0, -14 - (k - 1) * SUM_LINE)
@@ -1345,7 +1345,7 @@ function B.renderLedgerCard(f, L)
     col:ClearAllPoints()
     col:SetPoint("TOPLEFT", PAD + (one and 0 or (i - 1) * (colW + 24)), -12)
     col:SetWidth(colW)
-    col:SetHeight(14 + 6 * SUM_LINE)
+    col:SetHeight(14 + 8 * SUM_LINE)
     col:SetShown(not one or i == 1)
     for _, ln in ipairs(col.lines) do ln:Hide() end
   end

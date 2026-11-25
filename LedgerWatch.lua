@@ -7,7 +7,8 @@
 --     ties each auction house mail to its record; taking money or items (TakeInboxMoney, TakeInboxItem,
 --     AutoLootMailItem: Blizzard's Open All, a click, EverlookDB Mail or any mail addon) ticks it off.
 --   Other money: CHAT_MSG_MONEY (looted coins, through LootCards.lua and Purchases.noteLoot), money gained while a
---     merchant window is open (vendor sales), QUEST_TURNED_IN's money.
+--     merchant window is open (vendor sales), QUEST_TURNED_IN's money. Money spent while a merchant window is open
+--     (a repair after Repair All or with the repair cursor, else a vendor buy) or a trainer window is open (training).
 -- Every game read is in pcall. db.logIncome = false (Settings > Logging) stops it all.
 local _, ns = ...
 local L = ns.ledger
@@ -262,10 +263,25 @@ function L.note(cat, c, extra)
   return e
 end
 
-local atMerchant, lastMoney
+-- Money spent at a merchant: a repair (Repair All a moment ago, or the repair cursor is up) or a vendor buy.
+local repairAt
+if type(rawget(_G, "RepairAllItems")) == "function" then
+  hooksecurefunc("RepairAllItems", function(guild)
+    if not okv(guild) then repairAt = GetTime and GetTime() or 0 end
+  end)
+end
+function W.merchantCost()
+  local t = GetTime and GetTime() or 0
+  if repairAt and t - repairAt < 5 then repairAt = nil; return "repair" end
+  if try(rawget(_G, "InRepairMode")) then return "repair" end
+  return "vendorbuy"
+end
+
+local atMerchant, lastMoney, atTrainer, trainerMoney
 local ev = CreateFrame("Frame")
 for _, e in ipairs({ "PLAYER_LOGIN", "AUCTION_HOUSE_AUCTION_CREATED", "AUCTION_CANCELED", "AUCTION_HOUSE_POST_ERROR",
-    "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MERCHANT_SHOW", "MERCHANT_CLOSED", "PLAYER_MONEY", "QUEST_TURNED_IN" }) do
+    "MAIL_SHOW", "MAIL_INBOX_UPDATE", "MERCHANT_SHOW", "MERCHANT_CLOSED", "PLAYER_MONEY", "QUEST_TURNED_IN",
+    "TRAINER_SHOW", "TRAINER_CLOSED" }) do
   pcall(ev.RegisterEvent, ev, e)
 end
 ev:SetScript("OnEvent", function(_, e, a1, a2, a3)
@@ -275,11 +291,18 @@ ev:SetScript("OnEvent", function(_, e, a1, a2, a3)
   elseif e == "MAIL_SHOW" or e == "MAIL_INBOX_UPDATE" then queueScan()
   elseif e == "MERCHANT_SHOW" then atMerchant, lastMoney = true, try(GetMoney)
   elseif e == "MERCHANT_CLOSED" then atMerchant, lastMoney = nil, nil
+  elseif e == "TRAINER_SHOW" then atTrainer, trainerMoney = true, try(GetMoney)
+  elseif e == "TRAINER_CLOSED" then atTrainer, trainerMoney = nil, nil
   elseif e == "PLAYER_MONEY" then
     if atMerchant then
       local m = try(GetMoney)
-      if m and lastMoney and m > lastMoney then L.note("vendor", m - lastMoney) end
+      if m and lastMoney and m > lastMoney then L.note("vendor", m - lastMoney)
+      elseif m and lastMoney and m < lastMoney then L.note(W.merchantCost(), lastMoney - m) end
       lastMoney = m
+    elseif atTrainer then
+      local m = try(GetMoney)
+      if m and trainerMoney and m < trainerMoney then L.note("training", trainerMoney - m) end
+      trainerMoney = m
     end
   elseif e == "QUEST_TURNED_IN" then
     local c = tonumber(okv(a3))

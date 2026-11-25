@@ -1,5 +1,13 @@
 # EverlookDB Auctions
 
+## Unreleased
+- New: the Gold page (`/eah gold`). A line chart of your gold on all your characters on this realm and faction, day by day, over 7 days, 30 days or everything. Show the total or each character in its class colour, and hover a day to see what each one had. Each character adds one point a day when it logs in, logs out or its gold changes.
+- This week and last week, side by side: what came in (AH sales, vendor sales, looted coins, quest gold, mail from other players) and what went out (AH purchases, the auction house's cut, lost deposits, repairs, vendor buys, training), and the net. Gold you move between your own characters isn't counted.
+- Your best sellers by profit and by how many sold, with the average price, what you paid when you bought them and how many expired. Also your biggest buys, your flips (items you both buy and sell: average buy against average sell after the cut) and how much gold sits in your auctions right now.
+- Export any of these as CSV to paste into a spreadsheet.
+- Repairs, vendor buys and training are now counted in the AH log's Income too, from this version on.
+- Home's income card is now "Gold and income": your gold on all characters and this week's net, and a click opens the Gold page.
+
 ## v0.32.1 (2026-11-25)
 - Over 100 more items now say where they come from, for searches like `source is drop` and in tooltips: mostly recipes and other drops that only one or two players have seen so far.
 

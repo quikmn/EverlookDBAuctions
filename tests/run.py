@@ -152,6 +152,7 @@ def main() -> int:
     failures += sell_all()
     failures += deals_list()
     failures += deals_buy()
+    failures += gold()
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from inventory import inventory
     failures += inventory(source_of, VENDOR_SETUP)
@@ -6756,7 +6757,7 @@ def ledger():
     fire("MERCHANT_SHOW")
     lua.execute("MOCK_MONEY = MOCK_MONEY + 345")
     fire("PLAYER_MONEY")
-    lua.execute("MOCK_MONEY = MOCK_MONEY - 100")   # a repair: not income, not counted
+    lua.execute("MOCK_MONEY = MOCK_MONEY - 100")   # money spent at the merchant: a cost (a vendor buy), not income
     fire("PLAYER_MONEY")
     fire("MERCHANT_CLOSED")
     lua.execute("MOCK_MONEY = MOCK_MONEY + 999")    # no merchant open: not a vendor sale
@@ -6765,6 +6766,7 @@ def ledger():
     L.note("loot", 77)
     sm = L.summary(s, None, None)
     check(sm.vendor == 345 and sm.quest == 1200 and sm.loot == 77, f"vendor {sm.vendor}, quest {sm.quest}, loot {sm.loot}")
+    check(sm.vendorbuy == 100, f"the vendor buy is a cost: {sm.vendorbuy}")
     # a period: only what is in it
     lua.execute("MOCK_TIME = MOCK_TIME + 10 * 86400")
     L.note("vendor", 5)
@@ -7855,6 +7857,268 @@ def deals_buy():
     answer(3000)
     check(D.look.state == "gone" and len(D.list) == 0 and not f.shown, f"gone: dropped and closed ({D.look.state})")
     check(browses["n"] == 2, "still one search per click")
+    return failures
+
+
+def gold():
+    """The Gold page (Gold.lua): one gold point per character per day, the chart's series (carried forward, totals,
+    ranges, thinning), this week and last week from the ledger (sales before the cut, the cut a cost), best sellers,
+    biggest buys, flips, the listings' worth, CSV, the new merchant and trainer costs (LedgerWatch.lua), and the page
+    building in the main window."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("gold: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("""
+      date = os.date
+      NOW = os.time({ year = 2026, month = 11, day = 25, hour = 15, min = 0, sec = 0 })   -- a Wednesday
+      function time(t) if t then return os.time(t) end return NOW end
+      GetTime = function() return NOW end
+      SECRET = {}
+      issecretvalue = function(v) return v == SECRET end
+      MOCK_MONEY = 123456; GetMoney = function() return MOCK_MONEY end
+      UnitName = function() return 'Mara' end
+      UnitGUID = function() return 'Player-1-0000AAAA' end
+      INV = { chars = {
+        ['Mara-1'] = { name = 'Mara', realmID = 1, faction = 'Alliance', class = 'MAGE' },
+        ['Tok-1'] = { name = 'Tok', realmID = 1, faction = 'Alliance', class = 'WARRIOR' },
+        ['Far-2'] = { name = 'Far', realmID = 2, faction = 'Horde' } } }
+    """)
+    ns = lua.table()
+    G_ = lua.globals()
+    G_.MOCK_DB = lua.table()
+    DB = G_.MOCK_DB
+    ns.db = lua.eval("function() return MOCK_DB end")
+    ns.money = lua.eval("function(c) return tostring(c) .. 'c' end")
+    ns.num = lua.eval("function(n) return tostring(n) end")
+    ns.house = lua.eval("function() return 'Realm-Alliance' end")
+    ns.ahCut = lua.eval("function() return 0.05 end")
+    ns.inventory = lua.eval("""{
+      store = function() return INV end,
+      meKey = function() return 'Mara-1' end,
+      sameHouse = function(rec, me) if not me then return true end
+        return rec.realmID == me.realmID and (not rec.faction or rec.faction == me.faction) end,
+    }""")
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    for name in ["Libs/LibStub/LibStub.lua", "MailClassify.lua", "Ledger.lua", "LedgerWatch.lua", "Gold.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    Gd = ns.gold
+    L = ns.ledger
+    now = G_.NOW
+    day = 86400
+    me = lua.eval("INV.chars['Mara-1']")
+
+    # --- one point per character per day ---------------------------------------------------------------------------
+    check(Gd.dayKey(now) == 20261125, f"day key: {Gd.dayKey(now)}")
+    check(Gd.addDays(20261125, 7) == 20261202 and Gd.addDays(20260301, -1) == 20260228, "days over a month's end")
+    check(Gd.sample() is True, "a sample is written")
+    s = DB.goldDays
+    check(s.chars["Mara-1"].d[20261125] == 123456 and s.chars["Mara-1"]["class"] == "MAGE", "today's point, with the class")
+    G_.MOCK_MONEY = 200000
+    Gd.sample()
+    check(s.chars["Mara-1"].d[20261125] == 200000 and len(list(s.chars["Mara-1"].d.keys())) == 1, "the newest of the day wins: one point")
+    G_.MOCK_MONEY = G_.SECRET
+    check(Gd.sample() is False and s.chars["Mara-1"].d[20261125] == 200000, "a secret value is never written")
+    G_.MOCK_MONEY = 200000
+    check(Gd.note(s, "Mara-1", None, -5) is None and Gd.note(s, None, None, 5) is None, "no negative gold, no key")
+    # Tok: 10 days ago and 3 days ago; Mara: 5 days ago too; Far is on another realm
+    Gd.note(s, "Tok-1", lua.eval("INV.chars['Tok-1']"), 50000, now - 10 * day)
+    Gd.note(s, "Tok-1", None, 80000, now - 3 * day)
+    Gd.note(s, "Mara-1", None, 100000, now - 5 * day)
+    Gd.note(s, "Far-2", lua.eval("INV.chars['Far-2']"), 999999, now - 2 * day)
+    chars = Gd.chars(s, me, "Mara-1")
+    names = [chars[i].name for i in range(1, len(chars) + 1)]
+    check(names == ["Mara", "Tok"], f"this house's characters, you first: {names}")
+
+    ser = Gd.series(chars, 7, now)
+    check(ser.n == 7 and ser.days[1] == 20261119 and ser.days[7] == 20261125, f"7 days: {ser.days[1]}..{ser.days[ser.n]}")
+    tok = [ser.per["Tok-1"][i] for i in range(1, 8)]
+    check(tok == [50000, 50000, 50000, 80000, 80000, 80000, 80000], f"Tok's gold carried forward: {tok}")
+    mara = [ser.per["Mara-1"][i] for i in range(1, 8)]
+    check(mara[0] is None and mara[1] == 100000 and mara[6] == 200000, f"Mara before her first point: none ({mara})")
+    check(ser.total[1] == 50000 and ser.total[7] == 280000, f"total: {ser.total[1]}, {ser.total[7]}")
+    diff, a, b = Gd.change(ser.total, ser.n)
+    check(diff == 230000 and a == 50000 and b == 280000, f"change over the range: {diff}")
+    allser = Gd.series(chars, None, now)
+    check(allser.days[1] == 20261115 and allser.n == 11, f"all: from the first point ({allser.days[1]}, {allser.n})")
+    Gd.note(s, "Tok-1", None, 1000, now - 400 * day)
+    longser = Gd.series(Gd.chars(s, me, "Mara-1"), None, now)
+    check(longser.n <= Gd.MAX_POINTS and longser.days[longser.n] == 20261125, f"a long range is thinned, today kept: {longser.n}")
+    check(Gd.series(lua.table(), None, now) is None, "no points: no series")
+
+    # --- weeks ------------------------------------------------------------------------------------------------------
+    ws = Gd.weekStart(now)
+    check(lua.eval("function(t) return os.date('%Y-%m-%d %H:%M', t) end")(ws) == "2026-11-23 00:00", "the week starts on Monday")
+    led = L.store(DB)
+
+    def money_entry(cat, c, t, **kw):
+        return L.addMoney(led, cat, c, lua.table(**kw), t)
+    money_entry("sale", 950, now - 3600, cut=50, gross=1000)
+    money_entry("vendor", 200, now - 7200)
+    money_entry("loot", 30, now - 7200)
+    money_entry("quest", 400, now - 7200)
+    money_entry("player", 1000, now - 7200)
+    money_entry("alt", 5000, now - 7200)        # between your own characters: not income
+    money_entry("repair", 120, now - 7200)
+    money_entry("vendorbuy", 80, now - 7200)
+    money_entry("training", 300, now - 7200)
+    money_entry("deposit", 15, now - 7200)
+    money_entry("unsorted", 7, now - 7200)
+    money_entry("sale", 475, ws - day, cut=25, gross=500)   # last Sunday: last week
+    money_entry("vendor", 99, ws - 8 * day)                   # the week before: in neither
+    DB.bought = lua.table()
+    DB.bought[1] = lua.table(t=now - 600, id=2589, q=20, c=400)
+    DB.bought[2] = lua.table(t=ws - 2 * day, id=2589, q=10, c=150)
+    this, last, _, _ = Gd.weeks(led, DB.bought, now)
+    check(this.sale == 1000 and this.cut == 50, f"AH sales before the cut, the cut a cost: {this.sale}, {this.cut}")
+    check(this.income == 1000 + 200 + 30 + 400 + 1000, f"this week's income: {this.income}")
+    check(this.cost == 400 + 50 + 15 + 120 + 80 + 300, f"this week's costs: {this.cost}")
+    check(this.net == this.income - this.cost and this.unsorted == 7 and this.n == 1, f"net and unsorted: {this.net} {this.unsorted}")
+    check(last.sale == 500 and last.cut == 25 and last.bought == 150 and last.vendor == 0, f"last week: {last.sale} {last.bought} {last.vendor}")
+    check(this.player == 1000 and this.alt is None, "mail from others counts, your alts don't")
+
+    # --- items ------------------------------------------------------------------------------------------------------
+    G_.MOCK_ITEMS[2589] = "Linen Cloth"
+    G_.MOCK_ITEMS[4306] = "Silk Cloth"
+
+    def auction(**kw):
+        p = {k: v for k, v in kw.items() if k not in ("st", "gross", "net", "at")}
+        r = L.post(led, lua.table(**p), now - 3 * day)
+        r.st, r.at = kw.get("st", "listed"), kw.get("at", now - day)
+        if "gross" in kw:
+            r.gross = kw["gross"]
+        if "net" in kw:
+            r.net = kw["net"]
+        return r
+    auction(item=2589, name="Linen Cloth", q=20, buy=1000, st="sold", gross=1000, net=950)
+    auction(item=2589, name="Linen Cloth", q=20, buy=1100, st="sold", gross=1100, net=1045)
+    auction(item=2589, name="Linen Cloth", q=20, buy=1200, st="expired")
+    auction(item=4306, name="Silk Cloth", q=1, buy=5000, st="sold", gross=5000, net=4750)
+    auction(item=4306, name="Silk Cloth", q=1, buy=5000, st="sold", gross=5000, net=4750, at=now - 40 * day)
+    auction(item=4306, name="Silk Cloth", q=5, buy=9000)                  # still up
+    auction(item=2589, name="Linen Cloth", q=2, unit=60)                  # up, priced per item
+    avg = Gd.averages(DB, led, "Realm-Alliance")
+    check(avg.buy[2589] == 18 and avg.sell[2589] == 53, f"averages: buy {avg.buy[2589]}, sell {avg.sell[2589]}")
+    byProfit, byCount = Gd.sellers(led, avg, now - 30 * day)
+    check(len(byProfit) == 2 and byProfit[1].name == "Silk Cloth" and byProfit[1].n == 1, "by profit: Silk first, the old sale left out")
+    linen = byProfit[2]
+    check(linen.sold == 40 and linen.n == 2 and linen.expired == 1 and linen.money == 1995, f"Linen: {linen.sold} sold, {linen.expired} expired")
+    check(linen.bought and linen.cost == 18 * 40 and linen.profit == 1995 - 720 and linen.avg == 53, f"Linen's profit after what you paid: {linen.profit}")
+    check(byCount[1].name == "Linen Cloth", "by count: Linen first")
+    allTime, _ = Gd.sellers(led, avg, None)
+    check(allTime[1].n == 2, "all time: both Silk sales")
+    buys = Gd.biggestBuys(DB.bought, None)
+    check(buys[1].c == 400 and buys[2].c == 150, "biggest buys, most first")
+    check(len(Gd.biggestBuys(DB.bought, now - day)) == 1, "biggest buys in the range only")
+    flips = Gd.flips(avg, 0.05)
+    check(len(flips) == 1 and flips[1].id == 2589 and flips[1].margin == round(53 * 0.95 - 18),
+          f"flips: {[flips[i].margin for i in range(1, len(flips) + 1)]}")
+    c, n = Gd.listed(led)
+    check(c == 9000 + 120 and n == 2, f"money on the auction house: {c} in {n}")
+
+    # --- CSV and words ----------------------------------------------------------------------------------------------
+    check(Gd.goldNumber(123456) == "12.3456" and Gd.goldNumber(10000) == "1" and Gd.goldNumber(5) == "0.0005", "gold with copper as decimals")
+    check(Gd.csvRow(lua.table_from(['a,b', 'say "hi"', 3])) == '"a,b","say ""hi""",3', "CSV quoting")
+    csv = Gd.csvDays(ser, chars).split("\n")
+    check(csv[0] == "date,total_gold,Mara,Tok" and csv[-1] == "2026-11-25,28,20,8" and csv[1] == "2026-11-19,5,,5",
+          f"gold per day CSV: {csv[0]} / {csv[1]} / {csv[-1]}")
+    wk = Gd.csvWeeks(this, last).split("\n")
+    check(wk[1].startswith("AH sales,income,0.1,0.05") and wk[-1].startswith("Net,total,"), f"weeks CSV: {wk[1]}")
+    check(Gd.csvSellers(byProfit).split("\n")[1].startswith("Silk Cloth,4306,1,1,0,0.5,"), "best sellers CSV")
+    check(Gd.signed(-500) == "-500c" and Gd.signed(20) == "+20c", "signed money")
+    check(Gd.short(123456) == "12g", "axis gold")
+    l1, l2 = Gd.homeLines(now)
+    check(l1 is not None and l1.startswith("All characters 280000c") and "in 7 days" in l1, f"Home's gold line: {l1}")
+    check(l2 is not None and l2.startswith("This week: income 2630c"), f"Home's week line: {l2}")
+
+    # --- merchant and trainer costs (LedgerWatch.lua) ---------------------------------------------------------------
+    fire = lua.eval("function(e, a, b, c) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e, a, b, c) end end end")
+    before = len(led.money)
+    G_.MOCK_MONEY = 100000
+    fire("MERCHANT_SHOW")
+    G_.MOCK_MONEY = 99000
+    fire("PLAYER_MONEY")
+    lua.execute("InRepairMode = function() return true end")
+    G_.MOCK_MONEY = 98500
+    fire("PLAYER_MONEY")
+    lua.execute("InRepairMode = nil")
+    G_.MOCK_MONEY = 99500
+    fire("PLAYER_MONEY")
+    fire("MERCHANT_CLOSED")
+    fire("TRAINER_SHOW")
+    G_.MOCK_MONEY = 97500
+    fire("PLAYER_MONEY")
+    fire("TRAINER_CLOSED")
+    G_.MOCK_MONEY = 90000
+    fire("PLAYER_MONEY")
+    got = [(led.money[i].cat, led.money[i].c) for i in range(before + 1, len(led.money) + 1)]
+    check(got == [("vendorbuy", 1000), ("repair", 500), ("vendor", 1000), ("training", 2000)],
+          f"a vendor buy, a repair, a sale, training; nothing away from them: {got}")
+
+    # --- the page builds in the main window -------------------------------------------------------------------------
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("""
+        CHAT = {}
+        DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) CHAT[#CHAT + 1] = m end }
+        STANDARD_TEXT_FONT = "font"
+        wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
+        date = os.date
+    """)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua"):
+        run(source_of(lib), lib)
+    ns = lua.table()
+    run(VENDOR_SETUP, "setup", ns)
+    lua.execute("function time(t) if t then return os.time(t) end return os.time({ year = 2026, month = 11, day = 25, hour = 15 }) end")
+    for name in ["Skin.lua", "Ledger.lua", "Gold.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    ns.sellSettings = lua.eval("function() local t = {}; return function() return t end end")()
+    ns.undercutShort = lua.eval("function() return '1s' end")
+    ns.setUndercut = lua.eval("function() return true end")
+    ns.tipOn = lua.eval("function() return true end")
+    ns.ledger.get = lua.eval("function() return nil end")
+    run(source_of("Options.lua"), "Options.lua", "EverlookDBAuctions", ns)
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then pcall(f.scripts.OnEvent, f, e, a) end end end")
+    fire("ADDON_LOADED", "EverlookDBAuctions")
+    check(ns.optionsError is None, f"the settings window builds: {ns.optionsError}")
+    app = ns.app
+    ns.gold.page(app, lua.eval('(LibStub("EverlookUI-1"))'))
+    gs = ns.gold.store()
+    gs.chars["Mara-1"] = lua.table(name="Mara", d=lua.table())
+    for k, v in ((20261120, 50000), (20261123, 70000), (20261125, 65000)):
+        gs.chars["Mara-1"].d[k] = v
+    built = lua.eval("""function(app)
+      local UI = LibStub("EverlookUI-1")
+      local parent = CreateFrame("Frame", nil, UIParent)
+      local stack = UI.Stack(parent, 700, app.T, { cards = true })
+      local sec = app.sections.gold
+      local okB, err = pcall(sec.build, stack, app, sec)
+      return okB, tostring(err)
+    end""")(app)
+    check(built[0], f"the Gold page builds: {built[1]}")
+    P = ns.gold.pageState
+    check(P.series is not None and P.series.n == 30, f"30 days by default: {P.series and P.series.n}")
+    check(P.chart is not None and P.chart.drawError is False, f"the chart draws without an error: {P.chart and P.chart.drawError}")
+    drawn = P.chart.drawn if P.chart is not None and P.chart.drawError is False else None
+    check(drawn is not None and drawn.points == 30 and drawn.dots >= 6, f"the chart draws: {drawn and drawn.dots}")
+    status = P.status.text.GetText(P.status.text) if P.status is not None else ""
+    check("All 1 character: 65000c" in status, f"the status line: {status}")
+    P.range = "7"
+    okC = lua.eval("function(g) local ok, e = pcall(g.compute); return ok, tostring(e) end")(ns.gold)
+    check(okC[0], f"compute: {okC[1]}")
+    ns.gold.refreshPage()
+    check(P.series is not None and P.series.n == 7 and P.chart is not None and P.chart.drawError is False and P.chart.drawn.points == 7, "7 days")
+    P.mode = "per"
+    P.export = "days"
+    ns.gold.refreshPage()
+    box = P.exportBox.area.box.GetText(P.exportBox.area.box)
+    check(box.startswith("date,total_gold,Mara") and "2026-11-25,6.5,6.5" in box, f"the export box: {box[:60]}")
+    check(app.sections.gold is not None and app.sections.gold.group == "main", "Gold is one of the main pages")
     return failures
 
 

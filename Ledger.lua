@@ -34,16 +34,18 @@ L.HOURS = { 12, 24, 48 }   -- durations 1, 2, 3
 L.GROUPS = {
   { id = "income", title = "Income", cats = { "sale", "vendor", "loot", "quest", "npc" } },
   { id = "other", title = "Not income", cats = { "player", "alt", "refund" } },
-  { id = "cost", title = "Costs", cats = { "bought", "deposit", "cod" } },
+  { id = "cost", title = "Costs", cats = { "bought", "deposit", "cod", "repair", "vendorbuy", "training" } },
 }
 L.LABEL = {
   sale = "AH sales", vendor = "Vendor sales", loot = "Looted money", quest = "Quest rewards", npc = "NPC mail",
   player = "From players", alt = "From your alts", refund = "Outbid refunds",
-  bought = "AH purchases", deposit = "Deposits lost", cod = "C.O.D. paid", unsorted = "Unsorted",
+  bought = "AH purchases", deposit = "Deposits lost", cod = "C.O.D. paid", repair = "Repairs", vendorbuy = "Vendor buys",
+  training = "Training", unsorted = "Unsorted",
 }
 L.SHORT = {
   sale = "AH sale", vendor = "Vendor", loot = "Loot", quest = "Quest", npc = "NPC mail", player = "From player",
-  alt = "From alt", refund = "Refund", bought = "AH buy", deposit = "Deposit lost", cod = "C.O.D.", unsorted = "Unsorted",
+  alt = "From alt", refund = "Refund", bought = "AH buy", deposit = "Deposit lost", cod = "C.O.D.", repair = "Repair",
+  vendorbuy = "Vendor buy", training = "Training", unsorted = "Unsorted",
 }
 L.GROUP_OF = {}
 for _, g in ipairs(L.GROUPS) do for _, c in ipairs(g.cats) do L.GROUP_OF[c] = g.id end end
