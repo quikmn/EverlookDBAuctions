@@ -33,6 +33,9 @@ The Sell all button lines up everything in your bags and posts it one by one. On
 Deals, checked one click at a time  
 After every price update the addon looks for bargains: auctions under 60% of the usual price, below what a vendor pays, below what disenchanting is worth, under your shopping list's max, and anything your own deal searches find (like "price lt 50% of median30 and quality ge rare"). The price bar and Home just say "4 deals": no popups, no sound unless you want one. The Deals list shows each one with why ("38% of usual", "vendor pays 1g more", "disenchants for 2g") and how sure it is. Look again checks one deal live per click; still there at that price, it's ready for Buy, then Confirm. Gone or bought deals drop off.
 
+Your gold, day by day  
+The Gold page (/eah gold) draws your gold on all your characters as a line chart over 7 days, 30 days or everything, as one total or one line per character. Under it: this week and last week, with what came in (AH sales, vendor sales, looted coins, quest gold, mail from other players) and what went out (AH purchases, the auction house's cut, lost deposits, repairs, vendor buys, training), and the net. Then your best sellers by profit and by count, your biggest buys, your flips (what you pay on average against what you sell for) and the gold in your auctions right now. Copy any list as CSV for a spreadsheet.
+
 Shopping lists, and buying a whole list  
 Paste a list of what you want, one item per line ("60 Light Leather", "Light Leather x60", item links...), and it becomes a shopping list. Press Buy this list at the auction house: it asks "Buy 60 Light Leather?", shows the cheapest way to get them and what that costs, and buys when you press Buy. Then the next item, until the list is done. It warns you when a price is far above the usual one or fewer are listed than you want, and it takes off what you already have. Add "max 25s" to a line to never pay more than that for one. EverlookDB Crafting and the leveling guides on everlookdb.com can send their shopping lists here too.
 
@@ -58,6 +61,7 @@ COMMANDS
 /eah buy [list] - buy a shopping list item by item  
 /eah rules - your sell rules for Sell all  
 /eah deals - the deals in your newest scan  
+/eah gold - your gold per day, income and costs per week, best sellers  
 /eah undercut 1s - how far under the cheapest auction to price: 50c, 1g, 5%, or 0 to match it  
 /eah auto off (or on) - stop or restart the automatic full scan  
 /eah skin off (or on) - turn the auction house look off or on (then /reload)
