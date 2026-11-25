@@ -129,7 +129,7 @@ local LIST = { source = true, enchant = true, char = true, place = true }
 -- The ways to get an item, in Data.lua's order (ns.SOURCES bits); kept here so a shorter ns.SOURCES can't make a
 -- valid word an error. Other words for them, typed only: never shown.
 local SOURCES = { "vendor", "crafted", "drop", "quest", "skinning", "pickpocket", "fishing", "herbalism", "mining",
-  "object", "world drop", "container", "disenchant" }
+  "object", "world drop", "container", "disenchant", "class" }
 local SOURCE_OK = index(SOURCES)
 local SOURCE_ALIAS = { profession = "crafted", automatic = "auto", worlddrop = "world drop", world_drop = "world drop" }
 -- Professions that aren't also a way to get an item: typed as a source, the error points at the profession column.

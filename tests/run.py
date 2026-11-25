@@ -1367,8 +1367,8 @@ def audit_search():
     got = perr(P, "source is automatic")
     check(got is not None and 'no item comes from "automatic"' in got, f"automatic is auto, not an item way: {got}")
     ways = ("vendor, crafted, drop, quest, skinning, pickpocket, fishing, herbalism, mining, object, world drop, "
-            "container, disenchant")
-    for q in ["source is trainer", "source has recipe", "source in (vendor, class)", "source ne item"]:
+            "container, disenchant, class")
+    for q in ["source is trainer", "source has recipe", "source in (vendor, spell)", "source ne item"]:
         got = perr(P, q)
         check(got is not None and "no item comes from" in got and ways in got and "e.g. source is vendor" in got,
               f"{q}: {got}")

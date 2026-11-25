@@ -1,5 +1,9 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Hundreds more items now say where they come from, for searches like `source is quest` and in tooltips: quest rewards WoW Forever added, items you make by using another one, and more crate contents and fishing catches. Season of Discovery recipes that are not in WoW Forever no longer show up in Crafting profit.
+- New source word: `source is class`, for things a class ability makes (like Conjured Bread).
+
 ## v0.33.0 (2026-11-25)
 - New: the Gold page (`/eah gold`). A line chart of your gold on all your characters on this realm and faction, day by day, over 7 days, 30 days or everything. Show the total or each character in its class colour, and hover a day to see what each one had. Each character adds one point a day when it logs in, logs out or its gold changes.
 - This week and last week, side by side: what came in (AH sales, vendor sales, looted coins, quest gold, mail from other players) and what went out (AH purchases, the auction house's cut, lost deposits, repairs, vendor buys, training), and the net. Gold you move between your own characters isn't counted.
