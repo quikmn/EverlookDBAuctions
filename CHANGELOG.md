@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.31.0 (2026-11-25)
 - New: Deals. After every price update, and when the Price Feed comes in, the addon looks for bargains: auctions under 60% of the usual price, below what a vendor pays, below what disenchanting is worth, under a shopping list's max, and whatever your own Deal searches find (like `price lt 50% of median30 and quality ge rare`, the same words as Advanced search).
 - The price bar at the auction house and Home quietly say how many there are, like "4 deals". No popups, and no sound unless you turn it on.
 - The Deals page (and at the auction house the Deals view, a click on "4 deals") lists them best profit first, with why ("38% of usual", "vendor pays 1g more", "disenchants for 2g") and how sure each one is: a usual price from many steady days and several auctions is sure, one from a few days or a jumpy price is not, and unsure ones stay hidden unless you want them.
