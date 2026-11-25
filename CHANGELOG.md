@@ -6,6 +6,8 @@
 ## Unreleased
 - Shopping lists page: Import is now the page's gold button, and items a guide marks "(vendor)" are named plainly in the note ("12 Coarse Thread"), without the guide's check box.
 
+- Deals at the auction house: the note under the list is shorter, so it is no longer cut off.
+- Home: the Gold and income card's week line rounds to whole gold ("income 12g, costs 5g, net +7g"), so it fits the card.
 ## v0.34.0 (2026-11-25)
 - New: a Shopping lists page in the main window (/eah import or /eah shop, anywhere). Paste a list, like a leveling guide's shopping list, save it, and see or delete your lists without going to the auction house. Buying a list still happens at the auction house.
 

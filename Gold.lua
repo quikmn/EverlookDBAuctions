@@ -433,6 +433,17 @@ function G.signed(c)
   return "+" .. money(c)
 end
 
+-- "12g" from 1 gold up, else "56s 20c": for one-line summaries
+function G.brief(c)
+  c = c or 0
+  if math.abs(c) >= 10000 then return (c < 0 and "-" or "") .. G.short(math.abs(c)) end
+  return c < 0 and ("-" .. money(-c)) or money(c)
+end
+function G.briefSigned(c)
+  if not c then return "" end
+  return (c < 0 and "" or "+") .. G.brief(c)
+end
+
 -- Home's card: "Gold on 3 characters: 1,234g 5s  ·  +56g this week" and "This week: income 80g, costs 24g, net +56g".
 function G.homeLines(t)
   t = now_(t)
@@ -453,7 +464,8 @@ function G.homeLines(t)
   local l2
   if led then
     local this = G.weeks(led, d.bought, t)
-    l2 = ("This week: income %s, costs %s, net %s"):format(money(this.income), money(this.cost), G.signed(this.net))
+    -- whole gold once it is a gold or more, so the line fits Home's card (11g 86s 42c three times did not)
+    l2 = ("This week: income %s, costs %s, net %s"):format(G.brief(this.income), G.brief(this.cost), G.briefSigned(this.net))
   end
   return l1, l2
 end

@@ -234,7 +234,8 @@ function I.read(text, lookup, defaultName)
         res.bad[#res.bad + 1] = { line = e.line, why = e.bad }
       elseif e.vendor then
         res.vendor = res.vendor or {}
-        res.vendor[#res.vendor + 1] = e.line
+        -- as "12 Coarse Thread": the guide's check box and "(vendor)" left out
+        res.vendor[#res.vendor + 1] = e.name and ((e.n and (e.n .. " ") or "") .. e.name) or e.line
       else
         if e.maxBad then res.maxBad[#res.maxBad + 1] = e.line end
         local id = e.id

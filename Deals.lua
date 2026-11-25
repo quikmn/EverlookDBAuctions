@@ -741,7 +741,7 @@ function V.render()
   local color = (L.state == "gone" or L.state == "noanswer") and T.bad or (L.state == "found" or L.state == "bought") and T.good or T.text
   O.status:SetText(L.text or "")
   O.status:SetTextColor(unpack(color))
-  O.note:SetText("Prices are from the scan. Look again checks one deal per click (the auction house allows one search at a time), so nothing runs by itself. Right-click a deal to take it off.")
+  O.note:SetText("Prices are from the scan; Look again checks one deal live per click. Right-click a deal to take it off.")
 end
 
 -- Opens the Deals view: at the auction house over Buy's list, else the Deals page of the main window.

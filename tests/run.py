@@ -8048,6 +8048,8 @@ def gold():
     before = len(led.money)
     G_.MOCK_MONEY = 100000
     fire("MERCHANT_SHOW")
+    check(Gd.brief(118642) == "12g" and Gd.brief(4205) == "4205c" and Gd.briefSigned(-47905) == "-5g" and Gd.briefSigned(70737) == "+7g",
+          "Home's week line: whole gold from 1g up")
     G_.MOCK_MONEY = 99000
     fire("PLAYER_MONEY")
     lua.execute("InRepairMode = function() return true end")
