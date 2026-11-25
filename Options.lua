@@ -279,7 +279,7 @@ local function build()
   app:Command("buy", "buy [list]", "buy a shopping list item by item: it asks about each one, you press Buy (auction house open)", function(rest)
     ns.slash(rest == "" and "buy" or ("buy " .. rest))
   end, { "buylist" })
-  app:Command("import", "import", "paste a list of items to buy into a shopping list (auction house open)", function()
+  app:Command("import", "import", "paste a list of items to buy into a shopping list (works anywhere)", function()
     ns.slash("import")
   end, { "paste" })
   -- "/eah undercut 1s" keeps its own reply (it names the step); "/eah set undercut 1s" works as for any setting

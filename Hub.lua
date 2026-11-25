@@ -669,6 +669,8 @@ function H.addPages(a)
   page("log", function() end, showLog, hideLog)
   -- Gold (Gold.lua): gold per day on all characters, income and costs per week, best sellers, flips
   if ns.gold and ns.gold.page then ns.gold.page(a, EUI) end
+  -- Shopping lists (Shopping.lua): paste and save lists anywhere
+  if ns.shopping and ns.shopping.page then ns.shopping.page(a, EUI) end
   page("crafts", buildCrafts, showCrafts, hideCrafts)
   page("gear", buildGear, showGear, hideGear)
   page("favor", buildFavor, function() fillFavor() end)

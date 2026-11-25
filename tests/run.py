@@ -8105,6 +8105,27 @@ def gold():
       return okB, tostring(err)
     end""")(app)
     check(built[0], f"the Gold page builds: {built[1]}")
+    # Shopping lists, a page of the main window: a leveling guide's table pastes and saves away from the auction house
+    run(source_of("ListImport.lua"), "ListImport.lua", "EverlookDBAuctions", ns)
+    run(source_of("Shopping.lua"), "Shopping.lua", "EverlookDBAuctions", ns)
+    ns.shopping.page(app, lua.eval('(LibStub("EverlookUI-1"))'))
+    built_s = lua.eval("""function(app)
+      local UI = LibStub("EverlookUI-1")
+      local parent = CreateFrame("Frame", nil, UIParent)
+      local stack = UI.Stack(parent, 700, app.T, { cards = true })
+      local sec = app.sections.shopping
+      local okB, err = pcall(sec.build, stack, app, sec)
+      return okB, tostring(err)
+    end""")(app)
+    check(built_s[0], f"the Shopping lists page builds: {built_s[1]}")
+    ids = {"Rough Stone": 2835, "Bronze Bar": 2841, "Green Dye": 2605}
+    ns.listImport.idOf = lambda n: ids.get(n)
+    ns.listImport.nameOf = lambda i: {v: k for k, v in ids.items()}.get(i)
+    got = []
+    ns.shopping["import"]("Material\n90x Rough Stone\n300x Bronze Bar\n10x Green Dye (vendor)", "BS 1-150", False, 0, lambda lines, left: got.append(list(dict(lines).values())))
+    saved = [l for l in ns.db().lists.values() if l.name == "BS 1-150"] if ns.db() and ns.db().lists else []
+    check(len(saved) == 1 and len(list(saved[0].queries.values())) == 2, f"the guide's list is saved with 2 items: {got}")
+    check(got and any("vendor" in x for x in got[0]), f"the vendor item is said: {got}")
     P = ns.gold.pageState
     check(P.series is not None and P.series.n == 30, f"30 days by default: {P.series and P.series.n}")
     check(P.chart is not None and P.chart.drawError is False, f"the chart draws without an error: {P.chart and P.chart.drawError}")

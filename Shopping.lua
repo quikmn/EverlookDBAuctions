@@ -234,17 +234,17 @@ local WHY = {
 
 -- Import: reads the box, waits a moment for item names the game hasn't sent yet, saves, and says what it did. Lines
 -- it couldn't use stay in the box (with the list's name in Save as), to fix and import again.
-function SH.import(text, saveAs, countHave, tries)
+function SH.import(text, saveAs, countHave, tries, onReport)
   local f = SH.frame
   local I = ns.listImport
   local res = I.read(text, I.lookup, saveAs)
-  local io = f and f.io
+  local io = (not onReport) and f and f.io or nil   -- the Shopping lists page says it itself (onReport)
   if #res.loading > 0 and (tries or 0) < 5 then
     for _, id in ipairs(res.loading) do
       if C_Item and C_Item.RequestLoadItemDataByID then pcall(C_Item.RequestLoadItemDataByID, id) end
     end
     if io then io.report:SetText("Waiting for the game to send some item names...") end
-    C_Timer.After(1, function() SH.import(text, saveAs, countHave, (tries or 0) + 1) end)
+    C_Timer.After(1, function() SH.import(text, saveAs, countHave, (tries or 0) + 1, onReport) end)
     return res
   end
   local done = I.save(lists(), res, countHave)
@@ -278,6 +278,7 @@ function SH.import(text, saveAs, countHave, tries)
     if #res.bad > 4 then lines[#lines + 1] = ("  and %d more"):format(#res.bad - 4) end
   end
   if #parts == 0 and #res.bad == 0 then lines[1] = UI.hex(T.bad) .. "Nothing to import: paste one item per line.|r" end
+  if onReport then onReport(lines, #res.bad > 0 and left or nil) end
   if io then
     io.report:SetText(table.concat(lines, "\n"))
     io.report:SetTextColor(unpack(T.dim))
@@ -664,6 +665,56 @@ ev:SetScript("OnEvent", function(_, e)
 end)
 
 ns.shoppingStore = SH.store   -- for tests/run.py
+
+-- Shopping lists, a page of the main window (/eah import away from the auction house): paste a list (a leveling
+-- guide's shopping list, a chat message, an export) and save it anywhere; buying it needs the auction house.
+local pg = { name = "", have = false }
+function SH.page(app, UI)
+  app:Section("shopping", "Shopping lists", function(stack)
+    UI.Header(stack, "Shopping lists", "Paste a list of items to buy, like a leveling guide's shopping list, and save it. "
+      .. "At the auction house, its Shopping tab buys it (or /eah run <list>).")
+    local area = UI.TextArea(stack.parent, stack.width, 150)
+    pg.box = area.box
+    stack:Add(area, 158)
+    UI.Input(stack, { label = "Save as", desc = "The list's name. An existing list gets the items added.", width = 220,
+      placeholder = "Shopping list", set = function(v) pg.name = v or "" end })
+    UI.Toggle(stack, { label = "Count what I already have", desc = "Bags, bank, mail and your other characters count against the amounts.",
+      get = function() return pg.have end, set = function(on) pg.have = on and true or false end })
+    UI.ButtonRow(stack, { { label = "Import", style = "primary", width = 120, onClick = function()
+      local text = pg.box:GetText() or ""
+      if not text:match("%S") then pg.report = "Paste one item per line first, like 90x Rough Stone."; pg.note:Refresh(); return end
+      pg.report = "Reading..."
+      pg.note:Refresh()
+      SH.import(text, pg.name ~= "" and pg.name or nil, pg.have, 0, function(lines, left)
+        pg.report = table.concat(lines, "\n")
+        pg.box:SetText(left and plain(table.concat(left, "\n")) or "")
+        if pg.note then pg.note:Refresh() end
+        if pg.list then pg.list:Refresh() end
+      end)
+    end } })
+    pg.note = UI.Note(stack, function() return pg.report or SH.HOW end)
+    pg.list = UI.List(stack, {
+      items = function() return lists() end,
+      empty = "No lists yet.",
+      rowHeight = 40,
+      title = function(l) return plain(l.name) end,
+      detail = function(l)
+        local n = 0
+        for _ in ipairs(l.queries or {}) do n = n + 1 end
+        return ("%d item%s or search%s"):format(n, n == 1 and "" or "s", n == 1 and "" or "es")
+      end,
+      icon = function() return "list" end,
+      buttons = { { label = "Delete", width = 80, confirm = true, onClick = function(l)
+        local all = lists()
+        for k, x in ipairs(all) do if x == l then table.remove(all, k) break end end
+        pg.list:Refresh()
+        render()
+      end } },
+      max = 100,
+    })
+  end, { group = "main", icon = "list", desc = "Paste and save shopping lists anywhere; buy them at the auction house." })
+end
+
 ns.shopping = SH
 
 -- A list made elsewhere (the profession window's Shopping list) shows at once if the tab is open.
@@ -673,11 +724,11 @@ local prevSlash, prevHelp = ns.slash, ns.help
 function ns.slash(msg)
   if msg == "import" then
     if _G.AuctionHouseFrame and AuctionHouseFrame:IsShown() then SH.openImport()
-    else ns.say("open the auction house first, then /eah import (or press Import on its Shopping tab).") end
+    elseif ns.hub then ns.hub.open("shopping") end
     return true
   end
   if msg == "shop" or msg == "shopping" or msg == "lists" then
-    if _G.AuctionHouseFrame and AuctionHouseFrame:IsShown() then openShopping() else ns.say("open the auction house first.") end
+    if _G.AuctionHouseFrame and AuctionHouseFrame:IsShown() then openShopping() elseif ns.hub then ns.hub.open("shopping") end
     return true
   end
   local listName = msg:match("^run%s+(.+)$")
