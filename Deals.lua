@@ -228,17 +228,17 @@ function D.build(rows, o)
         end
       end
       if #reasons > 0 then
-        local best, profit, conf, limit = nil, 0, 0, 0
+        local best, top, profit, conf, limit = nil, nil, 0, 0, 0
         for _, r in ipairs(reasons) do
           if not best or r.profit * r.conf > best.profit * best.conf then best = r end
-          if r.profit > profit then profit = r.profit end
+          if not top or r.profit > profit then top, profit = r, r.profit end
           if r.conf > conf then conf = r.conf end
           if r.limit > limit then limit = r.limit end
         end
         table.sort(reasons, function(a, b) return a.profit * a.conf > b.profit * b.conf end)
         local deal = { key = key, id = row.id, row = row, name = row.name or ("item " .. tostring(row.id)), icon = row.icon,
           quality = row.quality, price = price, qty = row.qty, auctions = row.auctions, usual = usual, yours = isYours() or nil,
-          profit = profit, conf = conf, sure = D.sureText(conf), units = best.units, limit = limit, reasons = reasons,
+          profit = profit, conf = conf, sure = D.sureText(conf), units = top.units or 1, limit = limit, reasons = reasons,
           score = best.profit * best.conf }
         if deal.sure == "unsure" and not o.unsure then
           hidden = hidden + 1
@@ -249,6 +249,8 @@ function D.build(rows, o)
     end
   end
   table.sort(out, function(a, b)
+    -- the profit the row shows, biggest first (sure before likely on a tie); unsure ones are left out unless asked for
+    if a.profit ~= b.profit then return a.profit > b.profit end
     if a.score ~= b.score then return a.score > b.score end
     return a.name < b.name
   end)
@@ -775,7 +777,7 @@ D.onChange(function() V.render() end)
 local page = {}
 function D.page(app, EUI)
   app:Section("deals", "Deals", function(stack)
-    EUI.Header(stack, "Deals", "Cheap auctions in the newest full scan: under your share of the usual price, below what a vendor pays, below what disenchanting is worth, under a shopping list's max, and what your Deal searches find. Best profit first.")
+    EUI.Header(stack, "Deals", "Cheap auctions in the newest full scan: under your share of the usual price, below what a vendor pays, below what disenchanting is worth, under a shopping list's max, and what your Deal searches find. Biggest profit first.")
     page.status = EUI.Note(stack, function()
       local n = #D.list
       local s = D.sourceText() .. "  " .. (n > 0 and (D.countText(n) .. ".") or "No deals right now.")
@@ -792,7 +794,13 @@ function D.page(app, EUI)
       items = function() return D.list end,
       empty = "Nothing under your deal rules in the newest scan.",
       rowHeight = 40,
-      title = function(d) return ("%s  |cffffffff%s|r  |cff6fd16f+%s|r"):format(d.name, money(d.price), money(d.profit)) end,
+      title = function(d)
+        -- stackable goods: the price is per item and the profit is for all of them, so say how many
+        if (d.units or 1) > 1 then
+          return ("%s  |cffffffff%s each|r  |cff6fd16f+%s for %s|r"):format(d.name, money(d.price), money(d.profit), num(d.units))
+        end
+        return ("%s  |cffffffff%s|r  |cff6fd16f+%s|r"):format(d.name, money(d.price), money(d.profit))
+      end,
       color = function(d)
         local idx = ({ poor = 0, common = 1, uncommon = 2, rare = 3, epic = 4, legendary = 5 })[d.quality or ""]
         local c = idx and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[idx]
