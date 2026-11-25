@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.34.3 (2026-11-26)
 - A much smaller download: 0.34.2 accidentally included pictures meant for the addon's web page.
 
 ## v0.34.2 (2026-11-26)
