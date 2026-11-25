@@ -1505,6 +1505,7 @@ C_AuctionHouse = {
   StartCommoditiesPurchase = log("Start"),
   ConfirmCommoditiesPurchase = log("Confirm"),
   CancelCommoditiesPurchase = log("Cancel"),
+  IsThrottledMessageSystemReady = function() return AH_READY ~= false end,
 }
 EverlookAuctionsQueryResults = CreateFrame("Frame", "EverlookAuctionsQueryResults")
 """
@@ -7063,7 +7064,7 @@ def buy_list():
     G.AuctionHouseFrame.IsShown = lua.eval("function() return true end")
     # a row's Buy button: only that item (Wool Cloth), straight to its question
     check(W.begin(l, 'name is "Wool Cloth"') is True, "one row's Buy starts")
-    check(W.frame.head.text == "Buy 5 Wool Cloth?", f"only that item: {W.frame.head.text}")
+    check(W.frame.head.text == "5 Wool Cloth", f"only that item, looking at once (no Yes): {W.frame.head.text}")
     W.stop()
     check(W.begin(l) is True, "it starts")
     f = W.frame
@@ -7077,7 +7078,15 @@ def buy_list():
     G.COMMS = tbl(comm(10, 20), comm(12, 10), comm(40, 50))
     click(f.go)
     check(f.go.text == "Looking...", f"while looking: {f.go.text}")
+    # the auction house is still busy after the search: the price is asked for once it says it's ready
+    G.AH_READY = False
     answer(2589)
+    check(not calls("Start"), "no price asked while the auction house is busy")
+    check(f.go.text == "Waiting for the auction house...", f"while it's busy: {f.go.text}")
+    click(f.go)
+    check(not calls("Start"), "a click while waiting sends nothing")
+    G.AH_READY = True
+    fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
     check(calls("Start") and calls("Start")[0][2] == 2589 and calls("Start")[0][3] == 25, "the price of 25 is asked for")
     check(len(calls("Confirm")) == 0, "nothing bought without the Buy click")
     check("20 at 10c each" in f.body.text and "5 at 12c each" in f.body.text and "Total 260c" in f.body.text,
@@ -8039,6 +8048,8 @@ def gold():
     check(Gd.csvSellers(byProfit).split("\n")[1].startswith("Silk Cloth,4306,1,1,0,0.5,"), "best sellers CSV")
     check(Gd.signed(-500) == "-500c" and Gd.signed(20) == "+20c", "signed money")
     check(Gd.short(123456) == "12g", "axis gold")
+    check(Gd.brief(118642) == "12g" and Gd.brief(4205) == "4205c" and Gd.briefSigned(-47905) == "-5g" and Gd.briefSigned(70737) == "+7g",
+          "Home's week line: whole gold from 1g up")
     l1, l2 = Gd.homeLines(now)
     check(l1 is not None and l1.startswith("All characters 280000c") and "in 7 days" in l1, f"Home's gold line: {l1}")
     check(l2 is not None and l2.startswith("This week: income 2630c"), f"Home's week line: {l2}")
@@ -8048,8 +8059,6 @@ def gold():
     before = len(led.money)
     G_.MOCK_MONEY = 100000
     fire("MERCHANT_SHOW")
-    check(Gd.brief(118642) == "12g" and Gd.brief(4205) == "4205c" and Gd.briefSigned(-47905) == "-5g" and Gd.briefSigned(70737) == "+7g",
-          "Home's week line: whole gold from 1g up")
     G_.MOCK_MONEY = 99000
     fire("PLAYER_MONEY")
     lua.execute("InRepairMode = function() return true end")

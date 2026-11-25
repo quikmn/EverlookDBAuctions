@@ -194,11 +194,12 @@ function W.summaryLines(t)
   lines[#lines + 1] = ("Bought %d item%s for %s."):format(n, n == 1 and "" or "s", money(spent))
   for _, b in ipairs(t.bought) do
     local short = b.want and b.n < b.want and (" (of %s)"):format(num(b.want)) or ""
-    lines[#lines + 1] = ("  %s %s%s  %s"):format(num(b.n), b.name, short, money(b.cost))
+    lines[#lines + 1] = ("  %s %s%s  %s"):format(num(b.n), plain(b.name), short, money(b.cost))
   end
-  if #t.skipped > 0 then lines[#lines + 1] = "Skipped: " .. table.concat(t.skipped, ", ") end
-  if #t.none > 0 then lines[#lines + 1] = "None to buy: " .. table.concat(t.none, ", ") end
-  if #t.enough > 0 then lines[#lines + 1] = "Had enough: " .. table.concat(t.enough, ", ") end
+  local function names(list) local o = {} for k, v in ipairs(list) do o[k] = plain(v) end return table.concat(o, ", ") end
+  if #t.skipped > 0 then lines[#lines + 1] = "Skipped: " .. names(t.skipped) end
+  if #t.none > 0 then lines[#lines + 1] = "None to buy: " .. names(t.none) end
+  if #t.enough > 0 then lines[#lines + 1] = "Had enough: " .. names(t.enough) end
   return lines, spent
 end
 
@@ -349,13 +350,25 @@ end
 function cancelQuote()
   local c = run and run.cur
   if c and (c.quote or c.quoting) and AH().CancelCommoditiesPurchase then pcall(AH().CancelCommoditiesPurchase) end
-  if c then c.quote, c.quoting = nil, nil end
+  if c then c.quote, c.quoting, c.waitReady = nil, nil, nil end
 end
 
 -- Asks the auction house for the exact price of the planned amount (buys nothing).
 function requestQuote()
   local c = run and run.cur
   if not (c and c.plan and c.plan.got > 0) or c.pending then return end
+  if c.quoting or c.waitReady then return end   -- one on its way: another click would cancel it and start over
+  -- right after a search the auction house drops anything else sent to it: wait until it says it's ready
+  local ready = AH().IsThrottledMessageSystemReady
+  if ready then
+    local okR, isReady = pcall(ready)
+    if okR and isReady == false then
+      c.waitReady = true
+      setStatus(nil)
+      render()
+      return
+    end
+  end
   cancelQuote()
   if not AH().StartCommoditiesPurchase then c.quoteFailed = true; return end
   local okCall = pcall(AH().StartCommoditiesPurchase, c.e.id, c.plan.got)
@@ -365,6 +378,15 @@ function requestQuote()
   after(QUOTE_WAIT, function()
     if c.quoting == ask then
       cancelQuote()
+      -- dropped because the auction house was busy (another search went out): ask again by itself once it's ready
+      local ready = AH().IsThrottledMessageSystemReady
+      local okR, isReady = pcall(ready or function() return true end)
+      if okR and isReady == false and (c.requotes or 0) < MAX_REQUOTES then
+        c.requotes = (c.requotes or 0) + 1
+        c.waitReady = true
+        render()
+        return
+      end
       c.quoteFailed = true
       setStatus("The auction house didn't send a price. Press Get the price to ask again.", T.mute)
       render()
@@ -540,6 +562,8 @@ function W.start(l, only)
   ns.listBuying = true
   W.show()
   ask(1)
+  -- one row's Buy: that click was the Yes, so it looks at the auctions at once
+  if only and run and run.step == "ask" then W.yes() end
   return true
 end
 
@@ -643,6 +667,16 @@ function events.AUCTION_HOUSE_SHOW_ERROR(err)
 end
 
 function events.PLAYER_MONEY() if run then render() end end
+
+-- the auction house is ready for the next message: a price quote that waited for it goes now
+function events.AUCTION_HOUSE_THROTTLED_SYSTEM_READY()
+  local c = run and run.cur
+  if c and c.waitReady then
+    c.waitReady = nil
+    requestQuote()
+    render()
+  end
+end
 
 -- Asking for a price can need a click on some clients: then Get the price takes one, from now on.
 function events.ADDON_ACTION_BLOCKED(addon, fn)
@@ -777,7 +811,7 @@ function render()
     local lines = W.summaryLines(r.tally)
     f.head:SetText(r.stopped and "Stopped" or "Done")
     sub = (#r.tally.bought > 0) and "Everything bought is in your mailbox." or ""
-    for _, l in ipairs(lines) do body[#body + 1] = plain(l) end
+    for _, l in ipairs(lines) do body[#body + 1] = l end   -- names already made safe; money keeps its coin icons
     go:SetText("Close")
     skip:SetShown(false)
   else
@@ -832,8 +866,8 @@ function render()
               go:SetEnabled(false)
               warn[#warn + 1] = ("Not enough money: you have %s."):format(money(GetMoney()))
             end
-          elseif c.quoting then
-            go:SetText("Getting the price...")
+          elseif c.quoting or c.waitReady then
+            go:SetText(c.waitReady and "Waiting for the auction house..." or "Getting the price...")
             go:SetEnabled(false)
           else
             go:SetText("Get the price")
