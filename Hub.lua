@@ -355,10 +355,21 @@ function H.searchPrices(words)
   H.open("search")
 end
 
+H.HOME_SUB = "Everything EverlookDB Auctions keeps for you. At the auction house: the Quick sell, Shopping, Upgrades and Advanced search tabs."
+
+-- Home's line about the Deals: "4 deals in the newest scan: Silk Cloth first (38% of usual). See the Deals page.", or nil.
+function H.dealsLine()
+  local D = ns.deals
+  local n = D and #D.list or 0
+  if n == 0 then return nil end
+  local top = D.list[1]
+  local why = top.reasons and top.reasons[1] and top.reasons[1].text
+  return ("%s in the newest scan: %s first%s. See the Deals page."):format(D.countText(n), top.name, why and (" (" .. why .. ")") or "")
+end
+
 local function buildHome(holder)
   home.frame = holder
-  local head = H.head(holder, "home", "Home",
-    "Everything EverlookDB Auctions keeps for you. At the auction house: the Quick sell, Shopping, Upgrades and Advanced search tabs.")
+  local head = H.head(holder, "home", "Home", H.HOME_SUB)
   home.head = head
 
   -- Prices anywhere: the remote auction house, a search box on Home
@@ -429,6 +440,9 @@ local function fillHome()
   -- prices
   local lines = H.priceLines(now)
   home.prices:Set(lines[1], lines[2])
+
+  -- the Deals (Deals.lua): one quiet line under the title when there are any
+  home.head.sub:SetText(H.dealsLine() or H.HOME_SUB)
 
   -- income
   local d = db() or {}
@@ -646,6 +660,8 @@ function H.addPages(a)
   end
   page("home", buildHome, function() fillHome() end)
   page("search", buildSearch, showSearch, hideSearch)
+  -- Deals (Deals.lua): cheap auctions in the newest scan
+  if ns.deals and ns.deals.page then ns.deals.page(a, EUI) end
   page("log", function() end, showLog, hideLog)
   page("crafts", buildCrafts, showCrafts, hideCrafts)
   page("gear", buildGear, showGear, hideGear)

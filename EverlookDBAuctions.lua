@@ -326,9 +326,21 @@ local function refreshFeedLine()
   local okS, stale = pcall(function() return ns.feedNudge and ns.feedNudge.stale() end)
   stale = okS and stale or nil
   if okF and line and stale then line = line .. " · newer may be ready" end
-  if panel.reload and panel.reload:IsShown() ~= (stale ~= nil) then
+  -- the quiet "4 deals" button (Deals.lua), left of Reload or Update prices
+  local dealsText = ns.deals and ns.deals.countText and ns.deals.countText() or nil
+  local dealsOn = panel.deals and dealsText ~= nil
+  if panel.deals and dealsOn and panel.deals:GetText() ~= dealsText then panel.deals:SetText(dealsText) end
+  local want = (stale and "r" or "") .. (dealsOn and "d" or "")
+  if panel.reload and panel.layout ~= want then
+    panel.layout = want
     panel.reload:SetShown(stale ~= nil)
     local right = stale and panel.reload or panel.button
+    if panel.deals then
+      panel.deals:SetShown(dealsOn and true or false)
+      panel.deals:ClearAllPoints()
+      panel.deals:SetPoint("RIGHT", right, "LEFT", -6, 0)
+      if dealsOn then right = panel.deals end
+    end
     for _, t in ipairs({ panel.text, panel.feed }) do
       local y = t == panel.text and 6 or -7
       t:ClearAllPoints()
@@ -521,6 +533,13 @@ local function makePanel(parent)
   f.reload:SetScript("OnClick", function() if ns.feedNudge then ns.feedNudge.reload() end end)
   UI.tip(f.reload, "Reload for newer prices", "The EverlookDB App usually brings new prices every hour, but the game only reads them at login or /reload. This reloads the interface (about a second).")
   f.reload:Hide()
+
+  -- the Deals (Deals.lua): a quiet "4 deals" when there are any; a click opens the Deals view over Buy's list
+  f.deals = UI.button(f, "", 70, 18, "quiet")
+  f.deals:SetPoint("RIGHT", f.button, "LEFT", -6, 0)
+  f.deals:SetScript("OnClick", function() if ns.deals then ns.deals.open() end end)
+  UI.tip(f.deals, "Deals", "Cheap auctions in the newest scan: under the usual price, below what a vendor pays, below what disenchanting is worth, under a shopping list's max, and what your Deal searches find. Look again checks one per click.")
+  f.deals:Hide()
 
   local bar = CreateFrame("Frame", nil, f)
   bar:SetAllPoints(f.button)

@@ -2,7 +2,7 @@
 
 Auction house prices, selling and shopping lists for WoW Forever, from the makers of [EverlookDB.com](https://everlookdb.com).
 
-- **One main window:** the minimap button, `/eah`, a key (Key Bindings, AddOns) and the EverlookDB Auctions launcher on Everlook Bar all open it. The sidebar has Home, Advanced search, AH log, Crafting profit, Gear upgrades and Merchant's Favor, then the settings, with a search box at the top. Home has a card for each: income, today's loot, Merchant's Favor, the newest gear upgrades, crafting profit, and a box that searches prices anywhere. At the auction house, Quick sell, Shopping, Upgrades and Crafting are tabs of their own.
+- **One main window:** the minimap button, `/eah`, a key (Key Bindings, AddOns) and the EverlookDB Auctions launcher on Everlook Bar all open it. The sidebar has Home, Advanced search, Deals, AH log, Crafting profit, Gear upgrades and Merchant's Favor, then the settings, with a search box at the top. Home has a card for each: income, today's loot, Merchant's Favor, the newest gear upgrades, crafting profit, and a box that searches prices anywhere. At the auction house, Quick sell, Shopping, Upgrades and Crafting are tabs of their own.
 - **Minimap button:** click for the main window, right-click for the settings, drag it around the minimap. Its tooltip has today's income and how old your prices are. Hide it on the General page or with `/eah minimap`.
 - **Price updates:** a bar along the bottom of the auction house shows which house you're at, how many items have prices and how old they are. Prices update by themselves a few seconds after you open the auction house and every 30 minutes while it's open (the server allows one update about every 15 minutes). An update takes about 30 seconds, with a progress bar, and you can keep buying and selling meanwhile. Normal auction house searches save prices too.
 - **Prices in tooltips:** lowest buyout, how many are up, how old the price is, and the 30-day low and median. Hold Shift for a full stack, Ctrl for the stack under the mouse. Also what a vendor pays, what crafting one costs, and whether the auction house or a vendor pays more after the cut. Each line can be turned off on the Tooltips page.
@@ -14,6 +14,7 @@ Auction house prices, selling and shopping lists for WoW Forever, from the maker
 - **Sell rules:** with no setup, everything is posted just under the cheapest auction, never under what a vendor pays plus the deposit. Make your own rules on the Sell rules page (`/eah rules`): which items (a search like `name has cloth`), the lowest price, the price when nobody else sells (both can be formulas like `80% of median`), the undercut, how many to keep in your bags, at most how many up at once, how many per post, the duration, and what to do when the price is too low (don't post, post at the lowest price, or leave it for a vendor). An item uses the first rule that fits.
 - **Advanced search:** the Advanced search button on the Buy tab searches your last full scan with the same query language as EverlookDB.com: stats, random-stat versions, slot, level, price, effects. For example `type has wand and reqlevel le 29 sort by price` or `slot is feet and effect has "speed"`. Find enchanted gear with `enchant is "Fiery Weapon"` or `has enchant`. Click a result to see its live auctions and buy.
 - **Below vendor price:** lists auctions that cost less than a vendor pays, with the profit each, biggest first. Such auctions also get a green mark in the auction house lists.
+- **Deals:** after every price update (and when the Price Feed comes in), the addon looks for bargains in it: auctions under 60% of the usual price, below what a vendor pays, below what disenchanting is worth, under a shopping list's max, and anything your own Deal searches find (like `price lt 50% of median30 and quality ge rare`). The price bar at the auction house and Home quietly say "4 deals"; no popups, and a sound only if you turn it on. The Deals page lists them, best profit first, with why ("38% of usual", "vendor pays 1g more", "disenchants for 2g") and how sure each one is. At the auction house, click "4 deals" for the Deals view: its Look again button checks one deal per click, live, and if it's still there at that price it's ready to buy with Buy, then Confirm. Gone or bought deals drop off. Nothing is searched or bought by itself. Settings, Deals (`/eah deals` opens them at the auction house).
 - **Shopping tab:** named lists of searches. Run a whole list in one click. Lists import and export as plain text.
 - **Import a list:** paste what you want to buy, one item per line, in any common form: `60 Light Leather`, `Light Leather x60`, `Light Leather, 60`, item links, or an item ID and how many (`2318 60`). Add `max 25s` to a line to pay at most that for one. The same item twice adds up, and lines it can't read stay in the box to fix. The leveling guides on everlookdb.com have a "Copy for the addon" button.
 - **Buy this list:** at the auction house, a small panel goes through the list one item at a time: "Buy 60 Light Leather?", Yes, then the cheapest way to get them (how many at which price, the total), a warning when that's far above the usual price or fewer are listed than you want, and one Buy button with the price on it. What you already have in your bags and bank is taken off first, and what you buy is ticked off the list. At the end it shows what you bought, skipped and spent. Nothing is bought until you press Buy.
@@ -69,6 +70,7 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 - `/eah import` pastes a list of items to buy; `/eah buy [list]` buys a shopping list item by item
 - `/eah up` opens Gear upgrades; `/eah up help` lists its commands
 - `/eah prices` searches your last full scan anywhere; `/eah profit` the crafting profit list
+- `/eah deals` opens the Deals (at the auction house: the Deals view with Look again); `/eah dealpct 50` and `/eah dealsearches cheap = price lt 50% of median30` change its settings
 - `/eah bought`, `/eah forsale`, `/eah income`, `/eah loot` open the AH log on that tab
 - `/eah lootmove` moves the loot cards, `/eah loottest` shows a few
 - `/eah undercut 1s` sets how far under the cheapest auction to price: `1c`, `50c`, `1g`, `5%`, or `0` to match it
@@ -79,10 +81,6 @@ By hand: download the latest zip from Releases and unzip it into `World of Warcr
 - `/eah debug` shows details for bug reports; `/eah feedback` shows where to report bugs and ideas
 
 Addon authors: see [API.md](API.md).
-
-## Coming next
-
-Alerts when a shopping list has a match under your price.
 
 ## License
 

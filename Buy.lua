@@ -23,6 +23,7 @@ local B = {}
 ns.buyPanel = B   -- its state (rows, sort), for tests
 local render, send   -- defined further down
 local dealPick, nextDeal   -- Start buying (further down)
+local lookDone             -- Look again (Deals.lua, further down)
 
 local function try(fn, ...)
   if type(fn) ~= "function" then return nil end
@@ -151,6 +152,7 @@ function send()
   local function noAnswer()
     if gen ~= B.gen then return end
     B.state = "noanswer"
+    if B.look then lookDone(false) end
     if #(B.rows or {}) > 0 then
       setStatus("Some of the auctions didn't come: the list may be missing some. Press Refresh to ask again.", T.bad)
     end
@@ -183,7 +185,8 @@ function send()
           end
           render()
           if left <= 0 and B.deal then dealPick() end
-          if left <= 0 and not B.deal then B.pickEnchant() end
+          if left <= 0 and B.look then lookDone(not B.partial) end
+          if left <= 0 and not B.deal and not B.lookKey then B.pickEnchant() end
         end)
     end
   end
@@ -201,6 +204,7 @@ function send()
         end
         render()
         if answer.full and B.deal then dealPick() end
+        if B.look then lookDone(answer.full and true or false) end
         return
       end
       B.keys, B.showAll, B.allVersions = ns.ahq.pickKeys(answer.entries, B.name, ns.ahq.nameOf)
@@ -535,6 +539,7 @@ end
 local function close()
   B.pending = nil
   B.deal = nil
+  B.look, B.lookKey = nil, nil
   B.gen = (B.gen or 0) + 1   -- answers still on their way are dropped
   if ns.ahq then ns.ahq.cancel("buy") end
   if B.frame then B.frame:Hide() end
@@ -557,11 +562,15 @@ local function makeFrame()
   f:SetScript("OnHide", function(self)
     cancelQuote()
     B.armed, B.pending, B.deal = nil, nil, nil
+    B.look, B.lookKey = nil, nil
     B.gen = (B.gen or 0) + 1
     if ns.ahq then ns.ahq.cancel("buy") end
     if self:IsShown() then self:Hide() end
     ns.buyOpen = false
-    if ns.searchPrimary then ns.searchPrimary(true) end   -- Search is the gold button again
+    -- Search is the gold button again (Look again, when the Deals view is under this panel)
+    local dealsUp = ns.deals and ns.deals.shown and ns.deals.shown()
+    if ns.searchPrimary then ns.searchPrimary(not dealsUp) end
+    if ns.deals and ns.deals.onBuyClosed then pcall(ns.deals.onBuyClosed) end
     if ns.searchCrumb then ns.searchCrumb(nil) end
     if ns.liveStep then ns.liveStep() end
   end)
@@ -684,11 +693,12 @@ local function makeFrame()
 end
 
 -- Opens the live auctions of a search result (row from Search.lua: id, suffix, key, name, icon, quality, ilvl, slot).
-local function open(row, deal)
+local function open(row, deal, look)
   local f = makeFrame()
   if not f or not row or not row.id then return false end
   cancelQuote()
   B.deal, B.row, B.buying, B.dealSel, B.dealWait, B.late = deal, row, nil, nil, nil, nil
+  B.look, B.lookKey = look, look and row.key or nil
   B.id, B.suffix, B.vkey, B.name = row.id, row.suffix or 0, row.key, row.name
   local stack = ns.itemInfo and ns.itemInfo(row.id)
   B.commodity = (stack and (stack[10] or 1) or 1) > 1   -- until the auction house's own key says
@@ -706,18 +716,50 @@ local function open(row, deal)
   f.sub:SetText(table.concat(bits, "   "))
   if deal then
     setStatus("Start buying: looking for its auctions under vendor price.  " .. ns.vendor.tallyText(deal.tally, money), T.mute)
+  elseif look then
+    setStatus("Looking again: is it still there at that price?", T.mute)
   else
     setStatus("Buy, then Confirm: two clicks for each purchase.", T.mute)
   end
   ns.buyOpen = true
   f:Show()
-  if ns.searchCrumb then ns.searchCrumb(deal and ("Below vendor  >  " .. row.name) or row.name) end
+  if ns.searchCrumb then ns.searchCrumb(deal and ("Below vendor  >  " .. row.name) or (look and ("Deals  >  " .. row.name)) or row.name) end
   render()
   send()
   return true
 end
 
 function ns.openBuy(row) return open(row, nil) end
+
+-- Look again (Deals.lua): the live auctions of one deal, looked up once. cb(rows, complete, commodity) answers once
+-- with what to do: an auction to pick (items), { qty, cost, unit } (stackable goods), "gone" or "noanswer" (back to
+-- the Deals view). Buying it is Buy, then Confirm, as always. After a purchase the panel goes back to the Deals view
+-- instead of looking again by itself.
+function ns.lookAgain(row, cb)
+  return open(row, nil, cb) and true or false
+end
+
+function lookDone(complete)
+  local cb = B.look
+  if not cb then return end
+  B.look = nil   -- one answer per click
+  local okCall, res = pcall(cb, B.rows, complete, B.commodity)
+  if not okCall then return end
+  if res == "gone" or res == "noanswer" then
+    close()
+    return
+  end
+  if type(res) ~= "table" then return end
+  local text = ns.deals and ns.deals.look and ns.deals.look.text or "Still there. Buy, then Confirm."
+  if B.commodity then
+    B.qty = res.qty
+    if B.frame then B.frame.qty:SetText(tostring(res.qty)) end
+  else
+    B.sel, B.armed = res, nil
+  end
+  setStatus(text, T.accent)
+  render()
+end
 
 -- Start buying: the first item of the below-vendor list (the list shrinks as items are bought out or gone).
 function nextDeal()
@@ -860,6 +902,14 @@ end
 
 local function bought(text)
   B.pending, B.sel, B.armed, B.dealSel, B.late = nil, nil, nil, nil, nil
+  if B.lookKey then
+    -- a deal from Look again: it drops off the Deals list, and the panel goes back to it (no search by itself)
+    local key = B.lookKey
+    B.buying = nil
+    close()
+    if ns.deals and ns.deals.onBought then pcall(ns.deals.onBought, key) end
+    return
+  end
   if B.deal and B.buying then
     local sell = ns.vendor.sellOf(B.id) or 0
     B.deal.tally = ns.vendor.tally(B.deal.tally, B.buying.qty, B.buying.cost, sell)

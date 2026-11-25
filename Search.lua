@@ -1282,7 +1282,7 @@ local function dataset()
         name = (suffix ~= 0 and f[13] and f[13] ~= "") and f[13] or c[1],
         quality = QUALITY[(c[2] or 1) + 1], ilvl = c[3], reqlevel = c[4], category = c[5], type = c[6],
         slot = EQUIP[c[7] or ""] or "none", stack = c[10], sell = c[9],
-        price = tonumber(f[1]), median = tonumber(f[3]), qty = tonumber(f[4]), auctions = tonumber(f[5]),
+        price = tonumber(f[1]), p10 = tonumber(f[2]), median = tonumber(f[3]), qty = tonumber(f[4]), auctions = tonumber(f[5]),
         quest = V.isQuest(id, c[5]),
         source = sourceText(d[1]), profession = ns.PROFESSIONS and ns.PROFESSIONS[d[2] or 0] or "",
         skill = d[3] or 0, slots = d[4] or 0, droprate = d[5] or 0,
@@ -1422,6 +1422,18 @@ local function run(text)
 end
 
 ns.queryRun = function(text) return run(text) end
+-- The same for Deals (Deals.lua): Advanced search's own state (its below-vendor mode, its columns) stays as it is.
+ns.queryRunQuiet = function(text)
+  local d, o, x, tp = Q.deals, Q.ordered, Q.extra, Q.tipsPending
+  local a, b, c, e = run(text)
+  Q.deals, Q.ordered, Q.extra, Q.tipsPending = d, o, x, tp
+  return a, b, c, e
+end
+-- The newest scan's rows (rows, scan, items still loading), one value of a row (a fresh live price wins), and a new
+-- round for the formula prices (Deals.lua).
+ns.queryDataset = function() return dataset() end
+ns.queryValue = function(row, col) return get(row, col) end
+ns.queryFresh = function() Q.run = Q.run + 1 end
 
 -- The same language over rows of your own (Inventory.lua's "Where is it?"): the where, sort, top and count steps.
 -- Returns the rows kept (or {} after count), the count (nil without count), or nil and the error.
@@ -1676,6 +1688,7 @@ end
 -- The line at the panel's top left: where you are.
 function ns.searchCrumb(item)
   if not Q.frame then return end
+  if not item and ns.deals and ns.deals.shown and ns.deals.shown() then item = "Deals" end
   Q.frame.crumb:SetText(C_PLACE .. "Advanced search|r" .. (item and (C_MUTE .. "  >  |r" .. item) or ""))
 end
 
@@ -2284,6 +2297,7 @@ end
 
 function liveStep()
   if ns.buyOpen then return end   -- the buy panel goes first
+  if ns.deals and ns.deals.shown and ns.deals.shown() then return end   -- Deals covers the list: Look again only
   if Q.away or away() then return end   -- live prices only at the auction house
   if Q.vendor and Q.deals then return end   -- below vendor: scan prices; the row you open is checked live
   if live.busy or not Q.frame or not Q.frame:IsVisible() or not ns.ahq then return end
@@ -2500,7 +2514,7 @@ function ns.closeSearchIn(area)
 end
 
 -- Opens Advanced search over the auction list (switching to the Buy tab first), with the last results.
-function ns.openSearch()
+function ns.openSearch(noFocus)
   local ah = _G.AuctionHouseFrame
   if away() and ns.hub and ns.hub.open("search") then return end
   if away() then
@@ -2543,7 +2557,7 @@ function ns.openSearch()
   f:Show()
   render()
   liveStep()
-  f.box:SetFocus()
+  if not noFocus then f.box:SetFocus() end
 end
 
 -- The Advanced search button: on Buy's search row, above the categories (Blizzard's row has no room between its

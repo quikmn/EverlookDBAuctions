@@ -149,6 +149,8 @@ def main() -> int:
     failures += buy_list()
     failures += reload_nudge()
     failures += sell_all()
+    failures += deals_list()
+    failures += deals_buy()
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from inventory import inventory
     failures += inventory(source_of, VENDOR_SETUP)
@@ -7406,6 +7408,364 @@ def sell_all():
     check(base.keep == 20, f"keep 20: {base.keep}")
     ns.slash("rulebelow floor")
     check(base.below == "floor", f"under the floor: post at the floor ({base.below})")
+    return failures
+
+
+def deals_list():
+    """Deals (Deals.lua): each kind of deal (under a share of the usual price, below vendor, below disenchant value, a
+    shopping list's max, the player's own Deal searches with formulas), the order by profit times how sure, the
+    unsure filter, the Look again state machine, and deals bought or gone dropping off until a newer scan."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Search.lua", "Deals.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    D = ns.deals
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("deals list: " + what)
+
+    def days(*prices):
+        return lua.table_from({100 - i: p for i, p in enumerate(prices)})
+
+    steady = days(*([100] * 30))
+    hist = {}
+    rows = []
+
+    def row(**kw):
+        t = lua.table(**kw)
+        rows.append(t)
+        return t
+
+    # cheap: 40c with a steady usual 100c over 30 days (5 auctions up): 40% of usual, sure
+    row(key="1:0", id=1, name="Cheap Cloth", price=40, median=90, qty=5, auctions=5, stack=1, sell=0)
+    hist[1] = steady
+    # not cheap: 70c against 100c
+    row(key="2:0", id=2, name="Fair Cloth", price=70, median=100, qty=5, auctions=5, stack=1, sell=0)
+    hist[2] = steady
+    # no history: the scan's own middle price only, so unsure (left out unless shown)
+    row(key="3:0", id=3, name="New Thing", price=30, median=100, qty=1, auctions=1, stack=1, sell=0)
+    # below vendor from the scan's single auctions: 3 at 100c, vendor 500c: 1200c
+    row(key="4:0", id=4, name="Old Sword", price=100, median=150, qty=3, auctions=1, stack=1, sell=500, dealText="100:3")
+    # below disenchant value: gear at 2000c that disenchants for 5000c: 5000 * 0.95 - 2000
+    row(key="5:0", id=5, name="Green Ring", quality="uncommon", price=2000, median=2600, qty=1, auctions=1, stack=1, sell=0)
+    # a shopping list's max: 200c each against a max of 300c, 5 still wanted
+    row(key="6:0", id=6, name="Peacebloom", price=200, median=210, qty=10, auctions=4, stack=20, sell=0)
+    # a jumpy history: never sure
+    row(key="7:0", id=7, name="Jumpy Gem", price=300, median=900, qty=2, auctions=2, stack=1, sell=0)
+    hist[7] = days(100, 2000, 300, 1500, 900, 1200)
+    # a quest item and a bids-only row never count
+    row(key="8:0", id=8, name="Quest Thing", price=1, median=100, qty=1, auctions=1, stack=1, sell=50, quest=True)
+    row(key="9:0", id=9, name="Bids Only", median=100, qty=1, auctions=1, stack=1, sell=50)
+    hist[8] = steady
+    hist[9] = steady
+    lrows = lua.table_from(rows)
+    shop = lua.table_from([lua.table(name="Herbs", rows=lua.table_from({"6:0": lua.table(max=300, need=5)}))])
+    searches = lua.table_from([lua.table(name='"rings"', keys=lua.table_from({"5:0": True}))])
+    base = dict(pct=60, min=10, cut=0.05, today=100, days=lambda _id: hist.get(_id),
+                devalue=lambda _id: 5000 if _id == 5 else None, shop=shop, searches=searches)
+
+    def build(**over):
+        o = dict(base)
+        o.update(over)
+        lst, hidden = D.build(lrows, lua.table(**o))
+        return [lst[i] for i in range(1, len(lst) + 1)], hidden
+
+    def kinds(d):
+        return [d.reasons[i].kind for i in range(1, len(d.reasons) + 1)]
+
+    lst, hidden = build()
+    by = {d.key: d for d in lst}
+    c1 = by.get("1:0")
+    check(c1 is not None and kinds(c1) == ["cheap"] and c1.reasons[1].text == "40% of usual", "cheap: 40% of usual")
+    check(c1 is not None and c1.sure == "sure" and c1.profit == 55 and c1.limit == 60,
+          f"cheap: sure, 100 * 0.95 - 40 profit, at most 60c to still count: {c1 and (c1.sure, c1.profit, c1.limit)}")
+    check("2:0" not in by, "70% of usual is no deal at 60%")
+    check("3:0" not in by and hidden >= 1, f"no history: unsure, left out ({hidden} hidden)")
+    d4 = by.get("4:0")
+    check(d4 is not None and kinds(d4) == ["vendor"] and d4.profit == 1200 and d4.reasons[1].text == "vendor pays 400c more",
+          f"below vendor: {d4 and d4.reasons[1].text}")
+    d5 = by.get("5:0")
+    check(d5 is not None and "de" in kinds(d5) and d5.profit == 2750, f"below disenchant value: {d5 and (kinds(d5), d5.profit)}")
+    check(d5 is not None and any(d5.reasons[i].text == "disenchants for 5000c" for i in range(1, len(d5.reasons) + 1)),
+          "why: disenchants for 5000c")
+    check(d5 is not None and "search" in kinds(d5), "your own search found it too: both reasons kept")
+    d6 = by.get("6:0")
+    check(d6 is not None and kinds(d6) == ["shop"] and d6.profit == 500 and d6.reasons[1].text == "under your max of 300c (Herbs)",
+          f"shopping list max: {d6 and (kinds(d6), d6.profit, d6.reasons[1].text)}")
+    check("7:0" not in by or by["7:0"].sure != "sure", "a jumpy usual price is never sure")
+    check("8:0" not in by and "9:0" not in by, "quest items and bids-only rows never count")
+    # the order: profit times how sure (disenchant 2750 * 0.6 = 1650, vendor 1200 * 1, herbs 500 * 1)
+    order = [d.key for d in lst]
+    check(order[:3] == ["5:0", "4:0", "6:0"], f"best first: {order}")
+    check(d5 is not None and D.whyText(d5).count(" · ") == 1, f"why joins the reasons: {d5 and D.whyText(d5)}")
+
+    # unsure deals on request; the share; the smallest profit; gone ones; kinds off; your own auctions up
+    lst, hidden = build(unsure=True)
+    keys = [d.key for d in lst]
+    check("3:0" in keys and hidden == 0, f"unsure shown on request: {keys}")
+    check(any(d.key == "3:0" and d.sure == "unsure" for d in lst), "and marked unsure")
+    lst, _ = build(pct=30)
+    check("1:0" not in [d.key for d in lst], "at 30% the 40% cloth is no deal")
+    lst, _ = build(min=60)
+    check("1:0" not in [d.key for d in lst], "a 55c profit is under a 60c minimum")
+    lst, _ = build(gone=lua.table_from({"4:0": True}))
+    check("4:0" not in [d.key for d in lst], "a deal bought or gone is left out")
+    lst, _ = build(vendor=False, de=False, shop=False, searches=lua.table())
+    check([d.key for d in lst] == ["1:0"], f"kinds switched off: {[d.key for d in lst]}")
+    lst, _ = build(listed=lambda _id: 2 if _id == 1 else 0, unsure=True)
+    mine = [d for d in lst if d.key == "1:0"]
+    check(mine and mine[0].sure != "sure" and mine[0].yours, f"yours up too: less sure ({mine and mine[0].sure})")
+
+    # how sure: days, steadiness, auctions
+    check(D.sureText(D.confidence(30, 1, 5)) == "sure", "30 steady days, 5 up: sure")
+    check(D.sureText(D.confidence(3, 0.3, 1)) == "unsure", "3 jumpy days, 1 up: unsure")
+    check(D.sureText(D.confidence(0, 0, 50)) == "unsure", "no history: never more than unsure")
+    usual, n, _st = D.usualOf(days(10, 20, 30, 40, 50), 100)
+    check(usual == 30 and n == 5, f"usual: the middle daily low: {usual}, {n}")
+    check(D.usualOf(days(10, 20), 100)[0] is None, "two days: no usual price")
+    check(D.countText(0) is None and D.countText(1) == "1 deal" and D.countText(4) == "4 deals", "the quiet line")
+
+    # Deal searches: names, formulas, mistakes refused
+    s = D.searchesOf("wands = type has wand and price lt 90% of median; name has cloth")
+    check(len(s) == 2 and s[1].name == "wands" and s[2].name == "name has cloth", "named and unnamed searches")
+    okC, why = D.checkSearches("bad = price lt 60% median")
+    check(okC is False and "bad:" in why and "of what" in why, f"a broken search is refused in plain words: {why}")
+    check(D.checkSearches("cheap = price lt 50% of median30 and quality ge rare") is True, "a formula search is fine")
+
+    # over the scan (VENDOR_SETUP): a saved search with a formula; Advanced search's own state is left alone
+    db = ns.db()
+    db.dealSearches = "wands = type has wand and price lt 90% of median"
+    ns.queryRun("belowvendor")
+    before = ns.queryOrdered()
+    D.compute()
+    got = sorted(D.list[i].name for i in range(1, len(D.list) + 1))
+    check(got == ["Lesser Magic Wand", "Sort Wand"], f"wands at 86% and 80% of median, not the one at 90%: {got}")
+    check(all(D.list[i].reasons[1].kind == "search" and D.list[i].reasons[1].text == 'your search "wands"'
+              for i in range(1, len(D.list) + 1)), "why: your search")
+    check(ns.queryOrdered() == before, "Advanced search's state is untouched")
+
+    # a shopping list with a formula max, over the scan: Linen 10c, a max of 90% of median (12c): 10c still counts
+    q = 'name is "Linen Cloth"'
+    db.lists = lua.table_from([lua.table(name="Cloth", queries=lua.table_from([q]), want=lua.table_from({q: 40}),
+                                         max=lua.table_from({q: "90% of median"}))])
+    D.compute()
+    lin = [D.list[i] for i in range(1, len(D.list) + 1) if D.list[i].name == "Linen Cloth"]
+    check(lin and lin[0].reasons[1].kind == "shop" and lin[0].limit == 10, f"a formula max from a list: {lin and lin[0].limit}")
+    db.lists = None
+
+    # Look again: one search per click, then found / gone / no answer
+    sent = []
+    holder = {}
+
+    def look(row, cb):
+        sent.append(row.key)
+        holder["cb"] = cb
+        return True
+    D.lookFn = look
+    ah = {"open": True}
+    D.ahOpen = lambda: ah["open"]
+
+    def deal(key, name, price, limit):
+        return lua.table(key=key, id=1, name=name, price=price, limit=limit, reasons=lua.table(), row=lua.table(key=key))
+    D.list = lua.table_from([deal("a", "Silk", 100, 150), deal("b", "Wool", 50, 60)])
+    D.look = lua.table(state="idle")
+    label, usable = D.buttonState()
+    check(label == "Look again: Silk" and usable, f"the button names the top deal: {label}")
+    check(D.click() is True and sent == ["a"] and D.look.state == "looking", "one click: one search for the top deal")
+    check(D.click() is False and sent == ["a"], "clicks while it looks send nothing more")
+    label, usable = D.buttonState()
+    check(label.startswith("Looking") and not usable, f"button while looking: {label}")
+    check(D.onLive("b", lua.table(), True, False) is None, "an answer for another deal is ignored")
+    live = lua.table_from([lua.table(unit=90, buyout=90, qty=1, mine=True), lua.table(unit=120, buyout=120, qty=1),
+                           lua.table(unit=140, buyout=140, qty=1)])
+    pick = holder["cb"](live, True, False)
+    check(pick is not None and pick.unit == 120 and D.look.state == "found", "found: the cheapest from someone else, not yours")
+    check("Still there at 120c" in (D.look.text or ""), f"says so: {D.look.text}")
+    check(len(D.list) == 2 and D.list[1].checkedAt is not None, "a found deal stays, marked checked")
+    D.onBuyClosed()
+    check(D.look.state == "idle", "the buy panel closed: ready for the next click")
+    # gone: nothing at most at its price: dropped, the next one is the top now
+    D.click()
+    r = holder["cb"](lua.table_from([lua.table(unit=400, buyout=400, qty=1)]), True, False)
+    check(r == "gone" and D.look.state == "gone" and len(D.list) == 1 and D.list[1].key == "b", "gone: dropped from the list")
+    check("cheapest is 400c now" in (D.look.text or ""), f"gone says the price now: {D.look.text}")
+    check(D.gone["a"] is not None, "kept as gone")
+    check(D.buttonState() == ("Look again: Wool", True), "the next deal is up")
+    # no answer: nothing dropped, the next click asks again
+    D.click()
+    check(holder["cb"](None, False, False) == "noanswer" and len(D.list) == 1 and D.look.state == "noanswer", "no answer: kept")
+    check(D.click() is True and sent == ["a", "a", "b", "b"], f"asks again on the next click: {sent}")
+    # stackable goods: how many from others at most at the deal's price
+    goods = lua.table_from([lua.table(unit=55, qty=10, others=4), lua.table(unit=58, qty=3, others=3),
+                            lua.table(unit=70, qty=9, others=9)])
+    pick = holder["cb"](goods, True, True)
+    check(pick.qty == 7 and pick.cost == 4 * 55 + 3 * 58 and pick.unit == 55, f"goods under the price: {pick.qty}")
+    D.onBought("b")
+    check(len(D.list) == 0 and D.look.state == "bought" and "Bought Wool" in D.look.text, "bought: dropped")
+    check(D.buttonState()[1] is False, "nothing left: the button can't be clicked")
+    # away from the auction house: nothing is sent
+    D.list = lua.table_from([deal("c", "Thing", 1, 2), deal("d", "Other", 1, 2)])
+    D.look = lua.table(state="idle")
+    ah["open"] = False
+    n = len(sent)
+    check(D.click() is False and len(sent) == n, "away: nothing sent")
+    ah["open"] = True
+    # a clicked row is the one Look again checks
+    D.look = lua.table(state="idle")
+    D.sel = "d"
+    D.click()
+    check(sent[-1] == "d", "a picked row is checked first")
+    D.sel = None
+    D.look = lua.table(state="idle")
+
+    # gone ones stay off over a recompute of the same scan, and come back with a newer one
+    D.compute()
+    check(len(D.list) >= 1, "the wands again")
+    first = D.list[1].key
+    D.drop(first)
+    D.compute()
+    check(first not in [D.list[i].key for i in range(1, len(D.list) + 1)], "dropped stays off for this scan")
+    check(db.dealsGone[first] is not None, "and is saved over a reload")
+    db.scans[1].at = 5
+    ns.queryFresh()
+    D.compute()
+    check(first in [D.list[i].key for i in range(1, len(D.list) + 1)], "a newer scan brings it back")
+    db.dealSearches = None
+
+    # the Deals settings page and the Deals page of the main window build, and the settings work as commands
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("""
+        CHAT = {}
+        DEFAULT_CHAT_FRAME = { AddMessage = function(_, m) CHAT[#CHAT + 1] = m end }
+        STANDARD_TEXT_FONT = "font"
+        wipe = function(t) for k in pairs(t) do t[k] = nil end return t end
+    """)
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    for lib in ("Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua"):
+        run(source_of(lib), lib)
+    ns = lua.table()
+    db = run(VENDOR_SETUP, "setup", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Search.lua", "Deals.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    ns.parseMoney = lua.eval("""function(text)
+      local total, any = 0, false
+      for n, unit in text:gmatch("(%d+)%s*([gsc])") do
+        total = total + tonumber(n) * (unit == "g" and 10000 or unit == "s" and 100 or 1); any = true
+      end
+      return any and total or nil
+    end""")
+    ns.sellSettings = lua.eval("function() local t = {}; return function() return t end end")()
+    ns.undercutShort = lua.eval("function() return '1s' end")
+    ns.setUndercut = lua.eval("function() return true end")
+    ns.tipOn = lua.eval("function() return true end")
+    run(source_of("Options.lua"), "Options.lua", "EverlookDBAuctions", ns)
+    fire = lua.eval("function(e, a) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then pcall(f.scripts.OnEvent, f, e, a) end end end")
+    fire("ADDON_LOADED", "EverlookDBAuctions")
+    check(ns.optionsError is None, f"the settings window builds: {ns.optionsError}")
+    app = ns.app
+    ns.deals.page(app, lua.eval('LibStub("EverlookUI-1")'))
+    build_page = lua.eval("""function(app, id)
+      local okB, err = pcall(app.BuildSection, app, id)
+      return okB, tostring(err)
+    end""")
+    for page_id in ("dealsettings", "deals"):
+        built = build_page(app, page_id)
+        check(built[0], f"the {page_id} page builds: {built[1]}")
+    ns.slash("dealpct 50")
+    check(db.dealPct == 50 and ns.deals.settings().pct == 50, f"/eah dealpct 50: {db.dealPct}")
+    ns.slash("dealmin 1g")
+    check(db.dealMin == 10000, f"/eah dealmin 1g: {db.dealMin}")
+    ns.slash("dealsearches cheap = price lt 60% median")
+    check(db.dealSearches is None, "a broken deal search isn't saved")
+    ns.slash("dealsearches cheap = price lt 50% of median30 and quality ge rare")
+    check(db.dealSearches == "cheap = price lt 50% of median30 and quality ge rare", f"a deal search is saved: {db.dealSearches}")
+    check(ns.deals.settings().sound is False, "no sound by default")
+    return failures
+
+
+def deals_buy():
+    """Look again through the buy panel (Buy.lua): one search per click, the auction still there is picked, Buy then
+    Confirm buys it once, the deal drops off and the panel goes back to the Deals without searching again; a gone one
+    closes the panel at once."""
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    ns = lua.table()
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run(VENDOR_SETUP, "setup", ns)
+    lua.execute(BUY_SETUP)
+    run(AHQ_FAKE, "ahq", ns)
+    for name in ["Skin.lua", "Vendor.lua", "Buy.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    G = lua.globals()
+    ev = G.MOCK_FRAMES[len(G.MOCK_FRAMES)]   # Buy.lua's event frame
+    run(source_of("Deals.lua"), "Deals.lua", "EverlookDBAuctions", ns)
+    ns.calmSecs = 0
+    D = ns.deals
+    D.ahOpen = lua.eval("function() return true end")
+    tbl = lua.eval("function(...) return { ... } end")
+    browse_answer = lua.eval("function(id) return { ok = true, full = true, entries = { { itemKey = { itemID = id } } } } end")
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("deals buy: " + what)
+
+    browses = {"n": 0}
+    orig = ns.ahq.browse
+
+    def counted(*a):
+        browses["n"] += 1
+        return orig(*a)
+    ns.ahq.browse = counted
+
+    def answer(item_id):
+        G.AHQ.browse(browse_answer(item_id))
+        G.AHQ["items"](G.AHQ.key, True, True)
+
+    def calls(name):
+        return [G.CALLS[i] for i in range(1, len(G.CALLS) + 1) if G.CALLS[i][1] == name]
+
+    def click(button):
+        button.scripts.OnClick(button)
+
+    sword = lua.table(key="3000:0", id=3000, suffix=0, name="Old Sword", quality="uncommon")
+
+    def sword_deal():
+        reason = lua.table(kind="vendor", text="vendor pays 200c more", profit=200, conf=1, limit=400)
+        return tbl(lua.table(key="3000:0", id=3000, name="Old Sword", price=300, limit=400, reasons=tbl(reason), row=sword))
+    D.list = sword_deal()
+    D.look = lua.table(state="idle")
+    G.ITEMS = tbl(lua.table(auctionID=1, buyoutAmount=350, quantity=1, containsOwnerItem=False, timeLeft=3),
+                  lua.table(auctionID=2, buyoutAmount=900, quantity=1, containsOwnerItem=False, timeLeft=3))
+    check(D.click() is True and browses["n"] == 1, "one click, one search")
+    f = G.EverlookAuctionsQueryResults.children[1]
+    answer(3000)
+    check(D.look.state == "found", f"still there: {D.look.state}")
+    check("Still there" in f.status.text, f"the panel says so: {f.status.text}")
+    click(f.buy)
+    check(len(calls("PlaceBid")) == 0 and f.buy.text.startswith("Confirm"), f"Buy arms Confirm; nothing bought yet ({f.buy.text})")
+    click(f.buy)
+    bids = calls("PlaceBid")
+    check(len(bids) == 1 and bids[0][2] == 1 and bids[0][3] == 350, f"Confirm buys the picked auction once: {len(bids)}")
+    ev.scripts.OnEvent(ev, "AUCTION_HOUSE_PURCHASE_COMPLETED", 1)
+    G.advance(2)
+    check(len(D.list) == 0 and D.look.state == "bought", f"bought: off the Deals list ({D.look.state})")
+    check(not f.shown and browses["n"] == 1, f"back to the Deals, no search by itself ({browses['n']})")
+
+    # gone: the panel closes at once and the deal drops
+    D.list = sword_deal()
+    D.look = lua.table(state="idle")
+    G.ITEMS = tbl(lua.table(auctionID=3, buyoutAmount=800, quantity=1, containsOwnerItem=False, timeLeft=3))
+    D.click()
+    answer(3000)
+    check(D.look.state == "gone" and len(D.list) == 0 and not f.shown, f"gone: dropped and closed ({D.look.state})")
+    check(browses["n"] == 2, "still one search per click")
     return failures
 
 

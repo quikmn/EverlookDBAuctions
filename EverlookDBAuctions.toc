@@ -37,6 +37,7 @@ ListImport.lua
 Shopping.lua
 Buy.lua
 BuyList.lua
+Deals.lua
 RecipeList.lua
 Profit.lua
 PurchaseLog.lua

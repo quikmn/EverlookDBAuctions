@@ -1,5 +1,12 @@
 # EverlookDB Auctions
 
+## Unreleased
+- New: Deals. After every price update, and when the Price Feed comes in, the addon looks for bargains: auctions under 60% of the usual price, below what a vendor pays, below what disenchanting is worth, under a shopping list's max, and whatever your own Deal searches find (like `price lt 50% of median30 and quality ge rare`, the same words as Advanced search).
+- The price bar at the auction house and Home quietly say how many there are, like "4 deals". No popups, and no sound unless you turn it on.
+- The Deals page (and at the auction house the Deals view, a click on "4 deals") lists them best profit first, with why ("38% of usual", "vendor pays 1g more", "disenchants for 2g") and how sure each one is: a usual price from many steady days and several auctions is sure, one from a few days or a jumpy price is not, and unsure ones stay hidden unless you want them.
+- Look again: one click looks up one deal live. Still there at that price? It's picked, then Buy and Confirm as always. Gone? It drops off the list. It never searches or buys by itself, and the list says how old its prices are.
+- Settings, Deals: how cheap counts (60%), the smallest profit (10s), which kinds, unsure deals, a sound, and your Deal searches. `/eah deals` opens them.
+
 ## v0.30.0 (2026-11-25)
 - New: Sell all. The Sell all button on Quick sell lines up everything in your bags and posts it one click at a time. One button says what comes next, like "Post 20 Linen Cloth · 12s each (3 of 14)": each click posts one at the price its rule picks and moves on. Each item says why it gets its price (just under the cheapest, your normal price, or kept at your lowest price), Skip leaves one out for this visit, and a line says what your alts have that you could mail over and sell.
 - Cancel undercut in Sell all: your auctions someone undercut, most undercut first, "Cancel Silk Cloth · undercut by 5s (1 of 4)", one click per cancel. An auction stays up when posting it again would go under your lowest price.
