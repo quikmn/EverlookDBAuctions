@@ -13,7 +13,7 @@
 
 local _, ns = ...
 local UI, T = ns.UI, ns.T
-local num = ns.num
+local num, money = ns.num, ns.money
 local C_GOOD, C_MUTE = UI.hex(T.good), UI.hex(T.mute)
 
 local SH = {}
@@ -172,6 +172,11 @@ local function fillQueryRow(b, q)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     if buys then
       GameTooltip:SetText("Buy " .. num(n) .. " " .. plain(q:match('^name is "(.*)"$') or q))
+      local est = ns.buyList.estimate and ns.buyList.estimate(l, ns.listImport and ns.listImport.idOf)
+      local one = est and est.each[q]
+      if one and one.cost then
+        GameTooltip:AddLine(("About %s at usual prices (%s each)."):format(money(one.cost), money(one.usual)), 1, 0.82, 0)
+      end
       GameTooltip:AddLine("Shows the cheapest way to get what you still need and its price. Nothing is bought until you press Buy.", 1, 1, 1, true)
     else
       GameTooltip:SetText("Run this search")
@@ -205,6 +210,17 @@ function render()
   f.runPrimary:SetShown(items == 0)
   f.runBtn:SetShown(items > 0)
   f.reset:SetShown(l.got ~= nil and next(l.got) ~= nil)
+  f.estimate:ClearAllPoints()
+  f.estimate:SetPoint("RIGHT", f.reset:IsShown() and f.reset or f.estimate:GetParent(), f.reset:IsShown() and "LEFT" or "RIGHT", -8, 0)
+  local est = items > 0 and ns.buyList.estimate and ns.buyList.estimate(l, ns.listImport.idOf)
+  if est and est.priced > 0 then
+    f.estimate:SetText(("About |cffffffff%s|r at usual prices%s"):format(money(est.total),
+      #est.unpriced > 0 and (" (+%d unpriced)"):format(#est.unpriced) or ""))
+  elseif est and #est.unpriced > 0 then
+    f.estimate:SetText("No usual prices for these yet")
+  else
+    f.estimate:SetText("")
+  end
   -- the search being changed: still in this list?
   local e = SH.editing
   if e and e.list ~= l then SH.editing, e = nil, nil end
@@ -542,6 +558,9 @@ local function makeFrame()
   end)
   UI.tip(f.reset, "Forget what was bought", "Buy this list counts what it bought, so it never buys the same twice. This starts the list over.")
   f.reset:Hide()
+  -- what the list should cost at usual prices, for what is still needed (BuyList.lua's estimate)
+  f.estimate = UI.text(bd, "dim")
+  f.estimate:SetJustifyH("RIGHT")
   f.queries = needs(UI.list(R, ROW, buildQueryRow, fillQueryRow))
   f.queries:SetPoint("TOPLEFT", 1, -138)
   f.queries:SetPoint("BOTTOMRIGHT", -3, 4)
@@ -727,7 +746,9 @@ function SH.page(app, UI)
       detail = function(l)
         local n = 0
         for _ in ipairs(l.queries or {}) do n = n + 1 end
-        return ("%d item%s or search%s"):format(n, n == 1 and "" or "s", n == 1 and "" or "es")
+        local est = ns.buyList and ns.buyList.estimate and ns.buyList.estimate(l, ns.listImport and ns.listImport.idOf)
+        local cost = est and est.priced > 0 and ("  \194\183  about %s at usual prices"):format(money(est.total)) or ""
+        return ("%d item%s or search%s"):format(n, n == 1 and "" or "s", n == 1 and "" or "es") .. cost
       end,
       icon = function() return "list" end,
       buttons = { { label = "Delete", width = 80, confirm = true, onClick = function(l)

@@ -143,6 +143,41 @@ function W.usual(id)
   return it and it[1] or nil
 end
 
+-- What a list should cost at usual prices (the middle of the last 30 days' lows, else the last scan's): for what is
+-- still needed. Returns { total, priced = n, unpriced = { names }, each = { [query] = { need, usual, cost } } }.
+function W.estimate(l, idOf)
+  local out = { total = 0, priced = 0, unpriced = {}, each = {} }
+  if not l then return out end
+  for _, e in ipairs(W.entries(l, idOf)) do
+    local need = W.need(l, e.q, W.haveOf(e.id))
+    if need > 0 then
+      local usual = W.usual(e.id)
+      if usual and usual > 0 then
+        local cost = math.floor(usual * need + 0.5)
+        out.total, out.priced = out.total + cost, out.priced + 1
+        out.each[e.q] = { need = need, usual = usual, cost = cost }
+      else
+        out.unpriced[#out.unpriced + 1] = e.name
+        out.each[e.q] = { need = need }
+      end
+    end
+  end
+  return out
+end
+
+-- "26% over the usual price" (red from PRICEY's share up), "8% under the usual price" (green), "about the usual price"
+function W.vsUsual(avg, usual)
+  if not (avg and usual and usual > 0) then return nil end
+  local pct = math.floor((avg / usual - 1) * 100 + 0.5)
+  if pct >= 5 then
+    local c = avg > usual * PRICEY and "|cffef5d5d" or "|cffffd100"
+    return ("%s%d%% over the usual price|r (usually %s each)"):format(c, pct, money(usual))
+  elseif pct <= -5 then
+    return ("|cff6fd16f%d%% under the usual price|r (usually %s each)"):format(-pct, money(usual))
+  end
+  return ("About the usual price (%s each)"):format(money(usual))
+end
+
 -- The lines that explain a plan: how many at which price (the first few prices), then the total.
 function W.planLines(p)
   local lines, shown = {}, 0
@@ -181,7 +216,8 @@ function W.warnings(p, want, usual, max)
     end
   end
   if usual and usual > 0 and p.avg and p.avg > usual * PRICEY and p.avg - usual >= 50 then
-    out[#out + 1] = ("Far above the usual price: about %s each, usually %s."):format(money(p.avg), money(usual))
+    out[#out + 1] = ("Far above the usual price: about %s each, %d%% over the usual %s."):format(money(p.avg),
+      math.floor((p.avg / usual - 1) * 100 + 0.5), money(usual))
   end
   return out
 end
@@ -831,6 +867,21 @@ function render()
     showMax = r.step == "ask" or r.step == "plan"
     if r.step == "ask" then
       go:SetText("Yes")
+      if r.i == 1 or not r.estimate then
+        r.estimate = r.estimate or W.estimate(r.list, ns.listImport and ns.listImport.idOf)
+        local est = r.estimate
+        if est.priced > 1 then
+          body[#body + 1] = ("The whole list: about %s at usual prices%s."):format(money(est.total),
+            #est.unpriced > 0 and (" (%d without a price yet)"):format(#est.unpriced) or "")
+        end
+      end
+      local usual = c.usual or W.usual(e.id)
+      c.usual = usual
+      if usual and usual > 0 then
+        body[#body + 1] = ("This one: about %s (%s each, usually)."):format(money(math.floor(usual * left + 0.5)), money(usual))
+      else
+        body[#body + 1] = "No usual price for this one yet: the auctions will tell."
+      end
       if c.maxText and c.max == 0 then
         body[#body + 1] = ("Paying at most %s each: not known for this item yet, so nothing is bought."):format(c.maxText)
       elseif c.maxText then
@@ -858,6 +909,9 @@ function render()
         skip:SetShown(false)
       elseif p then
         for _, l in ipairs(W.planLines(p)) do body[#body + 1] = l end
+        -- how that compares with the usual price (the warning below says it when it's far above)
+        local vs = W.vsUsual(p.avg, c.usual)
+        if vs and not (c.usual and p.avg > c.usual * PRICEY) then body[#body + 1] = vs end
         for _, w in ipairs(c.warn or {}) do warn[#warn + 1] = w end
         if c.commodity then
           if c.quote then

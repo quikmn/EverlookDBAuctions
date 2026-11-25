@@ -7058,6 +7058,11 @@ def buy_list():
     I.save(lists, res, True)
     l = lists[1]
     check(len(W.entries(l)) == 3, "three items to buy, the search left out")
+    G.USUAL[2589] = 12
+    est = W.estimate(l)
+    check(est.each['name is "Linen Cloth"'].cost == 25 * 12, f"Linen Cloth: 25 still needed at 12c: {est.each['name is \"Linen Cloth\"'].cost}")
+    check(est.total >= 300 and est.priced >= 1, f"the whole list's estimate: {est.total}")
+    check("26% over the usual price" in W.vsUsual(126, 100) and "under the usual" in W.vsUsual(90, 100), "how a price compares with the usual one")
     G.AuctionHouseFrame.IsShown = lua.eval("function() return false end")
     W.begin(l)
     check("open the auction house first" in (G.SAID[len(G.SAID)] or ""), "the auction house must be open")
