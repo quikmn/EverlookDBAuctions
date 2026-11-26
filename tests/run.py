@@ -2438,7 +2438,7 @@ def shared_tooltip():
     lines = show(2589)
     got = [lines[i] for i in range(1, len(lines) + 1)]
     want = [" ",
-            "Vendor each = 13c",   # first of all, in large print
+            "Sell to vendor = 13c",   # first of all, in large print
             "Most profit: Auction = +77c",
             "AH  3,365 · 76m = 95c",
             "    30d low = 93c",
@@ -2458,6 +2458,14 @@ def shared_tooltip():
     lines = show(2589)
     check("x14" not in lines[2], f"Ctrl with no stack under the mouse: one: {lines[2]}")
     lua.execute("IsControlKeyDown = nil")
+    # what a vendor sells it for, under what a vendor pays; "AH pays more" when the AH's lowest after its cut beats it
+    ns.VENDORBUY = lua.eval("{ [2589] = 20 }")
+    lines = show(2589)
+    check(lines[3] == "Buy from vendor  AH pays more = 20c", f"buy from vendor: {lines[3]}")
+    ns.VENDORBUY = lua.eval("{ [2589] = 90 }")
+    lines = show(2589)
+    check(lines[3] == "Buy from vendor = 90c", f"buy from vendor, the AH no better: {lines[3]}")
+    ns.VENDORBUY = None
     ns.tipDetail("shift")
     lines = show(2589)
     check(len(lines) == 5 and "30d" not in "".join(lines[i] for i in range(1, len(lines) + 1)),

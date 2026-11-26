@@ -1528,7 +1528,17 @@ local function vendorLine(t, id, tt)
   local info = { pcall(C_Item.GetItemInfo, id) }
   local sell = ok(info[1] and info[12])
   if sell and sell > 0 then
-    t:Line("|cffffd100Vendor|r" .. (stack > 1 and (" x" .. stack) or " each"), Tip.Money(sell * stack), { big = true })
+    t:Line("|cffffd100Sell to vendor|r" .. (stack > 1 and (" x" .. stack) or ""), Tip.Money(sell * stack), { big = true })
+  end
+  -- what a vendor sells it for (ns.VENDORBUY, from EverlookDB: every item some vendor sells), also in large print;
+  -- "AH pays more" when the auction house's lowest, after its cut, beats that price clearly
+  local buy = ns.VENDORBUY and ns.VENDORBUY[id]
+  if type(buy) == "number" and buy > 0 then
+    local note
+    local it = ns.itemFor and ns.itemFor(id)
+    local ah = it and it[1]
+    if type(ah) == "number" and ah * 0.95 >= buy * 1.2 and ah * 0.95 - buy >= 50 then note = "AH pays more" end
+    t:Line("|cffffd100Buy from vendor|r" .. (stack > 1 and (" x" .. stack) or ""), Tip.Money(buy * stack), { big = true, note = note })
   end
 end
 
