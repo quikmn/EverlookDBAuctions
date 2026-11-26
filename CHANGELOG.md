@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.35.3 (2026-11-26)
 - Tooltips: "Item level" in green on weapons and armor, just above the gear upgrade line. Turn it off in the tooltip settings.
 
 ## v0.35.2 (2026-11-26)
