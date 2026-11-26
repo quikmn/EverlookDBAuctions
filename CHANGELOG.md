@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.35.0 (2026-11-26)
 - Tooltips: the vendor price is now the first line of our tooltip block, in large print, on every item (also where the game shows its own sell price), so you can't miss it.
 - Crafting profit: materials you bought in the last 3 days count at what you paid. Those costs show in blue with a "paid" tag, and the tooltip shows what you paid next to today's price. Profit, margin and the queue line follow.
 - Crafting profit: new Check prices button next to Make shopping list (auction house open). It looks at what's listed right now for your queued recipes and gives each one a verdict: good, thin, or not worth it. Recipes that aren't worth it come out of the queue, with Undo. It also shows what the materials for the whole queue really cost at today's listings, and warns when you'd make far more than is listed.
