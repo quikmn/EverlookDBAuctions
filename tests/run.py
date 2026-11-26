@@ -7468,6 +7468,8 @@ def buy_list():
         run(source_of(name), name, "EverlookDBAuctions", ns)
     G = lua.globals()
     W = ns.buyList
+    # most of these tests use a client that allows the automatic price ask; WoW Forever needs a click (see below)
+    ns.db().quoteByClick = False
     I = ns.listImport
     tbl = lua.eval("function(...) return { ... } end")
     browse_answer = lua.eval("function(id) return { ok = true, full = true, entries = { { itemKey = { itemID = id } } } } end")
@@ -7666,12 +7668,12 @@ def buy_list():
     check(ns.db().quoteByClick is True, "a block named UNKNOWN() during the price ask is remembered")
     check(f.go.text == "Get the price", f"it waits for a click: {f.go.text}")
     G.C_AuctionHouse.StartCommoditiesPurchase = real_start
-    ns.db().quoteByClick = None
+    ns.db().quoteByClick = False
     W.stop()
     W.stop()
     # another addon's or another call's block is not ours to read
     fire("ADDON_ACTION_BLOCKED", "EverlookDBAuctions", "UNKNOWN()")
-    check(ns.db().quoteByClick is None, "a block outside the price ask changes nothing")
+    check(ns.db().quoteByClick is False, "a block outside the price ask changes nothing")
     # a client that wants a click for the price: Get the price from then on
     G.MOCK_BAGS[2589] = 0
     l.got = None
@@ -7684,6 +7686,29 @@ def buy_list():
     click(f.go)
     answer(2589)
     check(len(calls("Start")) == 0 and f.go.text == "Get the price", f"asks for a click: {f.go.text}")
+    # the default (nothing learned yet) is a click too: WoW Forever blocks the ask from code, and when the auction
+    # house was busy at the click, its "ready" event (no click) never asks by itself (2026-11-27 BugSack error)
+    W.stop()
+    ns.db().quoteByClick = None
+    G.MOCK_BAGS[2589] = 0
+    l.got = None
+    W.begin(l)
+    G.CALLS = lua.table()
+    click(f.go)
+    answer(2589)
+    check(len(calls("Start")) == 0 and f.go.text == "Get the price", f"default: the price waits for a click: {f.go.text}")
+    busy = [True]
+    real_ready = G.C_AuctionHouse.IsThrottledMessageSystemReady
+    G.C_AuctionHouse.IsThrottledMessageSystemReady = lambda *a: not busy[0]
+    click(f.go)
+    check(len(calls("Start")) == 0, "busy at the click: waits")
+    busy[0] = False
+    fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    check(len(calls("Start")) == 0, "ready again: never asks without a click")
+    check(f.go.text == "Get the price", f"the button asks again: {f.go.text}")
+    click(f.go)
+    check(len(calls("Start")) == 1, f"the next click asks: {len(calls('Start'))}")
+    G.C_AuctionHouse.IsThrottledMessageSystemReady = real_ready
     W.stop()
     W.stop()
     check(not f.shown, "Stop, then Close")

@@ -332,7 +332,9 @@ local function makePlan()
   run.step = "plan"
   if c.commodity and c.plan.got > 0 then
     local d = db()
-    if not (d and d.quoteByClick) then requestQuote() end
+    -- asking for a price needs a click on WoW Forever (the game blocks it from code: ADDON_ACTION_BLOCKED, a BugSack
+    -- error): only ask by itself where a client has shown it allows that (quoteByClick == false)
+    if d and d.quoteByClick == false then requestQuote() end
   end
   render()
 end
@@ -715,7 +717,14 @@ function events.AUCTION_HOUSE_THROTTLED_SYSTEM_READY()
   local c = run and run.cur
   if c and c.waitReady then
     c.waitReady = nil
-    requestQuote()
+    -- this event is no click: asking for the price from here is blocked by the game (2026-11-27, a BugSack
+    -- "ADDON_ACTION_BLOCKED ... UNKNOWN()"). Ask again only where code may; else the button asks with the next click.
+    local d = db()
+    if d and d.quoteByClick == false then
+      requestQuote()
+    else
+      setStatus("The auction house is ready: press Get the price.", T.mute)
+    end
     render()
   end
 end

@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Buy this list: fixed an error (shown by BugSack) when the auction house was busy as you pressed Get the price. The game only lets the price be asked with a click, so once the auction house is ready the panel says so and the next click asks.
+
 ## v0.36.4 (2026-11-27)
 - Quick sell: opened while prices were updating, Your bags could list only a few items, because the auction house turns most items away during an update. It now reads your bags again as soon as the update ends.
 
