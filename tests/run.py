@@ -1012,6 +1012,20 @@ def undercut():
         lua.execute("POST_ON = true")
         ns.recheckPost()
         check(lua.eval("RECHECKS") == 1, "a working button is left alone")
+        # Your bags read during a price update (the game refuses most items then) is read again once it's free
+        lua.execute("REFRESHES = 0")
+        st = ns.sellState
+        st.refreshBags = lua.eval("function() REFRESHES = REFRESHES + 1 end")
+        st.readWhileBusy = True
+        lua.execute("SCANNING = true")
+        ns.recheckPost()
+        check(lua.eval("REFRESHES") == 0, "bags not read again while the scan runs")
+        lua.execute("SCANNING = false")
+        ns.recheckPost()
+        check(lua.eval("REFRESHES") == 1, f"bags read again once the auction house is free: {lua.eval('REFRESHES')}")
+        st.readWhileBusy = False
+        ns.recheckPost()
+        check(lua.eval("REFRESHES") == 1, "bags read while free: not read again")
         lua.execute("AuctionHouseFrame = nil")
         # an item put on Blizzard's Sell tab starts at the undercut under the cheapest auction, once
         if copper:

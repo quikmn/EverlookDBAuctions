@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Quick sell: opened while prices were updating, Your bags could list only a few items, because the auction house turns most items away during an update. It now reads your bags again as soon as the update ends.
+
 ## v0.36.3 (2026-11-27)
 - Fixed: since 0.36.1 a tooltip line could grow a little on every hover until it filled the screen. Every line now keeps its normal size, and "Most profit" stays just a little bigger.
 

@@ -440,6 +440,9 @@ end
 function S.recheckPost()
   if not ahFree() then return end
   for _, fr in ipairs(stuckPostFrames()) do pcall(fr.UpdatePostState, fr) end
+  -- Your bags was read while the auction house was busy (a price update): the game then refuses most items, so read
+  -- the bags again now that it's free (0.36.3: only a few items listed, a 95g pattern missing, after a price update)
+  if S.readWhileBusy and S.refreshBags then S.refreshBags() end
 end
 do
   local watch, wasBusy, elapsed = CreateFrame("Frame"), false, 0
@@ -458,6 +461,7 @@ do
   end)
 end
 ns.recheckPost = function() S.recheckPost() end
+ns.sellState = S   -- tests
 
 ---------------------------------------------------------------------------------------------------------------------
 -- Your bags: everything you can sell here, one entry per item version, stacks added up
@@ -474,6 +478,7 @@ local function collect()
   local groups, byKey = {}, {}
   -- items left out, by name, with why: a search that finds nothing says so instead of "Nothing matches."
   local refused = {}
+  S.readWhileBusy = not ahFree()
   for bag = 0, NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4 do   -- the reagent bag (bag 5) too
     for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
       local info = C_Container.GetContainerItemInfo(bag, slot)
@@ -1170,7 +1175,9 @@ local function selectGroup(g)
 end
 
 -- Bags changed: read them again and keep the picked item (or let go of it when it's gone).
-local function refreshBags()
+local refreshBags
+function S.refreshBags() if refreshBags then refreshBags() end end
+function refreshBags()
   if not S.frame or not S.frame:IsShown() then return end
   local g = S.sel
   local was
