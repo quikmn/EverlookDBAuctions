@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.35.1 (2026-11-26)
 - Crafting profit, Check prices: warns when something sells far above its usual 30-day price, so a short-lived high price doesn't pass for a sure profit.
 
 ## v0.35.0 (2026-11-26)
