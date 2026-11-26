@@ -148,113 +148,160 @@ end
 --   searches   { { name, keys = { [key] = true } } } what each Deal search found
 -- Returns the list, best first: { key, id, row, name, price, profit, conf, sure, units, limit, reasons = { { kind,
 -- text, profit, limit, conf } } }, and how many unsure ones were left out.
-function D.build(rows, o)
+-- D.builder(rows, o) is the same work in slices: its step(max, over) looks at up to `max` more rows (all of them
+-- when nil), stopping early once over() says the frame's time is used up, and returns true with the list and the
+-- hidden count once every row is done. D.build runs it in one go (the tests, and anything that wants the list now).
+-- An item's usual price and disenchant value are worked out once per item, not once per version of it (a scan has
+-- three versions of the average item: "of the Bear", "of the Eagle"...).
+function D.builder(rows, o)
   o = o or {}
+  rows = rows or {}
   local cut = o.cut or 0.05
   local minP = o.min or DEFAULTS.min
   local pct = (o.pct or DEFAULTS.pct) / 100
   local V = ns.vendor
   local out, hidden = {}, 0
-  for _, row in ipairs(rows or {}) do
+  local at = 1
+  local usualBy, daysBy, steadyBy, valueBy = {}, {}, {}, {}   -- per item ID; false = worked out, none
+  local function byScore(a, b) return a.profit * a.conf > b.profit * b.conf end
+
+  local function one(row)
     local key = row.key
     local price = o.price and o.price(row)
     if price == nil then price = row.price end
-    if key and not (o.gone and o.gone[key]) and not row.quest and type(price) == "number" and price > 0 then
-      local reasons = {}
-      local yours   -- asked only for a deal (it counts your characters' auctions)
-      local function isYours()
-        if yours == nil then yours = o.listed and (o.listed(row.id) or 0) > 0 or false end
-        return yours
+    if not (key and not (o.gone and o.gone[key]) and not row.quest and type(price) == "number" and price > 0) then return end
+    local id = row.id
+    local reasons
+    local yours   -- asked only for a deal (it counts your characters' auctions)
+    local function isYours()
+      if yours == nil then yours = o.listed and (o.listed(id) or 0) > 0 or false end
+      return yours
+    end
+    local usual, days, steady
+    if id == nil then
+      usual, days, steady = D.usualOf(o.days and o.days(id), o.today)
+    else
+      usual, days, steady = usualBy[id], daysBy[id], steadyBy[id]
+      if usual == nil then
+        usual, days, steady = D.usualOf(o.days and o.days(id), o.today)
+        usualBy[id], daysBy[id], steadyBy[id] = usual or false, days, steady
+      elseif usual == false then
+        usual = nil
       end
-      local usual, days, steady = D.usualOf(o.days and o.days(row.id), o.today)
-      if not usual and type(row.median) == "number" and row.median > 0 then usual, days, steady = row.median, 0, 0 end
-      local resale = usual and (usual * (1 - cut) - price) or nil
-      -- under pct of the usual price, making at least the minimum after the cut
-      if o.cheap ~= false and usual and price < usual * pct then
-        local limit = math.floor(usual * pct)
-        local units = unitsOf(row, limit)
-        local profit = math.floor(resale * units)
+    end
+    if not usual and type(row.median) == "number" and row.median > 0 then usual, days, steady = row.median, 0, 0 end
+    local resale = usual and (usual * (1 - cut) - price) or nil
+    -- under pct of the usual price, making at least the minimum after the cut
+    if o.cheap ~= false and usual and price < usual * pct then
+      local limit = math.floor(usual * pct)
+      local units = unitsOf(row, limit)
+      local profit = math.floor(resale * units)
+      if profit >= minP then
+        reasons = reasons or {}
+        reasons[#reasons + 1] = { kind = "cheap", text = pctText(price, usual), profit = profit, limit = limit,
+          conf = D.confidence(days, steady, row.auctions, isYours()), units = units }
+      end
+    end
+    -- below what a vendor pays: the scan's single auctions under it (Vendor.lua), else the lowest price
+    local sell = row.sell
+    if o.vendor ~= false and V and type(sell) == "number" and sell > 0 and price < sell then
+      local profit, units
+      if row.dealText then
+        local list = V.dealsOf(row.dealText, sell, V.MIN_DEAL)
+        local n, total, _, u = V.dealSummary(list)
+        if n > 0 then profit, units = total, u end
+      else
+        profit, units = sell - price, 1
+        if profit < V.MIN_DEAL then profit = nil end
+      end
+      if profit then
+        reasons = reasons or {}
+        reasons[#reasons + 1] = { kind = "vendor", text = ("vendor pays %s more"):format(money(sell - price)),
+          profit = profit, limit = sell - 1, conf = 1, units = units }
+      end
+    end
+    -- below what disenchanting it is worth (gear only)
+    if o.de ~= false and o.devalue and (row.stack or 1) <= 1 and DE_QUALITY[row.quality or ""] then
+      local v = id ~= nil and valueBy[id]
+      if v == nil or id == nil then
+        v = o.devalue(id)
+        if type(v) ~= "number" then v = false end
+        if id ~= nil then valueBy[id] = v end
+      end
+      if v and v > price then
+        local profit = math.floor(v * (1 - cut) - price)
         if profit >= minP then
-          reasons[#reasons + 1] = { kind = "cheap", text = pctText(price, usual), profit = profit, limit = limit,
-            conf = D.confidence(days, steady, row.auctions, isYours()), units = units }
-        end
-      end
-      -- below what a vendor pays: the scan's single auctions under it (Vendor.lua), else the lowest price
-      local sell = row.sell
-      if o.vendor ~= false and V and type(sell) == "number" and sell > 0 and price < sell then
-        local profit, units
-        if row.dealText then
-          local list = V.dealsOf(row.dealText, sell, V.MIN_DEAL)
-          local n, total, _, u = V.dealSummary(list)
-          if n > 0 then profit, units = total, u end
-        else
-          profit, units = sell - price, 1
-          if profit < V.MIN_DEAL then profit = nil end
-        end
-        if profit then
-          reasons[#reasons + 1] = { kind = "vendor", text = ("vendor pays %s more"):format(money(sell - price)),
-            profit = profit, limit = sell - 1, conf = 1, units = units }
-        end
-      end
-      -- below what disenchanting it is worth (gear only)
-      if o.de ~= false and o.devalue and (row.stack or 1) <= 1 and DE_QUALITY[row.quality or ""] then
-        local v = o.devalue(row.id)
-        if type(v) == "number" and v > price then
-          local profit = math.floor(v * (1 - cut) - price)
-          if profit >= minP then
-            reasons[#reasons + 1] = { kind = "de", text = ("disenchants for %s"):format(money(v)), profit = profit,
-              limit = math.floor(v), conf = 0.6, units = 1 }
-          end
-        end
-      end
-      -- a shopping list's most to pay
-      if o.shop ~= false then
-        for _, s in ipairs(o.shop or {}) do
-          local line = s.rows and s.rows[key]
-          if line and type(line.max) == "number" and price <= line.max then
-            local units = math.max(1, math.min(line.need or 1, row.qty or 1))
-            reasons[#reasons + 1] = { kind = "shop", text = ("under your max of %s (%s)"):format(money(line.max), s.name),
-              profit = math.floor((line.max - price) * units), limit = math.floor(line.max), conf = 1, units = units }
-            break
-          end
-        end
-      end
-      -- your own Deal searches
-      for _, s in ipairs(o.searches or {}) do
-        if s.keys and s.keys[key] then
-          reasons[#reasons + 1] = { kind = "search", text = ("your search %s"):format(s.name),
-            profit = resale and math.max(0, math.floor(resale)) or 0, limit = price, conf = 1, units = 1 }
-          break
-        end
-      end
-      if #reasons > 0 then
-        local best, top, profit, conf, limit = nil, nil, 0, 0, 0
-        for _, r in ipairs(reasons) do
-          if not best or r.profit * r.conf > best.profit * best.conf then best = r end
-          if not top or r.profit > profit then top, profit = r, r.profit end
-          if r.conf > conf then conf = r.conf end
-          if r.limit > limit then limit = r.limit end
-        end
-        table.sort(reasons, function(a, b) return a.profit * a.conf > b.profit * b.conf end)
-        local deal = { key = key, id = row.id, row = row, name = row.name or ("item " .. tostring(row.id)), icon = row.icon,
-          quality = row.quality, price = price, qty = row.qty, auctions = row.auctions, usual = usual, yours = isYours() or nil,
-          profit = profit, conf = conf, sure = D.sureText(conf), units = top.units or 1, limit = limit, reasons = reasons,
-          score = best.profit * best.conf }
-        if deal.sure == "unsure" and not o.unsure then
-          hidden = hidden + 1
-        else
-          out[#out + 1] = deal
+          reasons = reasons or {}
+          reasons[#reasons + 1] = { kind = "de", text = ("disenchants for %s"):format(money(v)), profit = profit,
+            limit = math.floor(v), conf = 0.6, units = 1 }
         end
       end
     end
+    -- a shopping list's most to pay
+    if o.shop ~= false then
+      for _, s in ipairs(o.shop or {}) do
+        local line = s.rows and s.rows[key]
+        if line and type(line.max) == "number" and price <= line.max then
+          local units = math.max(1, math.min(line.need or 1, row.qty or 1))
+          reasons = reasons or {}
+          reasons[#reasons + 1] = { kind = "shop", text = ("under your max of %s (%s)"):format(money(line.max), s.name),
+            profit = math.floor((line.max - price) * units), limit = math.floor(line.max), conf = 1, units = units }
+          break
+        end
+      end
+    end
+    -- your own Deal searches
+    for _, s in ipairs(o.searches or {}) do
+      if s.keys and s.keys[key] then
+        reasons = reasons or {}
+        reasons[#reasons + 1] = { kind = "search", text = ("your search %s"):format(s.name),
+          profit = resale and math.max(0, math.floor(resale)) or 0, limit = price, conf = 1, units = 1 }
+        break
+      end
+    end
+    if not reasons then return end
+    local best, top, profit, conf, limit = nil, nil, 0, 0, 0
+    for _, r in ipairs(reasons) do
+      if not best or r.profit * r.conf > best.profit * best.conf then best = r end
+      if not top or r.profit > profit then top, profit = r, r.profit end
+      if r.conf > conf then conf = r.conf end
+      if r.limit > limit then limit = r.limit end
+    end
+    table.sort(reasons, byScore)
+    local deal = { key = key, id = id, row = row, name = row.name or ("item " .. tostring(id)), icon = row.icon,
+      quality = row.quality, price = price, qty = row.qty, auctions = row.auctions, usual = usual, yours = isYours() or nil,
+      profit = profit, conf = conf, sure = D.sureText(conf), units = top.units or 1, limit = limit, reasons = reasons,
+      score = best.profit * best.conf }
+    if deal.sure == "unsure" and not o.unsure then
+      hidden = hidden + 1
+    else
+      out[#out + 1] = deal
+    end
   end
-  table.sort(out, function(a, b)
-    -- the profit the row shows, biggest first (sure before likely on a tie); unsure ones are left out unless asked for
-    if a.profit ~= b.profit then return a.profit > b.profit end
-    if a.score ~= b.score then return a.score > b.score end
-    return a.name < b.name
-  end)
-  for k = #out, D.MAX + 1, -1 do out[k] = nil end
+
+  local function step(max, over)
+    local n = 0
+    while at <= #rows do
+      one(rows[at])
+      at = at + 1
+      n = n + 1
+      if (max and n >= max) or (over and n % 8 == 0 and over()) then break end
+    end
+    if at <= #rows then return false end
+    table.sort(out, function(a, b)
+      -- the profit the row shows, biggest first (sure before likely on a tie); unsure ones are left out unless asked for
+      if a.profit ~= b.profit then return a.profit > b.profit end
+      if a.score ~= b.score then return a.score > b.score end
+      return a.name < b.name
+    end)
+    for k = #out, D.MAX + 1, -1 do out[k] = nil end
+    return true, out, hidden
+  end
+  return step
+end
+
+function D.build(rows, o)
+  local _, out, hidden = D.builder(rows, o)()
   return out, hidden
 end
 
@@ -437,6 +484,15 @@ local function cutNow()
   return tostring(key):match("%-Neutral$") and 0.15 or 0.05
 end
 
+-- Does any shopping list have a most-to-pay on a line? (Only then is the scan's by-key table worth building.)
+local function hasShoppingMax()
+  local d = db()
+  for _, l in ipairs(d and d.lists or {}) do
+    if type(l) == "table" and type(l.max) == "table" and next(l.max) ~= nil then return true end
+  end
+  return false
+end
+
 local function shoppingLines(byKeyRows)
   local out = {}
   local d = db()
@@ -483,9 +539,13 @@ end
 
 -- Works the list out again from the newest scan. Quiet: no popup; a sound only when the setting is on and a deal is
 -- new since the last time.
-function D.compute()
-  if not ns.queryDataset then return end
-  local rows, scanned, missing = ns.queryDataset()
+-- It goes through every row of the scan (20,000+), so it runs a slice per frame: SLICE_MS of each frame, or SLICE_ROWS
+-- rows where the game has no fine clock. In one go it stopped the game for a moment a second after the auction
+-- house opened or closed. A newer round (D.round) replaces one still running.
+D.SLICE_MS, D.SLICE_ROWS = 4, 1500
+D.round = 0
+
+local function computeWith(round, rows, scanned, missing)
   if not rows or not scanned then
     D.list, D.scanAt, D.hidden = {}, nil, 0
     D.changed()
@@ -502,39 +562,71 @@ function D.compute()
   for k in pairs(d and d.dealsGone or {}) do D.gone[k] = true end
   D.scanAt, D.scanShared, D.scanTime = at, scanned.shared and true or false, scanned.at
   if ns.queryFresh then ns.queryFresh() end
-  local byKeyRows = {}
-  for _, r in ipairs(rows) do byKeyRows[r.key] = r end
   local o = D.settings()
   o.cut, o.today, o.gone = cutNow(), ns.today and ns.today() or nil, D.gone
   o.days = ns.historyDays
   o.devalue = function(id) local v = try(ns.disenchantValue, id); return type(v) == "number" and v or nil end
   o.price = ns.queryValue and function(r) return ns.queryValue(r, "price") end or nil
   o.listed = ns.inventory and ns.inventory.column and function(id) return tonumber(try(ns.inventory.column, id, "listed")) or 0 end or nil
-  o.shop = o.shop ~= false and shoppingLines(byKeyRows) or nil
-  o.searches = searchHits()
-  local before = {}
-  for _, x in ipairs(D.list) do before[x.key] = true end
-  local okB, list, hidden = pcall(D.build, rows, o)
-  if not okB then D.error = list; return end
-  D.error = nil
-  -- keeps when each was checked
-  local checked = {}
-  for _, x in ipairs(D.list) do checked[x.key] = x.checkedAt end
-  for _, x in ipairs(list) do x.checkedAt = checked[x.key] end
-  D.list, D.hidden, D.missing, D.at = list, hidden or 0, missing or 0, now()
-  local new = false
-  for _, x in ipairs(list) do if not before[x.key] then new = true end end
-  if new and o.sound and D.hadList then
-    pcall(PlaySound, (SOUNDKIT and SOUNDKIT.MAP_PING) or 3175, "Master")
+  if o.shop ~= false and hasShoppingMax() then
+    local byKeyRows = {}
+    for _, r in ipairs(rows) do byKeyRows[r.key] = r end
+    o.shop = shoppingLines(byKeyRows)
+  else
+    o.shop = nil
   end
-  D.hadList = true
-  D.changed()
-  -- items still loading: once more in a while, so the list sees them
-  if (missing or 0) > 0 and (D.retries or 0) < 3 and C_Timer then
-    D.retries = (D.retries or 0) + 1
-    C_Timer.After(15, function() D.compute() end)
-  elseif (missing or 0) == 0 then
-    D.retries = 0
+  o.searches = searchHits()
+
+  local function finish(list, hidden)
+    D.error = nil
+    local before = {}
+    for _, x in ipairs(D.list) do before[x.key] = true end
+    -- keeps when each was checked
+    local checked = {}
+    for _, x in ipairs(D.list) do checked[x.key] = x.checkedAt end
+    for _, x in ipairs(list) do x.checkedAt = checked[x.key] end
+    D.list, D.hidden, D.missing, D.at = list, hidden or 0, missing or 0, now()
+    local new = false
+    for _, x in ipairs(list) do if not before[x.key] then new = true end end
+    if new and o.sound and D.hadList then
+      pcall(PlaySound, (SOUNDKIT and SOUNDKIT.MAP_PING) or 3175, "Master")
+    end
+    D.hadList = true
+    D.changed()
+    -- items still loading: once more in a while, so the list sees them
+    if (missing or 0) > 0 and (D.retries or 0) < 3 and C_Timer then
+      D.retries = (D.retries or 0) + 1
+      C_Timer.After(15, function() D.compute() end)
+    elseif (missing or 0) == 0 then
+      D.retries = 0
+    end
+  end
+
+  local step = D.builder(rows, o)
+  local clock = debugprofilestop
+  local sliced = C_Timer and C_Timer.After
+  local function run()
+    if round ~= D.round then return end   -- a newer round took over
+    local t0 = clock and clock()
+    local over = t0 and function() return clock() - t0 >= D.SLICE_MS end or nil
+    local okB, done, list, hidden = pcall(step, sliced and D.SLICE_ROWS or nil, sliced and over or nil)
+    if not okB then D.error = done; return end
+    if not done then C_Timer.After(0, run); return end
+    finish(list, hidden)
+  end
+  run()
+end
+
+function D.compute()
+  if not ns.queryDataset then return end
+  D.round = D.round + 1
+  local round = D.round
+  if ns.queryDatasetSliced then
+    ns.queryDatasetSliced(function(rows, scanned, missing)
+      if round == D.round then computeWith(round, rows, scanned, missing) end
+    end)
+  else
+    computeWith(round, ns.queryDataset())
   end
 end
 

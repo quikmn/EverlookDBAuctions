@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Opening and closing the auction house no longer freezes the game for a few seconds. The Deals list and price updates now do their work a little at a time in the background, and searches after a price update are quicker.
+
 ## v0.35.6 (2026-11-26)
 - Blizzard's Sell tab: an item you put in starts at your undercut under the cheapest auction instead of the same price. When the cheapest auction is only yours, it matches it. Clicking a row that has your auction and someone else's at that price now undercuts too.
 

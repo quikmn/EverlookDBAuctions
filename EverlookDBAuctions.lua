@@ -22,6 +22,13 @@ local AUTO_EVERY = 30 * 60
 local AUTO_DELAY = 8            -- seconds the auction house is open before an automatic update starts
 local SCAN_TIMEOUT = 90         -- no answer by then: the server refused (throttled) or the AH closed
 local BATCH = 1000              -- auctions read per frame, so a big scan doesn't freeze the game
+-- A slice of scan work also ends once it has used this much of its frame (milliseconds, by debugprofilestop): 1000
+-- auctions with links to take apart can take far longer than a frame has. The counts above and below are the most
+-- per frame, and all there is to go by where the game has no fine clock.
+local READ_MS = 10              -- reading the list (the auction house is open: the list is safe)
+local SLICE_MS = 6              -- everything after it
+local FINISH_BATCH = 5000       -- auctions without a link counted per frame when the update finishes
+local clock = debugprofilestop
 local LOADS_PER_STEP = 15       -- item-detail requests per frame: a flood of them delays the player's own buys and posts
 local YIELD_FOR = 4             -- seconds a running scan pauses after the player buys, bids, posts or cancels
 local HISTORY_DAYS = 30
@@ -740,6 +747,23 @@ local function compactScan(sc)
 end
 ns.compactScan = compactScan
 
+-- The same over two frames (sorting and joining 20,000 rows, then compressing them: each takes a good part of a
+-- frame, together they are a visible hitch), then done().
+local function compactScanSoon(sc, done)
+  if not sc.rows then done(); return end
+  local rows = sc.rows
+  local packed, n = packRows(rows)
+  C_Timer.After(0, function()
+    if sc.rows == rows then   -- not packed by anything else meanwhile
+      local z = zip(packed)
+      if z then sc.z, sc.zm = z, "zlib-b64" else sc.packed = packed end
+      sc.nrows = n
+      sc.rows, sc.deals, sc.linkSamples = nil, nil, nil
+    end
+    done()
+  end)
+end
+
 -- A scan's house for trimming: realm ID and side (a scan saved without its realm name is still the same house; on
 -- 2026-11-21 one such scan kept two unpacked "newest" scans of one house and pushed five older ones out for room).
 local function houseOf(sc)
@@ -881,17 +905,49 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
     it[3] = it[3] + v.n
   end
   local mine = scan
-  local function step()
-    if not mine or scan ~= mine then return end   -- thrown away meanwhile
-    mine.beat = GetTime()
-    local stop = math.min(i + 499, #list)
-    for k = i, stop do
-      -- one odd item never costs the whole update: it is skipped and counted
-      if not pcall(addRow, list[k]) then badRows = badRows + 1 end
-    end
-    i = stop + 1
-    if i <= #list then C_Timer.After(0, step); return end
 
+  -- The end, a part per frame: each alone is a short frame, together they were a hitch whenever an update finished
+  -- (right as the auction house closed, when it was closed during the update).
+  -- 3. everything that shows prices hears about it
+  local function tell()
+    if not mine or scan ~= mine then return end
+    linkSamples = nil
+    if ns.onScan then ns.onScan() end
+    if db.reloadAfterScan then
+      -- test mode (/eah test, one scan): reload so the game writes the scan to disk right away
+      db.reloadAfterScan = nil
+      say("test mode: reloading in 3 seconds so the scan is saved.")
+      C_Timer.After(3, function() if not scan then ReloadUI() end end)
+    end
+    h.took = time() - scan.started
+    -- automatic updates are quiet: the price bar says how they went; an update asked for answers in chat too
+    local auto = scan.auto
+    scan = nil
+    setStatus(("Prices updated · %s auctions, %s items"):format(num(total), num(#list)), ns.T.good)
+    if not auto then say(("full scan done: %s auctions, %s item versions."):format(num(total), num(#list))) end
+    refreshPanel()
+  end
+  -- 2. packs the house's previous scan (one a frame), drops what is past keeping; drops for room are noted for
+  -- /eah status
+  local function trim(sc)
+    if not mine or scan ~= mine then return end
+    mine.beat = GetTime()
+    local keep = newestPerHouse(db.scans)
+    for _, old in ipairs(db.scans) do
+      if not keep[old] and old.rows then
+        compactScanSoon(old, function() C_Timer.After(0, function() trim(sc) end) end)
+        return
+      end
+    end
+    local _, forRoom = trimScans(db.scans, GetServerTime())
+    ns.noteDropped(forRoom, GetServerTime())
+    ns.noteUnsaved(sc, GetServerTime())
+    C_Timer.After(0, tell)
+  end
+  -- 1. the tooltip prices, the day lows and the scan itself
+  local function store()
+    if not mine or scan ~= mine then return end
+    mine.beat = GetTime()
     local now, day = time(), today()
     h.items = {}
     for id, it in pairs(items) do
@@ -928,25 +984,25 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
     }
     table.insert(db.scans, sc)
     if not realm and not realmID then realmUnfixed = realmUnfixed + 1 end
-    -- packs the house's previous scan, drops what is past keeping; drops for room are noted for /eah status
-    local _, forRoom = trimScans(db.scans, GetServerTime())
-    ns.noteDropped(forRoom, GetServerTime())
-    ns.noteUnsaved(sc, GetServerTime())
-    linkSamples = nil
-    if ns.onScan then ns.onScan() end
-    if db.reloadAfterScan then
-      -- test mode (/eah test, one scan): reload so the game writes the scan to disk right away
-      db.reloadAfterScan = nil
-      say("test mode: reloading in 3 seconds so the scan is saved.")
-      C_Timer.After(3, function() if not scan then ReloadUI() end end)
+    C_Timer.After(0, function() trim(sc) end)
+  end
+
+  local function step()
+    if not mine or scan ~= mine then return end   -- thrown away meanwhile
+    mine.beat = GetTime()
+    local t0 = clock and clock()
+    local stop = math.min(i + 499, #list)
+    local k = i
+    while k <= stop do
+      -- one odd item never costs the whole update: it is skipped and counted
+      if not pcall(addRow, list[k]) then badRows = badRows + 1 end
+      k = k + 1
+      -- an item with thousands of auctions takes a while to sort: look at the clock often
+      if t0 and k % 8 == 0 and clock() - t0 >= SLICE_MS then break end
     end
-    h.took = time() - scan.started
-    -- automatic updates are quiet: the price bar says how they went; an update asked for answers in chat too
-    local auto = scan.auto
-    scan = nil
-    setStatus(("Prices updated · %s auctions, %s items"):format(num(total), num(#list)), ns.T.good)
-    if not auto then say(("full scan done: %s auctions, %s item versions."):format(num(total), num(#list))) end
-    refreshPanel()
+    i = k
+    if i <= #list then C_Timer.After(0, step); return end
+    C_Timer.After(0, store)
   end
   step()
 end
@@ -1059,12 +1115,27 @@ local function processList(total, first, read)
 
   -- every auction without a link counts under its plain version (suffix 0), from the numbers kept at the first read
   local rounds = {}
+  -- A slice per frame: there can be 80,000 of them, and closing the auction house lands here at once.
   local function finish(missing)
-    for _, r in ipairs(missing) do
-      addAuction(vars, r[2], r[3], r[4], r[5], r[6], nil, r[7])
-      unlinked[r[2]] = (unlinked[r[2]] or 0) + 1
+    local i = 1
+    local function step()
+      if gone() then return end
+      mine.beat = GetTime()
+      local t0 = clock and clock()
+      local stop = math.min(i + FINISH_BATCH - 1, #missing)
+      local j = i
+      while j <= stop do
+        local r = missing[j]
+        addAuction(vars, r[2], r[3], r[4], r[5], r[6], nil, r[7])
+        unlinked[r[2]] = (unlinked[r[2]] or 0) + 1
+        j = j + 1
+        if t0 and j % 32 == 0 and clock() - t0 >= SLICE_MS then break end
+      end
+      i = j
+      if i <= #missing then C_Timer.After(0, step); return end
+      finishScan(h, vars, total, #missing, rounds, unlinked)
     end
-    finishScan(h, vars, total, #missing, rounds, unlinked)
+    step()
   end
 
   -- The first read, first..first+total-1. An auction without a link is kept as { index, id, count, buyout, minBid,
@@ -1081,7 +1152,10 @@ local function processList(total, first, read)
       end
       if load and not closed() then pump() end
       local stop = math.min(i + BATCH - 1, total)
-      for j = i, stop do
+      -- with the auction house closed the list may go any moment: then as many as ever, whatever the frame takes
+      local t0 = clock and not closed() and clock()
+      local j = i
+      while j <= stop do
         local k = first + j - 1
         local count, buyout, id, minBid, bid, link, left = read(k)
         if id and count and count > 0 then
@@ -1094,7 +1168,10 @@ local function processList(total, first, read)
         elseif closed() then
           lost = lost + 1
         end
+        j = j + 1
+        if t0 and j % 32 == 0 and clock() - t0 >= READ_MS then break end
       end
+      stop = j - 1
       if lost > math.max(10, total * 0.01) then
         scan = nil
         h.why = "closed"
@@ -1126,7 +1203,9 @@ local function processList(total, first, read)
       end
       if load then pump() end
       local stop = math.min(i + BATCH - 1, #missing)
-      for j = i, stop do
+      local t0 = clock and clock()
+      local j = i
+      while j <= stop do
         local r = missing[j]
         local count, buyout, id, minBid, bid, link, left = read(r[1])
         if link and id == r[2] and count and count > 0 then
@@ -1135,8 +1214,10 @@ local function processList(total, first, read)
           still[#still + 1] = r
           ask(r[2])
         end
+        j = j + 1
+        if t0 and j % 32 == 0 and clock() - t0 >= READ_MS then break end
       end
-      i = stop + 1
+      i = j
       if i > #missing then done(still) else C_Timer.After(0, step) end
     end
     step()

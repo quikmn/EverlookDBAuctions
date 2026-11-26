@@ -152,6 +152,7 @@ def main() -> int:
     failures += reload_nudge()
     failures += sell_all()
     failures += deals_list()
+    failures += no_freeze()
     failures += deals_buy()
     failures += gold()
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -8083,6 +8084,175 @@ def deals_list():
     ns.slash("dealsearches cheap = price lt 50% of median30 and quality ge rare")
     check(db.dealSearches == "cheap = price lt 50% of median30 and quality ge rare", f"a deal search is saved: {db.dealSearches}")
     check(ns.deals.settings().sound is False, "no sound by default")
+    return failures
+
+
+def no_freeze():
+    """Work that goes through a whole scan runs a slice per frame instead of stopping the game: the scan's rows for
+    Deals (kept while items still load, and only those tried again), the Deals list (a newer round replaces a running
+    one), and the end of a price update (the auctions without a link, the rows, the packing of the older scan), also
+    when the auction house closes during it. Sliced or in one go, the result is the same."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("no freeze: " + what)
+
+    QUEUE = """
+        QUEUE, FRAMES = {}, 0
+        C_Timer = { After = function(_, fn) QUEUE[#QUEUE + 1] = fn end }
+        function FRAME()   -- one frame: every timer waiting now
+          local q = QUEUE
+          QUEUE = {}
+          for _, fn in ipairs(q) do fn() end
+          if #q > 0 then FRAMES = FRAMES + 1 end
+          return #QUEUE
+        end
+        function DRAIN() while FRAME() > 0 do end end
+    """
+
+    def start(*names):
+        lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+        lua.execute(source_of("tests/mock.lua"))
+        ns = lua.table()
+        run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+        db = run(VENDOR_SETUP, "setup", ns)
+        for name in names:
+            run(source_of(name), name, "EverlookDBAuctions", ns)
+        return lua, ns, db
+
+    # the scan's rows stay kept while an item is still loading; only that item is tried again
+    lua, ns, db = start("Skin.lua", "Vendor.lua", "Search.lua")
+    G = lua.globals()
+    same = lua.eval("rawequal")
+    db.scans[1].rows["424242:0"] = "7,7,7,1,1"
+    lua.execute("ASKED = 0; C_Item.GetItemInfo = function(id) ASKED = ASKED + 1; return nil end")
+    rows, sc, missing = ns.queryDataset()
+    check(len(rows) == 9 and missing == 1, f"9 rows, one item still loading: {len(rows)}, {missing}")
+    asked = G.ASKED
+    rows2, _sc, missing2 = ns.queryDataset()
+    check(same(rows, rows2) and missing2 == 1, "the rows are kept while an item is loading")
+    check(G.ASKED - asked == 1, f"only the missing item is asked for again: {G.ASKED - asked}")
+    lua.execute("C_Item.GetItemInfo = function(id) if id == 424242 then return 'Late Thing', nil, 1, 5, 0, 'Trade Goods', 'Cloth', 20, '', 9, 3 end end")
+    rows3, _sc, missing3 = ns.queryDataset()
+    names = [rows3[i].name for i in range(1, len(rows3) + 1)]
+    check(same(rows, rows3) and missing3 == 0 and len(rows3) == 10 and names[-1] == "Late Thing",
+          f"once it loads it joins the rows: {missing3}, {names}")
+    found = ns.queryRun('name is "Late Thing"')[0]
+    check(found is not None and len(found) == 1 and found[1].price == 7, "and searches find it")
+
+    # the rows read a slice per frame: the same rows as in one go, kept for the next search
+    lua, ns, db = start("Skin.lua", "Vendor.lua", "Search.lua")
+    G = lua.globals()
+    lua.execute(QUEUE)
+    ns.querySliceRows(2)
+    got = {}
+    ns.queryDatasetSliced(lambda rows, sc, missing: got.update(rows=rows, sc=sc, missing=missing))
+    check("rows" not in got and len(G.QUEUE) == 1, "9 rows at 2 a frame: not done in the first frame")
+    G.DRAIN()
+    check("rows" in got and len(got["rows"]) == 9 and got["missing"] == 0, "done some frames later")
+    check(G.FRAMES == 4, f"5 slices: the first at once, then 4 frames ({G.FRAMES})")
+    whole = ns.queryDataset()
+    check(lua.eval("rawequal")(whole[0], got["rows"]), "kept: a search reads the same rows")
+    keys = sorted(got["rows"][i].key for i in range(1, 10))
+    check(keys == sorted(db.scans[1].rows.keys()), f"every row once: {keys}")
+    # a search in the middle reads them in one go; the sliced read hands over those rows
+    lua, ns, db = start("Skin.lua", "Vendor.lua", "Search.lua")
+    lua.execute(QUEUE)
+    ns.querySliceRows(2)
+    got = {}
+    ns.queryDatasetSliced(lambda rows, sc, missing: got.update(rows=rows))
+    whole = ns.queryDataset()
+    lua.globals().DRAIN()
+    check(lua.eval("rawequal")(whole[0], got.get("rows")), "a search meanwhile: both have the same rows")
+    # nothing to read: done at once with nothing
+    db.scans = lua.table()
+    got = {}
+    ns.queryDatasetSliced(lambda rows=None, *a: got.update(rows=rows))
+    check("rows" in got and got["rows"] is None, "no scan: done at once, no rows")
+
+    # Deals: the list worked out a slice per frame is the list worked out in one go
+    lua, ns, db = start("Skin.lua", "Vendor.lua", "Search.lua", "Deals.lua")
+    G = lua.globals()
+    D = ns.deals
+    SEARCH = "wands = type has wand and price lt 90% of median; cloth = name has cloth"
+    db.dealSearches = SEARCH
+    D.compute()   # in one go (the game's timers run at once here)
+    want = [(D.list[i].key, D.list[i].profit, D.list[i].sure) for i in range(1, len(D.list) + 1)]
+    check(len(want) > 0, "the scan has deals")
+    lua, ns, db = start("Skin.lua", "Vendor.lua", "Search.lua", "Deals.lua")
+    G = lua.globals()
+    lua.execute(QUEUE)
+    D = ns.deals
+    db.dealSearches = SEARCH
+    D.SLICE_ROWS = 2
+    ns.querySliceRows(2)
+    lua.execute("CHANGED = 0")
+    D.onChange(lua.eval("function() CHANGED = CHANGED + 1 end"))
+    D.compute()
+    check(len(D.list) == 0 and G.CHANGED == 0 and len(G.QUEUE) == 1, "nothing shows until every row is looked at")
+    G.FRAME()
+    D.compute()   # a newer round while the first still runs
+    G.DRAIN()
+    got = [(D.list[i].key, D.list[i].profit, D.list[i].sure) for i in range(1, len(D.list) + 1)]
+    check(got == want, f"the same deals, sliced: {got} vs {want}")
+    check(G.CHANGED == 1, f"the round that was replaced never shows: {G.CHANGED}")
+    check(G.FRAMES >= 5, f"over several frames: {G.FRAMES}")
+    # the builder: a step looks at no more rows than asked, and stops when the frame's time is used up
+    rows = ns.queryDataset()[0]
+    step = D.builder(rows, lua.table())
+    check(step(4) is False, "4 of 9 rows: not done")
+    check(step(4) is False, "8 of 9 rows: not done")
+    done, lst, hidden = step(4)
+    check(done is True and lst is not None, "the last row: done, with the list")
+    one, _hid = D.build(rows, lua.table())
+    check([lst[i].key for i in range(1, len(lst) + 1)] == [one[i].key for i in range(1, len(one) + 1)], "the same list as D.build")
+    step = D.builder(rows, lua.table())
+    lua.execute("LOOKS = 0")
+    over = lua.eval("function() LOOKS = LOOKS + 1; return true end")
+    check(step(None, over) is False and G.LOOKS == 1, "time used up after 8 rows: the step ends there")
+    check(step(None, over)[0] is True, "and the next step finishes")
+
+    # a price update with a clock that says every slice's time is used up: more frames, the same scan
+    def scan_rows(extra, close):
+        lua, ns, fire = scan_lua(extra + """
+            -- the house's previous scan, to be packed when this one is stored
+            EverlookAuctionsDB.scans = { { realm = "Test", side = "Alliance", at = MOCK_TIME - 3600,
+              rows = { ["1:0"] = "1,1,1,1,1,0,0,0,0,0,1,", ["2:0"] = "2,2,2,1,1,0,0,0,0,0,1," } } }
+            STEPS = 0
+            local After = C_Timer.After
+            C_Timer.After = function(secs, fn) After(secs, function() STEPS = STEPS + 1; fn() end) end
+        """)
+        G = lua.globals()
+        G.ADVANCE(1)
+        G.SlashCmdList.EVERLOOKAUCTIONS("scan")
+        fire("REPLICATE_ITEM_LIST_UPDATE")
+        G.ADVANCE(1)
+        scanning = None
+        if close:
+            fire("AUCTION_HOUSE_CLOSED")
+            scanning = ns.scanning()
+        G.ADVANCE(30)
+        db = G.EverlookAuctionsDB
+        new = db.scans[len(db.scans)]
+        rows = {k: v for k, v in new.rows.items()} if new.rows else None
+        return rows, new.noLink, db.scans[1], G.STEPS, ns.scanning(), scanning, db.houses["Test-Alliance"]
+
+    CLOCK = "local t = 0; debugprofilestop = function() t = t + 100; return t end\n"
+    for close in (False, True):
+        plain = scan_rows("", close)
+        timed = scan_rows(CLOCK, close)
+        tag = "closed during it" if close else "open all along"
+        check(plain[0] is not None and timed[0] == plain[0] and timed[1] == plain[1],
+              f"{tag}: the same rows with a clock ({timed[1]} vs {plain[1]} without a link)")
+        check(timed[3] > plain[3] + 20, f"{tag}: the clock ends slices early, so more frames ({timed[3]} vs {plain[3]})")
+        check(not timed[4] and not plain[4], f"{tag}: both finish")
+        for which, r in (("without", plain), ("with", timed)):
+            old = r[2]
+            check(old.rows is None and old.packed == "1:0=1,1,1,1,1,0,0,0,0,0,1,\n2:0=2,2,2,1,1,0,0,0,0,0,1," and old.nrows == 2,
+                  f"{tag}, {which} a clock: the older scan is packed as before")
+            check(r[6].scanned is not None and r[6]["items"][1] is not None, f"{tag}, {which} a clock: tooltip prices saved")
+    check(timed[5] is True, "closing the auction house doesn't finish the update inside the event: it goes on a slice per frame")
     return failures
 
 

@@ -1261,46 +1261,106 @@ local function newestScan(db, house)
   return scanned
 end
 
-local function dataset()
+-- One row of a scan ("id:suffix", its saved line) as a dataset row, or nil while the game hasn't loaded the item.
+local function datasetRow(scanned, key, line)
+  local id, suffix = key:match("^(%d+):(%-?%d+)$")
+  id, suffix = tonumber(id), tonumber(suffix)
+  local c = itemInfo(id)
+  if not c then return nil end
+  -- low,p10,median,quantity,auctions,...[,suffix name]: the first five and the 13th are all a row needs
+  local f1, f2, f3, f4, f5, _, _, _, _, _, _, _, f13 = strsplit(",", line)
+  local d = ns.ITEMDATA and ns.ITEMDATA[id] or EMPTY_DATA
+  local row = {
+    key = key, id = id, suffix = suffix, icon = c[8],
+    name = (suffix ~= 0 and f13 and f13 ~= "") and f13 or c[1],
+    quality = QUALITY[(c[2] or 1) + 1], ilvl = c[3], reqlevel = c[4], category = c[5], type = c[6],
+    slot = EQUIP[c[7] or ""] or "none", stack = c[10], sell = c[9],
+    price = tonumber(f1), p10 = tonumber(f2), median = tonumber(f3), qty = tonumber(f4), auctions = tonumber(f5),
+    quest = V.isQuest(id, c[5]),
+    source = sourceText(d[1]), profession = ns.PROFESSIONS and ns.PROFESSIONS[d[2] or 0] or "",
+    skill = d[3] or 0, slots = d[4] or 0, droprate = d[5] or 0,
+    dealText = scanned.deals and scanned.deals[key] or nil,
+  }
+  local ench = ns.enchantsFor and ns.enchantsFor(key)
+  if ench then
+    local names = {}
+    for i, e in ipairs(ench) do names[i] = e.name end
+    row.enchants, row.enchant = ench, table.concat(names, ", ")
+  else
+    row.enchant = ""
+  end
+  return row
+end
+
+-- The rows are kept for the scan they were read from (Q.cacheFor), also while some items are still loading: those
+-- wait in Q.missingKeys and only they are tried again at the next search, instead of reading the whole scan again
+-- every time (20,000+ rows; with one item that never loads that was every search and every Deals round).
+local function keep(scanned, rows, missingKeys)
+  Q.cacheFor, Q.cache, Q.missing, Q.missingKeys = scanned, rows, #missingKeys, missingKeys
+end
+
+-- The items that weren't loaded last time: the ones that are now join the rows.
+local function retryMissing(scanned)
+  local keys, rows, raw = Q.missingKeys, Q.cache, scanned.rows
+  if not keys or #keys == 0 or not raw then Q.missing = 0; return end
+  local still = {}
+  for _, key in ipairs(keys) do
+    local row = raw[key] and datasetRow(scanned, key, raw[key])
+    if row then rows[#rows + 1] = row else still[#still + 1] = key end
+  end
+  Q.missingKeys, Q.missing = still, #still
+end
+
+local function scanToRead()
   local db, house = ns.db(), ns.house() or (ns.houseOrFaction and ns.houseOrFaction())
   if not db or not house then return nil end
-  local scanned = newestScan(db, house)
+  return newestScan(db, house)
+end
+
+local function dataset()
+  local scanned = scanToRead()
   if not scanned then return nil end
-  if Q.cacheFor == scanned then return Q.cache, scanned, Q.missing end
-  local rows, missing = {}, 0
-  for key, line in pairs(scanned.rows or {}) do
-    local id, suffix = key:match("^(%d+):(%-?%d+)$")
-    id, suffix = tonumber(id), tonumber(suffix)
-    local f = { strsplit(",", line) }
-    local c = itemInfo(id)
-    if not c then
-      missing = missing + 1
-    else
-      local d = ns.ITEMDATA and ns.ITEMDATA[id] or EMPTY_DATA
-      rows[#rows + 1] = {
-        key = key, id = id, suffix = suffix, icon = c[8],
-        name = (suffix ~= 0 and f[13] and f[13] ~= "") and f[13] or c[1],
-        quality = QUALITY[(c[2] or 1) + 1], ilvl = c[3], reqlevel = c[4], category = c[5], type = c[6],
-        slot = EQUIP[c[7] or ""] or "none", stack = c[10], sell = c[9],
-        price = tonumber(f[1]), p10 = tonumber(f[2]), median = tonumber(f[3]), qty = tonumber(f[4]), auctions = tonumber(f[5]),
-        quest = V.isQuest(id, c[5]),
-        source = sourceText(d[1]), profession = ns.PROFESSIONS and ns.PROFESSIONS[d[2] or 0] or "",
-        skill = d[3] or 0, slots = d[4] or 0, droprate = d[5] or 0,
-        dealText = scanned.deals and scanned.deals[key] or nil,
-      }
-      local ench = ns.enchantsFor and ns.enchantsFor(key)
-      if ench then
-        local names = {}
-        for i, e in ipairs(ench) do names[i] = e.name end
-        rows[#rows].enchants, rows[#rows].enchant = ench, table.concat(names, ", ")
-      else
-        rows[#rows].enchant = ""
-      end
-    end
+  if Q.cacheFor == scanned then
+    if Q.missing > 0 then retryMissing(scanned) end
+    return Q.cache, scanned, Q.missing
   end
-  -- only keep the result when every item was loaded, so the next search sees the rest
-  if missing == 0 then Q.cacheFor, Q.cache, Q.missing = scanned, rows, 0 end
-  return rows, scanned, missing
+  local rows, missingKeys = {}, {}
+  for key, line in pairs(scanned.rows or {}) do
+    local row = datasetRow(scanned, key, line)
+    if row then rows[#rows + 1] = row else missingKeys[#missingKeys + 1] = key end
+  end
+  keep(scanned, rows, missingKeys)
+  return rows, scanned, Q.missing
+end
+
+-- The same rows read a slice per frame, for work nobody waits for (Deals after the auction house opens or closes):
+-- reading a whole scan in one go stops the game for a moment. done(rows, scan, missing) is called when they are
+-- there: at once when they are kept already, else some frames later. A search in the meantime reads them in one go
+-- as before, and this one then hands over the same rows.
+Q.SLICE_MS, Q.SLICE_ROWS = 4, 1500   -- per frame: this long, or this many rows (where the game has no fine clock)
+local function datasetSliced(done)
+  local scanned = scanToRead()
+  if not scanned then done(nil); return end
+  if Q.cacheFor == scanned or not (C_Timer and C_Timer.After) then done(dataset()); return end
+  local raw = scanned.rows or {}
+  local rows, missingKeys = {}, {}
+  local key, line = next(raw)
+  local clock = debugprofilestop
+  local function step()
+    if Q.cacheFor == scanned then done(dataset()); return end   -- a search read them meanwhile
+    local t0, n = clock and clock(), 0
+    while key ~= nil do
+      local row = datasetRow(scanned, key, line)
+      if row then rows[#rows + 1] = row else missingKeys[#missingKeys + 1] = key end
+      key, line = next(raw, key)
+      n = n + 1
+      if n >= Q.SLICE_ROWS or (t0 and n % 16 == 0 and clock() - t0 >= Q.SLICE_MS) then break end
+    end
+    if key ~= nil then C_Timer.After(0, step); return end
+    keep(scanned, rows, missingKeys)
+    done(rows, scanned, Q.missing)
+  end
+  step()
 end
 
 -- Sorts rows by one or more { col, desc } keys; rows missing the value go last, then by name.
@@ -1432,6 +1492,8 @@ end
 -- The newest scan's rows (rows, scan, items still loading), one value of a row (a fresh live price wins), and a new
 -- round for the formula prices (Deals.lua).
 ns.queryDataset = function() return dataset() end
+ns.queryDatasetSliced = function(done) return datasetSliced(done) end
+ns.querySliceRows = function(n) Q.SLICE_ROWS = n end   -- for the offline tests
 ns.queryValue = function(row, col) return get(row, col) end
 ns.queryFresh = function() Q.run = Q.run + 1 end
 
@@ -2209,6 +2271,8 @@ local function unsaved()
   if not db or not house then return {} end
   store()
   local sc = newestScan(db, house)
+  -- a scan whose items are all saved stays that way: no need to go through its 20,000 rows at every visit
+  if sc and warming.allSaved == sc then return {} end
   local rows = sc and sc.rows
   local ids, seen = {}, {}
   for key in pairs(rows or {}) do
@@ -2218,6 +2282,7 @@ local function unsaved()
       if not db.itemInfo[id] and not itemInfo(id) then ids[#ids + 1] = id end
     end
   end
+  if sc and #ids == 0 then warming.allSaved = sc end
   return ids
 end
 
