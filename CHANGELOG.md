@@ -1,5 +1,11 @@
 # EverlookDB Auctions
 
+## Unreleased
+- AH log: new Results tab (/eah results). It shows how your auctions did, item by item, over 7 or 30 days: how many sold and expired, how fast they sold, and what they made after the cut and lost deposits. Each item gets a plain tip, like "Keeps expiring: 6 of 8 expired. Try a lower price or a longer duration." Click a column to sort.
+- Quick sell: the picked item shows how it sold for you lately, like "Sold 5 of 8 here, within 4 h".
+- Price alerts: watch an item with /eah watch <item> (a name or a shift-clicked link), or Ctrl+right-click it in Quick sell. When a price update or a quick search finds it clearly under its usual price, you get one chat line and it's marked "watched" in Deals. You get one alert per price level, so no spam. Materials your crafting queue still needs can count too. Settings, Price alerts lists your watched items, each with a Remove button.
+- Tooltips: one quiet line when something stands out, like "Rising: up 40% this week", "Falling: down 30% this week" or "Many listed: 400, about 4x the usual". It only shows with enough days of prices. You can turn it off in the tooltip settings.
+
 ## v0.35.8 (2026-11-26)
 - Auction lengths now show what they really are on WoW Forever: 2, 8 and 24 hours. Quick sell, Sell all and the settings said 12, 24 and 48 hours, so "12h" posted for only 2 hours. The default is now 8 hours, and items you had set to "12h" now post for 8 hours.
 

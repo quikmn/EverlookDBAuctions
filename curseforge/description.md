@@ -33,6 +33,12 @@ The Sell all button lines up everything in your bags and posts it one by one. On
 Deals, checked one click at a time  
 After every price update the addon looks for bargains: auctions under 60% of the usual price, below what a vendor pays, below what disenchanting is worth, under your shopping list's max, and anything your own deal searches find (like "price lt 50% of median30 and quality ge rare"). The price bar and Home just say "4 deals": no popups, no sound unless you want one. The Deals list shows each one with why ("38% of usual", "vendor pays 1g more", "disenchants for 2g") and how sure it is. Look again checks one deal live per click; still there at that price, it's ready for Buy, then Confirm. Gone or bought deals drop off.
 
+Price alerts  
+Watch an item with /eah watch (or Ctrl+right-click it in Quick sell). When a price update or a quick search finds it clearly under its usual price, you get one chat line and it's marked "watched" in Deals. Once per price level, never spam. Materials your crafting queue still needs can count too.
+
+How your auctions did  
+The AH log's Results tab shows each item you sold over 7 or 30 days: how many sold and expired, how fast they went, what they made after the cut and lost deposits, and a plain tip like "Keeps expiring: 6 of 8 expired. Try a lower price or a longer duration." Quick sell shows the short version: "Sold 5 of 8 here, within 4 h". Tooltips add one quiet line when something stands out: "Rising: up 40% this week" or "Many listed: 400, about 4x the usual".
+
 Your gold, day by day  
 The Gold page (/eah gold) draws your gold on all your characters as a line chart over 7 days, 30 days or everything, as one total or one line per character. Under it: this week and last week, with what came in (AH sales, vendor sales, looted coins, quest gold, mail from other players) and what went out (AH purchases, the auction house's cut, lost deposits, repairs, vendor buys, training), and the net. Then your best sellers by profit and by count, your biggest buys, your flips (what you pay on average against what you sell for) and the gold in your auctions right now. Copy any list as CSV for a spreadsheet.
 
@@ -61,6 +67,8 @@ COMMANDS
 /eah buy [list] - buy a shopping list item by item  
 /eah rules - your sell rules for Sell all  
 /eah deals - the deals in your newest scan  
+/eah watch <item> - a price alert when it gets cheap (/eah unwatch to stop)  
+/eah results - how your auctions did, item by item  
 /eah gold - your gold per day, income and costs per week, best sellers  
 /eah undercut 1s - how far under the cheapest auction to price: 50c, 1g, 5%, or 0 to match it  
 /eah auto off (or on) - stop or restart the automatic full scan  

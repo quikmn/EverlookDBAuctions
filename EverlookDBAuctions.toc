@@ -38,11 +38,14 @@ Shopping.lua
 Buy.lua
 BuyList.lua
 Deals.lua
+Watch.lua
+Market.lua
 RecipeList.lua
 Profit.lua
 PurchaseLog.lua
 Ledger.lua
 LedgerWatch.lua
+Results.lua
 Purchases.lua
 Celebrate.lua
 LootCards.lua

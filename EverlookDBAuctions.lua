@@ -950,10 +950,13 @@ local function finishScan(h, vars, total, noLink, linkRounds, unlinked)
     mine.beat = GetTime()
     local now, day = time(), today()
     h.items = {}
+    local noteQty = ns.market and ns.market.noteQty   -- the usual count per item, for the tooltip's market hint
     for id, it in pairs(items) do
       h.items[id] = { it[1], it[2], it[3], now }
       if it[1] then noteDay(h, id, it[1], day) end
+      if noteQty and it[2] then noteQty(h, id, it[2], day) end
     end
+    if ns.market then pcall(ns.market.prune, h, day); pcall(ns.market.forget) end
     h.scanned = now
     h.ench, h.enchanted = ench, enchanted
     logScan(h, scan.aborted and "done (AH closed; item details skipped)" or "done")
@@ -2144,6 +2147,8 @@ local function keyFor(side)
 end
 -- the open auction house, else your faction's (what tooltips use), for searches away from the auction house
 ns.houseOrFaction = function() return keyFor() end
+-- A house's saved data (prices, daily lows, counts): the open one, else your faction's; nil before its first price.
+ns.houseData = function(side) return db and db.houses[keyFor(side)] end
 
 -- The Price Feed (SharedPrices.lua): other players' newest scan, from the EverlookDB App. It is never written into
 -- db; each lookup below takes whichever is newer, our own or the shared one, per item and per item version.

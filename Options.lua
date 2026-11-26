@@ -23,6 +23,7 @@ local FEEDBACK_URL = "https://everlookdb.com/auctions-addon.html#feedback"
 local TIP_LINES = {
   { "tipprice", "auction", "Auction price, how many are up and how old the price is" },
   { "tiphistory", "history", "30-day low and median" },
+  { "tipmarket", "market", "Market hints: rising, falling, or many more up than usual (one quiet line, only when notable)" },
   { "tipdisenchant", "disenchant", "What disenchanting it is worth, from material prices" },
   { "tipcraft", "craft", "What crafting one costs, for items you can craft (materials at the latest AH prices)" },
   { "tipvendor", "vendor", "Sell to vendor and Buy from vendor, at the top in large print" },
@@ -274,6 +275,9 @@ local function build()
   app:Command("income", "income", "what you sold and other gold from the mail, with what crafting a sold item again costs", function()
     if ns.purchases then ns.purchases.toggle("income") end
   end, { "sales", "sold", "earned" })
+  app:Command("results", "results", "how your auctions did, item by item: sold, expired, how fast, what they made (works anywhere)", function()
+    if ns.purchases then ns.purchases.toggle("results") end
+  end, { "result", "stats", "sellrate" })
   app:Command("run", "run <list>", "run a shopping list (auction house open)", function(rest)
     ns.slash(rest == "" and "run" or ("run " .. rest))
   end)
@@ -344,7 +348,7 @@ local function build()
     app:Widget(stack, "skin")
     app:Widget(stack, "compareshift")
     UI.Header(stack, "Chat commands")
-    UI.Note(stack, "/eah  this window (Home, or the page you used last)\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah feed  the Price Feed (/eah feed off turns it off)\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah rules  the Sell rules: what Sell all posts, and how\n/eah prices  Advanced search, anywhere\n/eah deals  the Deals: cheap auctions in the newest scan\n/eah where <item>  which of your characters has it, and where\n/eah bought, /eah forsale, /eah income, /eah loot  the AH log\n/eah profit  Crafting profit\n/eah up  Gear upgrades (/eah up help for its commands)\n/eah minimap  show or hide the minimap button\n/eah run <list>  run a shopping list\n/eah myprices  your price formulas\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\nKey Bindings, AddOns: a key for this window")
+    UI.Note(stack, "/eah  this window (Home, or the page you used last)\n/eah help  every command in chat\n/eah status  which auction houses have prices, and how old\n/eah feed  the Price Feed (/eah feed off turns it off)\n/eah scan  update prices now (auction house open)\n/eah sell, /eah shop  open Quick sell or Shopping\n/eah rules  the Sell rules: what Sell all posts, and how\n/eah prices  Advanced search, anywhere\n/eah deals  the Deals: cheap auctions in the newest scan\n/eah watch <item>  a price alert when it gets cheap\n/eah where <item>  which of your characters has it, and where\n/eah bought, /eah forsale, /eah income, /eah results, /eah loot  the AH log\n/eah profit  Crafting profit\n/eah up  Gear upgrades (/eah up help for its commands)\n/eah minimap  show or hide the minimap button\n/eah run <list>  run a shopping list\n/eah myprices  your price formulas\n/eah undercut 1s  change a setting (/eah get lists them)\n/eah search <words>  find a setting\nKey Bindings, AddOns: a key for this window")
   end, { icon = "gear" })
   app:Section("selling", "Selling", function(stack)
     UI.Header(stack, "Selling", "Quick sell's price is the cheapest live auction minus your undercut. Blizzard's own Sell tab gets the same undercut when you pick an auction in its list.")
@@ -355,6 +359,7 @@ local function build()
   end, { icon = "share" })
   if ns.sellAll then ns.sellAll.settings(app, UI) end   -- the Sell rules page (SellAll.lua)
   if ns.deals then ns.deals.settingsFor(app, UI) end   -- the Deals page of the settings (Deals.lua)
+  if ns.watch then ns.watch.settingsFor(app, UI) end   -- the Price alerts page (Watch.lua)
   app:Section("tooltips", "Tooltips", function(stack)
     UI.Header(stack, "Tooltips", "Lines added to item tooltips: labels left, prices right with their coins in line. Every price says how old it is; prices over a day old are grey.")
     for _, t in ipairs(TIP_LINES) do app:Widget(stack, t[1]) end
@@ -370,6 +375,8 @@ local function build()
         desc = "Your auctions up for sale, as the auction house last showed them.", keywords = { "for sale", "listed", "posted", "auctions", "open" } },
       { label = "Income", width = 110, onClick = logPage("income"),
         desc = "Money you took from the mail: auctions sold and other gold.", keywords = { "income", "sold", "open" } },
+      { label = "Results", width = 110, onClick = logPage("results"),
+        desc = "How your auctions did, item by item: how many sold, how fast, what they made, with advice.", keywords = { "results", "sell rate", "expired", "stats", "advice", "open" } },
       { label = "Looted", width = 110, onClick = logPage("looted"),
         desc = "Everything you looted, with when and where.", keywords = { "loot", "looted", "drops", "open" } },
     })

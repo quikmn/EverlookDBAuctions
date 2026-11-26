@@ -155,6 +155,7 @@ def main() -> int:
     failures += no_freeze()
     failures += deals_buy()
     failures += gold()
+    failures += results_alerts_market()
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     from inventory import inventory
     failures += inventory(source_of, VENDOR_SETUP)
@@ -8621,6 +8622,303 @@ def gold():
     box = P.exportBox.area.box.GetText(P.exportBox.area.box)
     check(box.startswith("date,total_gold,Mara") and "2026-11-25,6.5,6.5" in box, f"the export box: {box[:60]}")
     check(app.sections.gold is not None and app.sections.gold.group == "main", "Gold is one of the main pages")
+    return failures
+
+
+def results_alerts_market():
+    """Your results (Results.lua) per item from the ledger, with advice and Quick sell's line; price alerts (Watch.lua):
+    once per item and price level, from a scan or a quick search, marked in Deals; market hints (Market.lua): a week's
+    trend and many more listed than usual, only with enough days. And the AH log's Results view draws."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("results/alerts/market: " + what)
+
+    lua = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua.execute(source_of("tests/mock.lua"))
+    lua.execute("""
+      MOCK_TIME = 1000000; function time(t) if t then return os.time(t) end return MOCK_TIME end
+      date = os.date
+      GetTime = function() return MOCK_TIME end
+      UISpecialFrames = {}; tinsert = table.insert
+      function IsShiftKeyDown() return false end
+      SAID = {}
+      C_Item.GetItemInfo = function(id) return MOCK_ITEMS[id], '|cffffffff|Hitem:' .. id .. '::|h[' .. tostring(MOCK_ITEMS[id]) .. ']|h|r' end
+      MOCK_ITEMS[2772] = 'Iron Ore'; MOCK_ITEMS[4306] = 'Silk Cloth'; MOCK_ITEMS[2589] = 'Linen Cloth'
+    """)
+    ns = lua.table()
+    DB = lua.table()
+    G = lua.globals()
+    G.MOCK_DB = DB
+    ns.db = lua.eval("function() return MOCK_DB end")
+    ns.money = lua.eval("function(c) return tostring(c) .. 'c' end")
+    ns.num = lua.eval("function(n) return tostring(n) end")
+    ns.say = lua.eval("function(m) SAID[#SAID + 1] = m end")
+    ns.house = lua.eval("function() return 'Realm-Alliance' end")
+    run = lua.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    for name in ["Ledger.lua", "Results.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    R = ns.results
+    now = 1000000
+    H = 3600
+
+    # --- Your results -------------------------------------------------------------------------------------------
+    recs = lua.table()
+    seq = [0]
+
+    def rec(item, name, st, t, at=None, dur=2, net=None, dep=None, depLost=None, h="Realm-Alliance", q=1):
+        seq[0] += 1
+        r = lua.table(id=seq[0], item=item, name=name, st=st, t=t, at=at if at is not None else t, dur=dur, net=net, dep=dep,
+                      depLost=depLost, h=h, q=q)
+        recs[len(recs) + 1] = r
+        return r
+
+    # Iron Ore: 5 sold within 1-3 h of 5 ended (8 h auctions)
+    for i, hrs in enumerate([1, 2, 3, 0.5, 2.5]):
+        t = now - (i + 1) * 86400
+        rec(2772, "Iron Ore", "sold", t, t + hrs * H, net=950, q=10)
+    # Silk Cloth: 2 sold, 6 expired (2 h auctions), deposits lost
+    for i in range(2):
+        t = now - (i + 1) * 86400
+        rec(4306, "Silk Cloth", "sold", t, t + H, dur=1, net=400)
+    for i in range(6):
+        t = now - (i + 3) * 86400
+        rec(4306, "Silk Cloth", "expired", t, t + 2 * H, dur=1, dep=30, depLost=True)
+    rec(4306, "Silk Cloth", "cancelled", now - 86400, now - 86000, dur=1, dep=30, depLost=True)
+    # Linen: 1 sold a day after posting (seen in its mail only), 1 still up
+    rec(2589, "Linen Cloth", "sold", now - 5 * 86400, now - 4 * 86400, net=50)
+    rec(2589, "Linen Cloth", "listed", now - H)
+    # old (outside 30 days) and another house: left out
+    rec(2772, "Iron Ore", "expired", now - 40 * 86400, now - 40 * 86400 + 8 * H)
+    rec(2772, "Iron Ore", "expired", now - 2 * 86400, now - 2 * 86400 + 8 * H, h="Realm-Neutral")
+    s = lua.table(auctions=recs, money=lua.table(), seq=seq[0])
+    lst = R.summary(s, now - 30 * 86400, lua.table(h="Realm-Alliance"))
+    by = {lst[i].name: lst[i] for i in range(1, len(lst) + 1)}
+    ore, silk, linen = by.get("Iron Ore"), by.get("Silk Cloth"), by.get("Linen Cloth")
+    check(ore is not None and ore.posted == 5 and ore.sold == 5 and ore.ended == 5 and ore.expired == 0,
+          f"Iron Ore: 5 posted, 5 sold (old and other house left out): {ore and (ore.posted, ore.sold, ore.expired)}")
+    check(ore is not None and ore.money == 5 * 950 and abs(ore.avgSecs - 1.8 * H) < 1, f"Iron Ore money and average time: {ore and (ore.money, ore.avgSecs)}")
+    check(ore is not None and ore.short == "Sells fast" and ore.advice == "Sells fast: 5 of 5 sold within 3 hours.", f"fast advice: {ore and ore.advice}")
+    check(silk is not None and silk.sold == 2 and silk.expired == 6 and silk.cancelled == 1 and silk.ended == 8 and silk.posted == 9,
+          f"Silk: 2 sold, 6 expired, 1 cancelled: {silk and (silk.sold, silk.expired, silk.cancelled)}")
+    check(silk is not None and silk.money == 800 - 7 * 30, f"Silk: sales after the cut minus 7 deposits lost: {silk and silk.money}")
+    check(silk is not None and silk.advice == "Keeps expiring: 6 of 8 expired. Try a lower price or a longer duration.",
+          f"expiring advice: {silk and silk.advice}")
+    check(linen is not None and linen.avgSecs is None and linen.open == 1 and linen.short == "Too few yet",
+          f"Linen: a sale seen a day late has no time; too few to tell: {linen and (linen.avgSecs, linen.short)}")
+    # 24 h auctions that keep expiring: a lower price only
+    e24 = lua.table(ended=4, sold=1, expired=3, shortest=3)
+    check(R.advice(e24)[0] == "Keeps expiring: 3 of 4 expired. Try a lower price.", f"24 h: {R.advice(e24)[0]}")
+    check(R.advice(lua.table(ended=5, sold=4, expired=1, avgSecs=5 * H))[0] == "Sells well: 4 of 5 sold, usually within 5 hours.",
+          "sells well, with the usual time")
+    check(R.sellSecs(lua.table(st="sold", t=0, at=3 * H, dur=1)) is None, "a 2 h auction sold 'after 3 h': not a real time")
+    check(R.sellSecs(lua.table(st="sold", t=0, at=int(2.2 * H), dur=1)) == 2 * H, "within the slack: capped at the duration")
+    # sorting
+    R.sort(lst, "money")
+    check(lst[1].name == "Iron Ore", "by money: Iron Ore first")
+    R.sort(lst, "advice")
+    check(lst[1].name == "Silk Cloth", "by expired share: Silk first")
+    R.sort(lst, "name", False)
+    check([lst[i].name for i in range(1, 4)] == ["Iron Ore", "Linen Cloth", "Silk Cloth"], "by name")
+    tot = R.totals(lst)
+    check(tot.posted == 16 and tot.sold == 8 and tot.ended == 14, f"totals: {tot.posted} {tot.sold} {tot.ended}")
+    # Quick sell's line
+    line, tone = R.quickLine(s, 2772, "Realm-Alliance", now)
+    check(line == "Sold 5 of 5 here, within 2 h" and tone == "ok", f"Quick sell line: {line} {tone}")
+    line, tone = R.quickLine(s, 4306, "Realm-Alliance", now)
+    check(line == "Sold 2 of 8 here, within 1 h" and tone == "danger", f"Quick sell line, mostly expired: {line} {tone}")
+    check(R.quickLine(s, 2589, "Realm-Alliance", now)[0] == "Sold 1 of 1 here", "no time known: no 'within'")
+    check(R.quickLine(s, 12345, "Realm-Alliance", now) is None, "never posted: no line")
+
+    # --- Price alerts --------------------------------------------------------------------------------------------
+    lua.execute("HIST = {}; PRICES = {}")
+    ns.today = lua.eval("function() return math.floor(MOCK_TIME / 86400) end")
+    ns.historyDays = lua.eval("function(id) return HIST[id] end")
+    ns.itemFor = lua.eval("function(id) return PRICES[id] end")
+    ns.listImport = lua.eval("{ idOf = function(n) for id, x in pairs(MOCK_ITEMS) do if x == n then return id end end end }")
+    for name in ["Deals.lua", "Watch.lua", "Market.lua"]:
+        run(source_of(name), name, "EverlookDBAuctions", ns)
+    W, D = ns.watch, ns.deals
+    day = now // 86400
+    hist = lua.table()
+    for k in range(10):
+        hist[day - k] = 1000
+    G.HIST[4306] = hist
+    check(W.level(620, 1000, 80) == 6 and W.level(800, 1000, 80) is None and W.level(799, 1000, 80) == 7, "levels in 10% steps under 80%")
+    check(W.check(4306, 600) is None, "not watched: no alert")
+    check(W.toggle(4306, None, True) is True and W.has(4306), "watched")
+    check(any("watching" in str(x) and "Silk Cloth" in str(x) for x in G.SAID.values()), "it says so in chat")
+    t1 = W.check(4306, 750)
+    check(t1 is not None and "75% of its usual 1000c" in t1 and "750c" in t1, f"under 80%: one alert: {t1}")
+    check(W.check(4306, 740) is None, "the same level: no second alert")
+    check(W.check(4306, 600) is not None, "a lower level: one more")
+    check(W.check(4306, 750) is None, "back up a level: nothing")
+    check(W.check(4306, 1000) is None and DB.watch[4306].lvl is None, "back at its usual price: starts over")
+    check(W.check(4306, 700) is not None, "the next dip alerts again")
+    # a quick search: the cheapest that isn't yours
+    W.check(4306, 1000)
+    rows = lua.eval("{ { unit = 300, qty = 5, mine = true }, { unit = 650, qty = 2 } }")
+    before = len(G.SAID)
+    ns.noteLivePrice(4306, rows)
+    check(len(G.SAID) == before + 1 and "650c" in G.SAID[len(G.SAID)], f"a quick search alerts (not on your own auction): {G.SAID[len(G.SAID)]}")
+    # a price update: fresh prices only
+    W.check(4306, 1000)
+    G.PRICES[4306] = lua.table(600, 20, 4, now - 5 * 3600)
+    before = len(G.SAID)
+    W.checkAll(now)
+    check(len(G.SAID) == before, "a price over 3 hours old: no alert")
+    G.PRICES[4306] = lua.table(600, 20, 4, now - 600)
+    W.checkAll(now)
+    check(len(G.SAID) == before + 1, "a fresh price update alerts")
+    # off
+    DB.watchOff = True
+    W.check(4306, 1000)
+    check(W.check(4306, 500) is None, "alerts off: nothing")
+    DB.watchOff = None
+    # no history: no usual price, no alert
+    W.toggle(2589)
+    check(W.check(2589, 1) is None, "no usual price yet: no alert")
+    # the crafting queue's materials
+    G.EverlookCraftAPI = lua.eval("{ version = 8, queueSet = function() end, queueCount = function() end, queue = function() end, queueMissing = function() return { { 2772, 40 }, { 2880, 5, vendor = true } } end }")
+    G.HIST[2772] = hist
+    W.forgetQueue()
+    t2 = W.check(2772, 500)
+    check(t2 is not None and "Your crafting queue needs 40" in t2, f"a queue material alerts: {t2}")
+    check(W.check(2772, 500) is None and DB.watchSeen[2772].lvl == 5, "once per level for queue materials too")
+    DB.watchQueue = False
+    W.forgetQueue()
+    check(W.check(2772, 100) is None, "queue setting off: nothing")
+    DB.watchQueue = None
+    W.forgetQueue()
+    # resolve: link, ID, name
+    check(W.resolve("|cffffffff|Hitem:4306::|h[Silk Cloth]|h|r")[0] == 4306, "a link")
+    check(W.resolve("2589")[0] == 2589, "an ID")
+    check(W.resolve("Iron Ore")[0] == 2772, "a name")
+    check(W.resolve("Nothing Like It")[0] is None, "an unknown name")
+    W.command("Linen Cloth", True)
+    check(not W.has(2589), "/eah unwatch")
+    wl = W.list()
+    check(len(wl) == 1 and wl[1].id == 4306, "the list")
+    # the Deals mark: a watched item under 80% is a deal marked "watched", whatever its profit
+    G.EverlookCraftAPI = None
+    W.forgetQueue()
+    rowsD = lua.eval("{ { key = '4306:0', id = 4306, name = 'Silk Cloth', price = 750, qty = 3, auctions = 1 }, { key = '2589:0', id = 2589, name = 'Linen Cloth', price = 750, qty = 3, auctions = 1 } }")
+    G.HIST[2589] = hist
+    filt, pct = W.dealsFilter()
+    o = lua.table(watch=filt, watchPct=pct, today=day, days=ns.historyDays, min=100000, unsure=True)
+    out, _hidden = D.build(rowsD, o)
+    check(len(out) == 1 and out[1].id == 4306 and "watched, 75% of usual" in D.whyText(out[1]),
+          f"Deals marks the watched one: {[D.whyText(out[i]) for i in range(1, len(out) + 1)]}")
+
+    # --- Market hints --------------------------------------------------------------------------------------------
+    M = ns.market
+    up = lua.table()
+    for k in range(13):
+        up[day - k] = 1400 if k <= 2 else 1000
+    check(abs(M.trend(up, day) - 0.4) < 0.001, f"up 40% this week: {M.trend(up, day)}")
+    down = lua.table()
+    for k in range(13):
+        down[day - k] = 700 if k <= 2 else 1000
+    lbl, val, _ = M.hint(down, day, None, None, now)
+    check(lbl == "Falling" and val == "down 30% this week", f"falling: {lbl} {val}")
+    flat = lua.table()
+    for k in range(13):
+        flat[day - k] = 1100 if k <= 2 else 1000
+    check(M.trend(flat, day) is None, "10% is not notable")
+    few = lua.table()
+    for k in (0, 1, 6, 7):
+        few[day - k] = 2000 if k <= 2 else 1000
+    check(M.trend(few, day) is None, "4 days of lows: too few")
+    # counts: a running average per day, today's newest count apart
+    h = lua.table()
+    for k in range(6):
+        M.noteQty(h, 4306, 100, day - 5 + k)
+        M.noteQty(h, 4306, 120, day - 5 + k)   # a second update the same day: the newest counts
+    e = h.qty[4306]
+    check(e[2] == 5 and abs(e[1] - 120) < 0.01 and e[4] == 120, f"5 days folded in, today's kept apart: {e[1]} {e[2]} {e[4]}")
+    lbl, val, _ = M.hint(None, day, e, lua.table(1, 400, 9, now - 600), now)
+    check(lbl == "Many listed" and val == "400, about 3x the usual", f"many listed: {lbl} {val}")
+    check(M.hint(None, day, e, lua.table(1, 300, 9, now - 600), now) is None, "2.5x the usual: quiet")
+    check(M.hint(None, day, e, lua.table(1, 400, 9, now - 2 * 86400), now) is None, "an old count: quiet")
+    check(M.many(lua.table(3, 9, day, 3), 15) is None, "a handful (under 20): quiet")
+    check(M.many(lua.table(10, 2, day, 10), 100) is None, "2 days of counts: too few")
+    lbl, _, _ = M.hint(up, day, e, lua.table(1, 400, 9, now - 600), now)
+    check(lbl == "Many listed", "one line at most: many listed wins over the trend")
+    h.qty[999] = lua.table(1, 1, day - 40, 1)
+    h.qtyPruned = None
+    M.prune(h, day)
+    check(h.qty[999] is None and h.qty[4306] is not None, "counts not seen for 30 days go")
+    # the tooltip line: one Line, only with the setting on
+    ns.tipOn = lua.eval("function(k) return not (MOCK_DB.tip and MOCK_DB.tip[k] == false) end")
+    ns.houseData = lua.eval("function() return MOCK_HOUSE end")
+    G.MOCK_HOUSE = lua.table(qty=lua.table())
+    G.HIST[5000] = up
+    lines = lua.eval("function(M, id) local out = {}; local t = { Line = function(_, l, v) out[#out + 1] = l .. ': ' .. tostring(v) end }; M.forget(); M.tooltip(t, id); return out end")
+    got = lines(M, 5000)
+    check(len(got) == 1 and got[1] == "Rising: up 40% this week", f"tooltip line: {list(got.values())}")
+    DB.tip = lua.table(market=False)
+    check(len(lines(M, 5000)) == 0, "setting off: no line")
+    DB.tip = None
+    check(len(lines(M, 4306)) == 0, "nothing notable: no line")
+    src = source_of("Options.lua")
+    check('"tipmarket", "market"' in src, "the tooltip setting is in TIP_LINES")
+    check('ns.watch.settingsFor(app, UI)' in src, "the Price alerts page is built with the settings")
+    check("COMBAT_LOG_EVENT_UNFILTERED" not in source_of("Watch.lua") + source_of("Market.lua") + source_of("Results.lua"), "no combat log")
+
+    # --- the AH log's Results view draws ---------------------------------------------------------------------------
+    lua2 = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua2.execute(source_of("tests/mock.lua"))
+    lua2.execute("""
+      MOCK_TIME = 1000000; function time() return MOCK_TIME end
+      function date(fmt, t) return 'd' .. tostring(t) end
+      UISpecialFrames = {}; tinsert = table.insert
+      function IsShiftKeyDown() return false end
+      C_AuctionHouse = { PlaceBid = function() end, StartCommoditiesPurchase = function() end, ConfirmCommoditiesPurchase = function() end }
+      MOCK_ITEMS[4306] = 'Silk Cloth'
+    """)
+    ns2 = lua2.table()
+    DB2 = lua2.table()
+    lua2.globals().MOCK_DB = DB2
+    ns2.db = lua2.eval("function() return MOCK_DB end")
+    ns2.money = lua2.eval("function(c) return tostring(c) .. 'c' end")
+    ns2.num = lua2.eval("function(n) return tostring(n) end")
+    ns2.house = lua2.eval("function() return 'Realm-Alliance' end")
+    ns2.itemFor = lua2.eval("function() return nil end")
+    run2 = lua2.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run2(source_of("Skin.lua"), "Skin.lua", "EverlookDBAuctions", ns2)
+    for name in ["Libs/LibStub/LibStub.lua", "Libs/EverlookUI/EverlookUI.lua", "MailClassify.lua", "PurchaseLog.lua", "Ledger.lua",
+                 "LedgerWatch.lua", "Results.lua", "Purchases.lua"]:
+        run2(source_of(name), name, "EverlookDBAuctions", ns2)
+    try:
+        led = ns2.ledger.store(DB2)
+        led.migrated = lua2.table(at=1)
+        ns2.ledger.get = lua2.eval("function() return MOCK_DB.ledger end")
+        post = lua2.eval("function() return { item = 4306, name = 'Silk Cloth', q = 20, unit = 10, dur = 2, dep = 30, h = 'Realm-Alliance' } end")
+        for i in range(3):
+            ns2.ledger.post(led, post(), 1000000 - 86400 * (i + 1))
+        for r in (led.auctions[1], led.auctions[2]):
+            r.st, r.at, r.net = "sold", r.t + 3600, 190
+        led.auctions[3].st, led.auctions[3].at, led.auctions[3].depLost = "expired", led.auctions[3].t + 9 * 3600, True
+        B = ns2.purchases
+        B.mode = "results"
+        B.open()
+        f = lua2.globals().EverlookAuctionsPurchases
+        check(f is not None, "the window is made")
+        B.render()
+        check("3 posted, 2 of 3 sold (67%), 1 expired, 350c" in f.sum.text, f"the Results sum: {f.sum.text}")
+        rawget = lua2.eval("rawget")
+        shown = [f.rows[i] for i in range(1, len(f.rows) + 1) if rawget(f.rows[i], "entry")]
+        check(len(shown) == 1 and shown[0].date.text == "2 of 3" and shown[0].qty.text == "3" and shown[0].each.text == "1h 00m",
+              f"the Silk Cloth row: {shown and (shown[0].date.text, shown[0].qty.text, shown[0].each.text)}")
+        check(f.headWhen.text == "SOLD" and f.totalHead.text == "MADE", "the column heads say what they show")
+        B.resSort, B.resDesc = "name", False
+        B.render()
+        B.mode = "income"
+        B.render()
+        check(f.totalHead.text == "TOTAL", "back to Income: the heads come back")
+    except Exception as ex:
+        failures.append(f"results/alerts/market: Results view error {ex}")
     return failures
 
 

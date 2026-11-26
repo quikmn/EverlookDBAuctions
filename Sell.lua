@@ -1135,7 +1135,17 @@ local function updatePost()
   local mem = s and s.memory[g.key]
   if mem and mem.p then bits[#bits + 1] = "last posted at " .. money(mem.p) end
   if g.de then bits[#bits + 1] = "disenchant ~" .. money(g.de) end
-  f.sub:SetText(table.concat(bits, "   "))
+  if ns.watch and ns.watch.has(g.id) then bits[#bits + 1] = "watched" end
+  local text = table.concat(bits, "   ")
+  -- how your own auctions of it did here lately (Results.lua): "Sold 5 of 8 here, within 4 h"
+  local L = ns.ledger
+  local okR, line, tone = pcall(function()
+    return ns.results.quickLine(L.get(), g.id, ns.house and ns.house())
+  end)
+  if okR and line then
+    text = text .. "\n" .. UI.hex(tone == "ok" and T.good or tone == "danger" and T.bad or T.dim) .. line .. "|r"
+  end
+  f.sub:SetText(text)
   f.qty:SetText(tostring(S.qty or 1))
   showCopper(priceStep() == 1)
   for _, b in ipairs(f.durs) do b:EdbActive(b.dur == S.dur) end
@@ -1392,6 +1402,11 @@ local function buildBagRow(L)
     local g = self.item
     if not g then return end
     local s = sdb()
+    if button == "RightButton" and IsControlKeyDown and IsControlKeyDown() and ns.watch then
+      ns.watch.toggle(g.id, g.name, true)   -- a price alert for it (Watch.lua)
+      if S.sel and S.sel.id == g.id then updatePost() end
+      return
+    end
     if button == "RightButton" and s then
       if IsShiftKeyDown() then s.hidden[g.key] = (not s.hidden[g.key]) or nil
       else s.fav[g.key] = (not s.fav[g.key]) or nil end
@@ -1416,7 +1431,8 @@ local function buildBagRow(L)
       end
     end
     GameTooltip:AddLine(" ")
-    GameTooltip:AddLine("Click to sell. Right-click: favourite. Shift+right-click: hide.", T.info[1], T.info[2], T.info[3], true)
+    GameTooltip:AddLine("Click to sell. Right-click: favourite. Shift+right-click: hide. Ctrl+right-click: "
+      .. ((ns.watch and ns.watch.has(g.id)) and "stop watching its price." or "watch its price."), T.info[1], T.info[2], T.info[3], true)
     GameTooltip:Show()
   end)
   b:SetScript("OnLeave", function() GameTooltip:Hide() end)

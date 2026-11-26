@@ -146,6 +146,7 @@ end
 --   listed(id) how many you have up               gone         { [key] = true } bought or gone, left out
 --   shop       { { list, name, rows = { [key] = { max, need } } } } shopping lists' lines with a max
 --   searches   { { name, keys = { [key] = true } } } what each Deal search found
+--   watch(id)  true for items you watch (Watch.lua's price alerts); watchPct: under this share of usual (80)
 -- Returns the list, best first: { key, id, row, name, price, profit, conf, sure, units, limit, reasons = { { kind,
 -- text, profit, limit, conf } } }, and how many unsure ones were left out.
 -- D.builder(rows, o) is the same work in slices: its step(max, over) looks at up to `max` more rows (all of them
@@ -249,6 +250,12 @@ function D.builder(rows, o)
           break
         end
       end
+    end
+    -- an item you watch, under the price alerts' share of its usual price (Watch.lua): marked "watched"
+    if o.watch and usual and o.watch(id) and price < usual * (o.watchPct or 80) / 100 then
+      reasons = reasons or {}
+      reasons[#reasons + 1] = { kind = "watch", text = "watched, " .. pctText(price, usual),
+        profit = resale and math.max(0, math.floor(resale)) or 0, limit = math.floor(usual * (o.watchPct or 80) / 100), conf = 1, units = 1 }
     end
     -- your own Deal searches
     for _, s in ipairs(o.searches or {}) do
@@ -576,6 +583,7 @@ local function computeWith(round, rows, scanned, missing)
     o.shop = nil
   end
   o.searches = searchHits()
+  if ns.watch and ns.watch.dealsFilter then o.watch, o.watchPct = ns.watch.dealsFilter() end
 
   local function finish(list, hidden)
     D.error = nil

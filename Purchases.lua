@@ -436,14 +436,15 @@ local function layoutNow()
   local compact, wide = w < COMPACT_W, w >= WIDE_W
   local mini = w < MINI_W   -- narrower still: no title, short tabs
   local mode = B.mode or "bought"
-  local L = { w = w, compact = compact, mini = mini, wide = wide, looted = mode == "looted",
+  local L = { w = w, compact = compact, mini = mini, wide = wide, looted = mode == "looted", results = mode == "results",
     craftW = wide and 170 or CRAFT_W, totalW = mini and 80 or TOTAL_W, top = compact and 84 or 104 }
   -- Columns by what matters most in each view, each only while item names keep NAME_MIN of room: in Looted where it
   -- came from, and nothing else (how many goes with the name, the total says what it is worth); elsewhere how many,
   -- then each, then the craft cost. The full date last.
   local NAME_MIN = 150
   local order = mode == "looted" and { "craft" } or (mode == "bought" and { "qty", "each" })
-    or (mode == "income" and { "craft", "qty", "each" }) or { "qty", "each", "craft" }
+    or (mode == "income" and { "craft", "qty", "each" }) or (mode == "results" and { "craft", "each", "qty" })
+    or { "qty", "each", "craft" }
   local widths = { qty = QTY_W, each = EACH_W, craft = L.craftW }
   local room = w - 32 - PAD * 2 - 22 - L.totalW - 60
   for _, c in ipairs(order) do
@@ -567,6 +568,10 @@ local function rowTooltip(self)
     ledgerTooltip(e)
     return
   end
+  if B.mode == "results" then
+    B.resultTooltip(e)
+    return
+  end
   if B.mode == "income" then
     local id = saleID(e)
     if id then pcall(GameTooltip.SetItemByID, GameTooltip, id) else GameTooltip:SetText(entryName(e), 1, 0.82, 0) end
@@ -655,6 +660,7 @@ local function makeRow(parent)
       if e.cat and openCategories then openCategories(self, e) end
       return
     end
+    if B.mode == "results" then return end
     toggleMark(e)
   end)
   row:SetScript("OnEnter", function(self) self.hover = true; paintRow(self); rowTooltip(self) end)
@@ -803,7 +809,7 @@ local function makeFrame()
   f.title:SetText("AH log")
   f.tabs = {}
   local prev
-  for _, t in ipairs({ { "bought", "Bought" }, { "forsale", "For sale", "Sale" }, { "income", "Income" }, { "looted", "Looted", "Loot" } }) do
+  for _, t in ipairs({ { "bought", "Bought" }, { "forsale", "For sale", "Sale" }, { "income", "Income" }, { "results", "Results", "Stats" }, { "looted", "Looted", "Loot" } }) do
     local b = CreateFrame("Button", nil, f)
     b:SetSize(84, 26)
     if prev then b:SetPoint("LEFT", prev, "RIGHT", 4, 0) else b:SetPoint("LEFT", f.title, "RIGHT", 18, 0) end
@@ -880,9 +886,15 @@ local function makeFrame()
   f.periods = {}
   for i, pr in ipairs(B.PERIODS) do
     local b = chip(f, pr[2], function()
-      B.period, B.offset = pr[1], 0
       local d = db()
-      if d then d.ledgerPeriod = pr[1] end
+      B.offset = 0
+      if B.mode == "results" then
+        B.resPeriod = pr[1]
+        if d then d.resultsPeriod = pr[1] end
+      else
+        B.period = pr[1]
+        if d then d.ledgerPeriod = pr[1] end
+      end
       B.render()
     end)
     b:SetWidth(62)
@@ -927,6 +939,32 @@ local function makeFrame()
   hi:SetPoint("LEFT", DATE_W, 0)
   hi:SetText("ITEM")
   f.headItem = hi
+  -- Results: a click on a column head sorts by it (again: the other way round)
+  f.sortHeads = {}
+  for _, h in ipairs({ { f.headWhen, "rate" }, { f.headItem, "name" }, { f.qtyHead, "posted" }, { f.eachHead, "time" },
+    { f.craftHead, "advice" }, { f.totalHead, "money" } }) do
+    local b = CreateFrame("Button", nil, head)
+    b:SetPoint("TOPLEFT", h[1], "TOPLEFT", -3, 3)
+    b:SetPoint("BOTTOMRIGHT", h[1], "BOTTOMRIGHT", 3, -3)
+    b.fs, b.key = h[1], h[2]
+    b:SetScript("OnClick", function()
+      if B.mode ~= "results" then return end
+      if B.resSort == b.key then B.resDesc = not B.resDesc
+      else B.resSort, B.resDesc = b.key, ns.results and ns.results.SORT_DESC[b.key] end
+      B.offset = 0
+      B.render()
+    end)
+    b:SetScript("OnEnter", function(self)
+      if B.mode ~= "results" then return end
+      self.fs:SetTextColor(rgba(T.text))
+      GameTooltip:SetOwner(self, "ANCHOR_TOP")
+      GameTooltip:SetText("Sort by this column", 1, 1, 1)
+      GameTooltip:AddLine("Click again for the other way round.", nil, nil, nil, true)
+      GameTooltip:Show()
+    end)
+    b:SetScript("OnLeave", function() GameTooltip:Hide(); B.paintSortHeads() end)
+    f.sortHeads[#f.sortHeads + 1] = b
+  end
   f.rows = {}
   f.empty = text(f.list, T.font, T.muted)
   f.empty:SetWordWrap(true)
@@ -1408,14 +1446,115 @@ function B.renderLedgerCard(f, L)
   return h
 end
 
+---------------------------------------------------------------------------------------------------------------------
+-- Results (Results.lua): what your auctions did, item by item, in the period: sold of ended, how many posted, the
+-- average time to sell, a short verdict and the money after the cut and lost deposits. A click on a column head
+-- sorts by it; the row's tooltip has the advice in full.
+
+local function resName(e)
+  return (e.link and e.link:match("%[(.-)%]")) or e.name or (e.item and itemName(e.item)) or "?"
+end
+
+local function resPeriod()
+  local d = db()
+  return B.resPeriod or (d and d.resultsPeriod) or "month"
+end
+B.resPeriodNow = resPeriod
+
+-- The rows (filtered by the search box, sorted), and the totals of what is shown.
+function B.resultRows()
+  local R = ns.results
+  local s = ledger()
+  if not (R and s) then return {}, R and R.totals({}) or { items = 0, posted = 0, sold = 0, expired = 0, ended = 0, money = 0 } end
+  -- worked out again only when the ledger or the period changed (or after half a minute): scrolling stays cheap
+  local key = resPeriod() .. ":" .. #s.auctions .. ":" .. tostring(s.seq) .. ":" .. math.floor((time() or 0) / 30)
+  if B.resKey ~= key or not B.resAll then B.resKey, B.resAll = key, R.summary(s, LG.since(resPeriod())) end
+  local all = B.resAll
+  local filter = (B.filter or ""):lower():match("^%s*(.-)%s*$") or ""
+  local out = {}
+  for _, e in ipairs(all) do
+    e.id = e.item
+    if filter == "" or resName(e):lower():find(filter, 1, true) then out[#out + 1] = e end
+  end
+  R.sort(out, B.resSort or "money", B.resDesc)
+  return out, R.totals(out)
+end
+
+local function toneColor(tone)
+  return tone == "ok" and T.ok or tone == "danger" and T.danger or tone == "accent" and T.accent or T.muted
+end
+
+function B.paintResultRow(row, e)
+  local R = ns.results
+  row.check:Hide()
+  if e.ended > 0 then
+    row.date:SetText(("%d of %d"):format(e.sold, e.ended))
+    row.date:SetTextColor(rgba(e.rate >= 0.75 and T.ok or (e.rate < 0.4 and T.danger) or T.text))
+  else
+    quiet(row.date, "-")
+  end
+  local id = e.item
+  row.icon:SetTexture(id and try(C_Item.GetItemIconByID, id) or 134400)
+  row.name:SetText(resName(e))
+  if id then row.name:SetTextColor(qualityColor(id)) else row.name:SetTextColor(rgba(T.text)) end
+  row.qty:SetText(ns.num(e.posted))
+  row.qty:SetTextColor(rgba(T.text))
+  quiet(row.each, e.avgSecs and R.durText(e.avgSecs) or "")
+  row.each:SetTextColor(rgba(T.text))
+  row.craft:SetText(e.short or "")
+  row.craft:SetTextColor(rgba(toneColor(e.tone)))
+  if e.money == 0 then quiet(row.total, "-")
+  else setMoney(row.total, e.money, e.money > 0 and T.ok or T.danger) end
+end
+
+-- Paints the column heads: the one Results sorts by in the accent colour.
+function B.paintSortHeads()
+  local f = B.frame
+  if not (f and f.sortHeads) then return end
+  local on = B.mode == "results"
+  for _, b in ipairs(f.sortHeads) do
+    b:SetShown(on)
+    b.fs:SetTextColor(rgba((on and b.key == (B.resSort or "money")) and T.accent or T.muted))
+  end
+end
+
+function B.resultTooltip(e)
+  if e.link then pcall(GameTooltip.SetHyperlink, GameTooltip, e.link)
+  elseif e.item then pcall(GameTooltip.SetItemByID, GameTooltip, e.item)
+  else GameTooltip:SetText(resName(e), 1, 0.82, 0) end
+  GameTooltip:AddLine(" ")
+  local R = ns.results
+  if e.advice then
+    local c = toneColor(e.tone)
+    GameTooltip:AddLine(e.advice, c[1], c[2], c[3], true)
+  elseif e.ended == 0 then
+    GameTooltip:AddLine("None of these auctions has ended yet.", 0.6, 0.6, 0.6, true)
+  else
+    GameTooltip:AddLine(("Only %d ended so far: too few to tell."):format(e.ended), 0.6, 0.6, 0.6, true)
+  end
+  GameTooltip:AddDoubleLine("Posted", ("%d %s, %s items"):format(e.posted, e.posted == 1 and "auction" or "auctions", ns.num(e.items)), 0.8, 0.8, 0.8, 1, 1, 1)
+  GameTooltip:AddDoubleLine("Sold", e.ended > 0 and ("%d of %d ended (%d%%)"):format(e.sold, e.ended, math.floor(e.rate * 100 + 0.5)) or "-", 0.8, 0.8, 0.8, 1, 1, 1)
+  if e.expired > 0 then GameTooltip:AddDoubleLine("Expired", tostring(e.expired), 0.8, 0.8, 0.8, 1, 1, 1) end
+  if e.cancelled > 0 then GameTooltip:AddDoubleLine("Cancelled", tostring(e.cancelled), 0.8, 0.8, 0.8, 1, 1, 1) end
+  if e.open > 0 then GameTooltip:AddDoubleLine("Still up or waiting for mail", tostring(e.open), 0.8, 0.8, 0.8, 1, 1, 1) end
+  if e.avgSecs then GameTooltip:AddDoubleLine("Average time to sell", R.durText(e.avgSecs), 0.8, 0.8, 0.8, 1, 1, 1) end
+  GameTooltip:AddDoubleLine("Sales after the cut", money(e.net), 0.8, 0.8, 0.8, 1, 1, 1)
+  if e.depLost > 0 then GameTooltip:AddDoubleLine("Deposits lost", "-" .. money(e.depLost), 0.8, 0.8, 0.8, 1, 0.45, 0.4) end
+  GameTooltip:Show()
+end
+
 local function renderList(f)
   local income = B.mode == "income"
   local sale = B.mode == "forsale"
   local looted = B.mode == "looted"
-  local side = income or sale or looted   -- the layout with the third money column, no marks
+  local results = B.mode == "results"
+  local side = income or sale or looted or results   -- the layout with the third money column, no marks
   local all, shown
   if income then
     shown = B.ledgerRows()
+    all = shown
+  elseif results then
+    shown, B.resTotals = B.resultRows()
     all = shown
   else
     all = (sale and (B.forSale().list or {})) or (looted and B.looted()) or list()
@@ -1442,6 +1581,12 @@ local function renderList(f)
     if e and income then
       local L = B.lay or layoutNow()
       paintLedgerRow(row, e, L)
+      B.placeRow(row, L)
+      paintRow(row)
+      row:Show()
+    elseif e and results then
+      local L = B.lay or layoutNow()
+      B.paintResultRow(row, e)
       B.placeRow(row, L)
       paintRow(row)
       row:Show()
@@ -1520,6 +1665,9 @@ local function renderList(f)
   elseif #all == 0 and sale then
     f.empty:SetText(B.forSale().at and "Nothing of yours was up for sale on your last visit to the auction house."
       or "Visit the auction house once on this character and your auctions show here, with how long each has left. Sales after that move to Income (in your mail).")
+  elseif #all == 0 and results then
+    f.empty:SetText((B.filter or "") ~= "" and "Nothing matches." or
+      "No auctions of yours in this period yet. Post with Quick sell (or Blizzard's Sell tab) and this shows, item by item, how many sold, how fast, and what they made after the cut and lost deposits.")
   elseif #all == 0 and income then
     f.empty:SetText(B.openOnly and "No auctions open on this character." or
       "Nothing in this period yet. From now on every auction you post is followed to its end (sold, expired or cancelled), and every gain is sorted: sales after the cut, vendor sales, looted money, quest rewards, gold from players and your alts kept apart, deposits lost as costs.")
@@ -1541,7 +1689,7 @@ local function renderList(f)
   f.pos:SetPoint("TOPRIGHT", -PAD, -(bottom + 10))
   f.list:SetHeight(bottom + 32)
   f.pos:SetText(#shown > n and ("%d-%d of %d, scroll for more"):format(B.offset + 1, math.min(#shown, B.offset + n), #shown)
-    or (#shown > 0 and ("%d %s"):format(#shown, income and "rows" or (sale and "auctions") or (looted and "loots") or "purchases") or ""))
+    or (#shown > 0 and ("%d %s"):format(#shown, income and "rows" or (results and "items") or (sale and "auctions") or (looted and "loots") or "purchases") or ""))
   if looted then
     local n, worth, coins = B.lootToday()
     if B.lay and B.lay.mini then
@@ -1559,6 +1707,22 @@ local function renderList(f)
     for _, e in ipairs(all) do n = n + 1; worth = worth + (e.c or 0) end
     f.sum:SetText(n > 0 and (((B.lay and B.lay.mini) and "%d up, %s if all sell" or "Up for sale: %d auctions, %s if all sell (before the 5%% cut)")):format(n, money(worth)) or "")
     f.sum:SetTextColor(rgba(T.text))
+    return
+  end
+  if results then
+    local t = B.resTotals or {}
+    local label
+    for _, pr in ipairs(B.PERIODS) do if pr[1] == resPeriod() then label = pr[2] end end
+    label = label == "All" and "All time" or label or ""
+    local m = t.money or 0
+    local rate = (t.ended or 0) > 0 and (" (%d%%)"):format(math.floor(t.sold / t.ended * 100 + 0.5)) or ""
+    if B.lay and B.lay.mini then
+      f.sum:SetText(("%s: %d of %d sold"):format(label, t.sold or 0, t.ended or 0))
+    else
+      f.sum:SetText(("%s: %d posted, %d of %d sold%s, %d expired, %s%s after the cut and lost deposits"):format(label,
+        t.posted or 0, t.sold or 0, t.ended or 0, rate, t.expired or 0, m < 0 and "-" or "", money(math.abs(m))))
+    end
+    f.sum:SetTextColor(rgba(m >= 0 and T.text or T.danger))
     return
   end
   if income then
@@ -1812,7 +1976,8 @@ function renderOnce()
   local income = B.mode == "income"
   local sale = B.mode == "forsale"
   local looted = B.mode == "looted"
-  local side = income or sale or looted
+  local results = B.mode == "results"
+  local side = income or sale or looted or results
   for _, b in ipairs(f.tabs) do
     local on = b.mode == (B.mode or "bought")
     b.active = on
@@ -1823,6 +1988,7 @@ function renderOnce()
   end
   local fs = B.forSale()
   f.sub:SetText(looted and "Everything you picked up on this character, newest first: where it came from, and what it is worth today."
+    or results and "How your auctions did, item by item: how many sold, how fast, and what they made after the cut and lost deposits. Click a column to sort."
     or income and "Real gains only: sales after the cut, vendor, loot, quests. Items back from the auction house and gold from players or alts are kept apart."
     or sale and (fs.at and ("Your auctions as the auction house showed them on %s. Sales since then move to Income."):format(date("%d %b %H:%M", fs.at))
       or "Your auctions, read on every visit to the auction house.")
@@ -1867,11 +2033,11 @@ function renderOnce()
   for _, w in ipairs({ f.marked, f.clear, f.recipe }) do w:SetShown(not side) end
   if L.mini then f.clear:Hide() end
   -- Income: the period chips at the right of the toolbar, Open only next to the search, the summary card above the list
-  local per = B.periodNow()
+  local per = results and resPeriod() or B.periodNow()
   local chipW = L.mini and 44 or (L.compact and 52 or 62)
   for i = #f.periods, 1, -1 do
     local b = f.periods[i]
-    b:SetShown(income)
+    b:SetShown(income or results)
     b:SetWidth(chipW)
     b:ClearAllPoints()
     if i == #f.periods then b:SetPoint("TOPRIGHT", -20, L.compact and -49 or -69)
@@ -1883,6 +2049,7 @@ function renderOnce()
   f.openOnly:ClearAllPoints()
   f.openOnly:SetPoint("LEFT", f.search, "RIGHT", 8, 0)
   f.ledger:SetShown(income)
+  if results then f.search:SetWidth(L.mini and (L.w - 40 - 4 * (chipW + 4)) or (L.compact and 150 or 200)) end
   if income then
     f.search:SetWidth(L.mini and (L.w - 40 - 4 * (chipW + 4)) or (L.compact and 150 or 200))
     f.ledger:ClearAllPoints()
@@ -1897,9 +2064,13 @@ function renderOnce()
     if B.catMenu then B.catMenu:Hide() end
   end
   B.placeHeads(f, L)
-  f.headWhen:SetText(sale and (L.fullDate and "TIME LEFT" or "LEFT") or "WHEN")
+  f.headWhen:SetText(results and "SOLD" or sale and (L.fullDate and "TIME LEFT" or "LEFT") or "WHEN")
   f.headItem:SetText(income and "ITEM OR SOURCE" or "ITEM")
-  f.craftHead:SetText(looted and "FROM" or (income and "WHAT") or "CRAFT NOW, EACH")
+  f.craftHead:SetText(looted and "FROM" or (income and "WHAT") or (results and "HOW IT SELLS") or "CRAFT NOW, EACH")
+  f.totalHead:SetText(results and "MADE" or "TOTAL")
+  f.eachHead:SetText(results and "AVG TIME" or "EACH")
+  f.qtyHead:SetText(results and "POSTED" or "QTY")
+  B.paintSortHeads()
   renderList(f)
   local listH = f.list:GetHeight() or 0
   if side then
