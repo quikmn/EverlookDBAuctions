@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.35.7 (2026-11-26)
 - Opening and closing the auction house no longer freezes the game for a few seconds. The Deals list and price updates now do their work a little at a time in the background, and searches after a price update are quicker.
 
 ## v0.35.6 (2026-11-26)
