@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.36.4 (2026-11-27)
 - Quick sell: opened while prices were updating, Your bags could list only a few items, because the auction house turns most items away during an update. It now reads your bags again as soon as the update ends.
 
 ## v0.36.3 (2026-11-27)
