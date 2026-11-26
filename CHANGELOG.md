@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.35.5 (2026-11-26)
 - Crafting profit: the "Saved as ... in the Shopping tab" note shows after you press Make shopping list, then fades away after a few seconds.
 
 ## v0.35.4 (2026-11-26)
