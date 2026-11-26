@@ -390,6 +390,8 @@ function cancelQuote()
 end
 
 -- Asks the auction house for the exact price of the planned amount (buys nothing).
+local quoteCall, quoteBlocked = false, false
+
 function requestQuote()
   local c = run and run.cur
   if not (c and c.plan and c.plan.got > 0) or c.pending then return end
@@ -407,7 +409,11 @@ function requestQuote()
   end
   cancelQuote()
   if not AH().StartCommoditiesPurchase then c.quoteFailed = true; return end
+  -- the game can block this without a click; it then says so while the call runs, naming the call or just "UNKNOWN()"
+  quoteCall, quoteBlocked = true, false
   local okCall = pcall(AH().StartCommoditiesPurchase, c.e.id, c.plan.got)
+  quoteCall = false
+  if quoteBlocked then c.quoteFailed = true; render(); return end
   if not okCall then c.quoteFailed = true; return end
   local ask = { qty = c.plan.got }
   c.quoting, c.quoteFailed = ask, nil
@@ -716,7 +722,9 @@ end
 
 -- Asking for a price can need a click on some clients: then Get the price takes one, from now on.
 function events.ADDON_ACTION_BLOCKED(addon, fn)
-  if addon ~= "EverlookDBAuctions" or not tostring(fn or ""):find("StartCommoditiesPurchase") then return end
+  if addon ~= "EverlookDBAuctions" then return end
+  if not (quoteCall or tostring(fn or ""):find("StartCommoditiesPurchase")) then return end
+  quoteBlocked = true
   local d = db()
   if d then d.quoteByClick = true end
   local c = run and run.cur

@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Buying a shopping list: no more "blocked action" error when the price is fetched. When the game wants a click for it, the button says "Get the price" right away instead of waiting.
+
 ## v0.34.5 (2026-11-26)
 - Gear upgrades: a long spec name like "Protection (levelling)" no longer pushes the "Other..." button over the max price box; the other spec buttons move into "Other..." when there is no room.
 

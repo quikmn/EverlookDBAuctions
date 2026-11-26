@@ -7193,6 +7193,25 @@ def buy_list():
     # /eah buy with a list name that isn't there
     ns.slash("buy nothing here")
     check("no list called" in G.SAID[len(G.SAID)] and "mats" in G.SAID[len(G.SAID)], G.SAID[len(G.SAID)])
+    # the game blocks the automatic price ask while the call runs and names it only "UNKNOWN()": a click from then on
+    G.MOCK_BAGS[2589] = 0
+    l.got = None
+    real_start = G.C_AuctionHouse.StartCommoditiesPurchase
+    G.C_AuctionHouse.StartCommoditiesPurchase = lambda *a: fire("ADDON_ACTION_BLOCKED", "EverlookDBAuctions", "UNKNOWN()")
+    G.IS_COMMODITY = True
+    G.COMMS = tbl(comm(10, 40))
+    W.begin(l)
+    click(f.go)
+    answer(2589)
+    check(ns.db().quoteByClick is True, "a block named UNKNOWN() during the price ask is remembered")
+    check(f.go.text == "Get the price", f"it waits for a click: {f.go.text}")
+    G.C_AuctionHouse.StartCommoditiesPurchase = real_start
+    ns.db().quoteByClick = None
+    W.stop()
+    W.stop()
+    # another addon's or another call's block is not ours to read
+    fire("ADDON_ACTION_BLOCKED", "EverlookDBAuctions", "UNKNOWN()")
+    check(ns.db().quoteByClick is None, "a block outside the price ask changes nothing")
     # a client that wants a click for the price: Get the price from then on
     G.MOCK_BAGS[2589] = 0
     l.got = None
