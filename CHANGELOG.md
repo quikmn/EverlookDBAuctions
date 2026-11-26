@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.35.4 (2026-11-26)
 - Sell tab: Create Auction no longer stays greyed out after a price update finishes. You don't have to put the item back in the slot any more.
 
 ## v0.35.3 (2026-11-26)
