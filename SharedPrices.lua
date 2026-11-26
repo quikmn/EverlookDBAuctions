@@ -182,6 +182,91 @@ local function here()
   return nil
 end
 
+-- Prices that were already hours old when the game read them are never shown as if all were well: the lines below
+-- say so, and why. The EverlookDB App keeps `checked` in the feed current while it runs (the last time everlookdb.com
+-- answered it; an older app only has `written`, the last time a price changed), so the addon can tell the two cases
+-- apart: "app" (the app hadn't been heard from for hours when the game loaded: it isn't running) and "site" (the app
+-- was working, everlookdb.com just has no newer scan of this house). Prices that were fresh at login and grew old
+-- while playing are FeedNudge.lua's: a reload brings the newer ones.
+S.OLD = 3 * 3600          -- a scan this old when the game read it is behind
+S.SAY_EVERY = 12 * 3600   -- the chat line about one auction house, at most this often
+S.loadedAt = time()       -- when the game read this copy (the addon loads with it)
+
+-- When the app last heard from everlookdb.com before the game read this copy (this computer's clock); nil: unknown.
+function S.appSeenAt()
+  local d = rawget(_G, "EverlookDBAuctionsShared")
+  if type(d) ~= "table" then return nil end
+  local t = 0
+  for _, k in ipairs({ "checked", "written" }) do
+    local v = d[k]
+    if plain(v) and v > t then t = v end
+  end
+  return t > 0 and t or nil
+end
+
+-- nil, or { at, why = "app" | "site", side } when this house's shared prices were already S.OLD old as the game read
+-- them and no scan of your own is newer.
+function S.behind(hk)
+  if not S.enabled() or type(hk) ~= "string" then return nil end
+  local h = load()[hk]
+  if not h then return nil end
+  local at = S.localAt(h)
+  if S.loadedAt - at < S.OLD then return nil end
+  local db = ns.db and ns.db()
+  local mine = type(db) == "table" and type(db.houses) == "table" and type(db.houses[hk]) == "table" and db.houses[hk].scanned
+  if type(mine) == "number" and mine >= at then return nil end
+  local seen = S.appSeenAt()
+  return { at = at, why = (seen and S.loadedAt - seen < S.OLD) and "site" or "app", side = h.side }
+end
+
+-- The same in words: "Neutral prices are 7 h old. ..." and what to do about it (or that there is nothing to do).
+function S.behindText(hk, b)
+  b = b or S.behind(hk)
+  if not b then return nil end
+  if b.why == "site" then
+    return ("%s prices are %s. everlookdb.com has no newer scan of this auction house yet."):format(b.side, old(b.at))
+  end
+  return ("%s prices are %s. The EverlookDB App brings newer ones: check that it is running, then /reload."):format(b.side, old(b.at))
+end
+
+-- A few words for the end of a line: long for the settings page and /eah status, short for the auction house's bar.
+local function behindTail(hk, short)
+  local b = S.behind(hk)
+  if not b then return "" end
+  if b.why == "site" then return short and " · none newer yet" or " · no newer scan on everlookdb.com yet" end
+  return short and " · is the app running?" or " · is the EverlookDB App running?"
+end
+
+-- One chat line per auction house (yours and the neutral one) whose prices are behind, at most every S.SAY_EVERY;
+-- when the app isn't running that is one line for both. Returns how many lines it said.
+function S.sayBehind(now)
+  now = now or time()
+  local db = ns.db and ns.db()
+  if type(db) ~= "table" or not S.enabled() or S.state() ~= "on" then return 0 end
+  local realm = ns.realmName and ns.realmName()
+  if not realm then return 0 end
+  db.feedBehindSaid = type(db.feedBehindSaid) == "table" and db.feedBehindSaid or {}
+  local said, n, appSaid = db.feedBehindSaid, 0, false
+  for _, side in ipairs({ UnitFactionGroup and UnitFactionGroup("player") or "?", "Neutral" }) do
+    local hk = realm .. "-" .. side
+    local b = S.behind(hk)
+    if b and now - (tonumber(said[hk]) or 0) >= S.SAY_EVERY then
+      said[hk] = now
+      if b.why ~= "app" then
+        n = n + 1
+        if ns.say then ns.say("Price Feed: " .. S.behindText(hk, b)) end
+      elseif not appSaid then
+        appSaid = true
+        n = n + 1
+        if ns.say then
+          ns.say(("Price Feed: the prices are %s. The EverlookDB App brings newer ones: check that it is running, then /reload."):format(old(b.at)))
+        end
+      end
+    end
+  end
+  return n
+end
+
 -- One line: "Price Feed: <house> · other players' scan, 12 min old", or why there is none. `label` names the house
 -- in the line (the bar says only the side, as its own line does). `short`: a shorter line saying the same.
 function S.feedLine(hk, label, short)
@@ -196,8 +281,9 @@ function S.feedLine(hk, label, short)
     if hk then return "Price Feed: on · no one has uploaded a scan of this auction house yet" end
     return "Price Feed: on · no scan of this realm's auction houses yet"
   end
-  if short then return ("Price Feed: %s, %s"):format(label or h.side, old(S.localAt(h))) end
+  if short then return ("Price Feed: %s, %s"):format(label or h.side, old(S.localAt(h))) .. behindTail(hk, true) end
   return ("Price Feed: %s · other players' scan, %s"):format(label or (h.realm .. " " .. h.side), old(S.localAt(h)))
+    .. behindTail(hk)
 end
 
 -- Once per account, the first time the auction house opens without the feed's data: one quiet chat line.
@@ -220,7 +306,7 @@ function S.statusLines()
     local n = 0
     for _ in pairs(h.items) do n = n + 1 end
     out[#out + 1] = ("Price Feed, %s: %s items, other players' scan %s"):format(hk, ns.num and ns.num(n) or n,
-      ns.ago and ns.ago(S.localAt(h)) or "")
+      ns.ago and ns.ago(S.localAt(h)) or "") .. behindTail(hk)
   end
   table.sort(out)
   return out
@@ -250,17 +336,30 @@ S.oldText = old
 function S.reset() houses = nil end
 
 -- Reading the rows takes a moment for a big house (20,000 rows): do it a few seconds after login, not on the first
--- tooltip.
+-- tooltip. Then, when the prices were already hours old as the game read them, say so once (S.sayBehind). The realm
+-- may not be known yet a few seconds in: it looks again a little later.
+S.LOOKS = { 5, 25, 90 }
+function S.afterLogin(try)
+  try = try or 1
+  local realm = ns.realmName and ns.realmName()
+  if not realm then
+    local wait = S.LOOKS[try + 1]
+    if wait and C_Timer and C_Timer.After then C_Timer.After(wait, function() pcall(S.afterLogin, try + 1) end) end
+    return false
+  end
+  for _, side in ipairs({ UnitFactionGroup and UnitFactionGroup("player") or "?", "Neutral" }) do
+    pcall(S.house, realm .. "-" .. side)
+  end
+  pcall(S.sayBehind)
+  return true
+end
+
 if CreateFrame and C_Timer and C_Timer.After then
   local f = CreateFrame("Frame")
   f:RegisterEvent("PLAYER_LOGIN")
-  f:SetScript("OnEvent", function()
-    C_Timer.After(5, function()
-      local realm = ns.realmName and ns.realmName()
-      if not realm then return end
-      for _, side in ipairs({ UnitFactionGroup and UnitFactionGroup("player") or "?", "Neutral" }) do
-        pcall(S.house, realm .. "-" .. side)
-      end
-    end)
+  f:SetScript("OnEvent", function(_, event)
+    if event ~= "PLAYER_LOGIN" then return end
+    S.loadedAt = time()
+    C_Timer.After(S.LOOKS[1], function() pcall(S.afterLogin, 1) end)
   end)
 end

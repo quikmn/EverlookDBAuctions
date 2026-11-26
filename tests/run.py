@@ -2782,6 +2782,116 @@ def price_feed_lines(start):
     line = ns.shared.feedLine("Test-Alliance", "Alliance")
     check(line == "Price Feed: turned off in your settings (/eah, General)", f"ignored: {line}")
     check(ns.shared.hintOnce() is False and not said(G), "no hint when the player turned it off")
+    return failures + price_feed_behind(start, said)
+
+
+def price_feed_behind(start, said):
+    """Prices that were already hours old when the game read them say so, and why (SharedPrices.lua S.behind): the
+    EverlookDB App isn't running, or everlookdb.com has no newer scan of that auction house. 2026-11-26: Neutral
+    prices sat 7 hours old beside 20-minute Alliance ones and nothing said a word."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("price feed, behind: " + what)
+
+    OWN_OLD = """
+    local h = EverlookAuctionsDB.houses["Test-Alliance"]
+    h.scanned = MOCK_TIME - 10 * 3600
+    h.items[2589][4] = MOCK_TIME - 10 * 3600
+    EverlookAuctionsDB.scans[1].at = MOCK_TIME - 10 * 3600
+    """
+    NEUTRAL = """
+    EverlookDBAuctionsShared.houses["EU-4-Neutral"] = { region = "EU", realm = "Test", realmID = 4, side = "Neutral",
+      at = MOCK_TIME - 7 * 3600, auctions = 5, firstDay = 95, rows = { ["2589:0"] = "70,70,70,10,1,0,0,0,0,0,1," }, lows = {} }
+    """
+
+    # fresh prices: nothing is said anywhere
+    lua, ns, show = start(OWN_OLD)
+    G, S = lua.globals(), ns.shared
+    check(S.behind("Test-Alliance") is None and S.behindText("Test-Alliance") is None, "fresh prices aren't behind")
+    check(S.sayBehind() == 0 and not said(G), "fresh prices: no chat line")
+    check(S.afterLogin() is True and not said(G), "fresh prices: nothing at login")
+    # they grow old while playing: that is the reload offer's (FeedNudge.lua), not this
+    G.MOCK_TIME = G.MOCK_TIME + 5 * 3600
+    check(S.behind("Test-Alliance") is None, "prices that were fresh at login and aged in the session aren't called behind")
+
+    # the app isn't running: everything is 9 hours old, and so is the last time the app heard from the site
+    lua, ns, show = start(OWN_OLD + """
+    EverlookDBAuctionsShared.written = MOCK_TIME - 9 * 3600
+    EverlookDBAuctionsShared.checked = MOCK_TIME - 9 * 3600
+    EverlookDBAuctionsShared.houses["EU-4-Alliance"].at = MOCK_TIME - 9 * 3600
+    """ + NEUTRAL.replace("7 * 3600", "9 * 3600"))
+    G, S = lua.globals(), ns.shared
+    b = S.behind("Test-Alliance")
+    check(b is not None and b.why == "app" and b.side == "Alliance", f"the app isn't running: {b and b.why}")
+    line = S.feedLine("Test-Alliance", "Alliance")
+    check(line == "Price Feed: Alliance · other players' scan, 9 h old · is the EverlookDB App running?", f"the bar's line: {line}")
+    line = S.feedLine("Test-Alliance", "Alliance", True)
+    check(line == "Price Feed: Alliance, 9 h old · is the app running?", f"the bar's short line: {line}")
+    check(any("is the EverlookDB App running?" in l for l in ns.statusLines().values()), "/eah status says it too")
+    tip = show(2589)
+    check("Old prices: is the EverlookDB App running?" in tip, f"the tooltip says why the price is old: {tip}")
+    check(not said(G), "nothing is said before the login")
+    lua.eval("function(e) for _, f in ipairs(MOCK_FRAMES) do if f.scripts.OnEvent then f.scripts.OnEvent(f, e) end end end")("PLAYER_LOGIN")
+    lines = said(G)
+    check(len(lines) == 1 and lines[0].endswith("Price Feed: the prices are 9 h old. The EverlookDB App brings newer ones: check that it is running, then /reload."),
+          f"one chat line for both houses: {lines}")
+    check(S.sayBehind() == 0 and len(said(G)) == 1, "not again at the next reload")
+    check(S.sayBehind(G.MOCK_TIME + 13 * 3600) == 1 and len(said(G)) == 2, "again half a day later")
+    check(len(G.ERRORS) == 0, f"no errors: {list(G.ERRORS.values())}")
+
+    # the app is running (it heard from the site a minute before the game loaded), but the site has no newer Neutral scan
+    lua, ns, show = start(OWN_OLD + NEUTRAL + """
+    EverlookDBAuctionsShared.written = MOCK_TIME - 20 * 60
+    EverlookDBAuctionsShared.checked = MOCK_TIME - 60
+    EverlookDBAuctionsShared.houses["EU-4-Alliance"].at = MOCK_TIME - 20 * 60
+    """)
+    G, S = lua.globals(), ns.shared
+    check(S.behind("Test-Alliance") is None, "the fresh house isn't behind")
+    b = S.behind("Test-Neutral")
+    check(b is not None and b.why == "site", f"the old house: the site has nothing newer: {b and b.why}")
+    text = S.behindText("Test-Neutral")
+    check(text == "Neutral prices are 7 h old. everlookdb.com has no newer scan of this auction house yet.", f"in words: {text}")
+    line = S.feedLine("Test-Neutral", "Neutral")
+    check(line == "Price Feed: Neutral · other players' scan, 7 h old · no newer scan on everlookdb.com yet", f"the bar's line: {line}")
+    check(S.feedLine("Test-Neutral", "Neutral", True) == "Price Feed: Neutral, 7 h old · none newer yet", "the bar's short line")
+    check(S.feedLine("Test-Alliance", "Alliance") == "Price Feed: Alliance · other players' scan, 20 min old", "the fresh house's line is as ever")
+    status = [l for l in ns.statusLines().values() if "Price Feed" in l]
+    check(len(status) == 2 and status[0].count("no newer scan") == 0 and status[1].endswith("no newer scan on everlookdb.com yet"),
+          f"/eah status: {status}")
+    n = S.sayBehind()
+    check(n == 1, f"one chat line: {n} {said(G)}")
+    lines = said(G)
+    check(len(lines) == 1 and lines[0].endswith("Price Feed: " + text), f"the chat line: {lines}")
+    check(S.sayBehind() == 0, "once")
+    check(G.EverlookAuctionsDB.feedBehindSaid["Test-Neutral"] == G.MOCK_TIME and G.EverlookAuctionsDB.feedBehindSaid["Test-Alliance"] is None,
+          "remembered per auction house")
+
+    # an older app has no `checked`: when it last wrote a price says the same
+    lua, ns, show = start(OWN_OLD + NEUTRAL + """
+    EverlookDBAuctionsShared.written = MOCK_TIME - 20 * 60
+    EverlookDBAuctionsShared.houses["EU-4-Alliance"].at = MOCK_TIME - 20 * 60
+    """)
+    b = ns.shared.behind("Test-Neutral")
+    check(b is not None and b.why == "site", "without `checked`: the last write counts")
+    # odd values in the file are ignored, never an error
+    lua, ns, show = start(OWN_OLD + NEUTRAL + "EverlookDBAuctionsShared.checked = 'soon'; EverlookDBAuctionsShared.written = -5")
+    b = ns.shared.behind("Test-Neutral")
+    check(b is not None and b.why == "app" and len(lua.globals().ERRORS) == 0, "a broken check time is the same as none")
+
+    # a scan of your own that is newer is what the addon shows: nothing to say
+    lua, ns, show = start("""
+    EverlookDBAuctionsShared.written = MOCK_TIME - 9 * 3600
+    EverlookDBAuctionsShared.houses["EU-4-Alliance"].at = MOCK_TIME - 9 * 3600
+    """)
+    G, S = lua.globals(), ns.shared
+    check(S.behind("Test-Alliance") is None and S.sayBehind() == 0 and not said(G), "your own newer scan: nothing said")
+    check("Old prices" not in " ".join(show(2589)), "your own newer scan: nothing in the tooltip")
+
+    # turned off in the settings: nothing
+    lua, ns, show = start(OWN_OLD + NEUTRAL + "EverlookAuctionsDB.ignoreShared = true")
+    check(ns.shared.behind("Test-Neutral") is None and ns.shared.sayBehind() == 0, "ignored: nothing said")
     return failures
 
 

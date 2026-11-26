@@ -1476,7 +1476,7 @@ local function auctionLines(t, id, tooltip)
     local key, sfx = variantOf(id, okItem and ok(link) or nil)
     if key and sfx and sfx ~= 0 then vkey = key end
   end
-  local hinted
+  local hinted, behindSaid
   for _, key in ipairs(keys) do
     local h = db.houses[key]
     local side = key:match("%-(%a+)$")
@@ -1497,6 +1497,15 @@ local function auctionLines(t, id, tooltip)
           if okS and age then
             hinted = true
             t:Detail("/reload for newer prices", nil, { always = true })
+          end
+        end
+        -- prices that were already hours old when the game read them say why, once per tooltip (SharedPrices.lua)
+        if not behindSaid and it and it.shared and ns.shared and ns.shared.behind then
+          local okB, b = pcall(ns.shared.behind, key)
+          if okB and b then
+            behindSaid = true
+            t:Detail(b.why == "site" and "Old prices: no newer scan on everlookdb.com yet"
+              or "Old prices: is the EverlookDB App running?")
           end
         end
       end
