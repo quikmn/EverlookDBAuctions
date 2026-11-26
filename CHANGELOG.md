@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.35.6 (2026-11-26)
 - Blizzard's Sell tab: an item you put in starts at your undercut under the cheapest auction instead of the same price. When the cheapest auction is only yours, it matches it. Clicking a row that has your auction and someone else's at that price now undercuts too.
 
 ## v0.35.5 (2026-11-26)
