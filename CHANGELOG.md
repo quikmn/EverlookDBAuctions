@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.36.1 (2026-11-26)
 - Tooltips: the "Most profit" line now stands out. The whole line is green for Auction and gold for Vendor, and a little bigger.
 
 ## v0.36.0 (2026-11-26)
