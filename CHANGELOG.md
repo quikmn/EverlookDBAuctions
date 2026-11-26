@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.34.4 (2026-11-26)
 - Auction house bar: the Price Feed line no longer gets cut off when the "deals" button is showing; it uses a shorter wording when space is tight.
 - Settings search: the sidebar lights the page of the top result while you search.
 
