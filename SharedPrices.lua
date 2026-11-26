@@ -148,6 +148,12 @@ end
 S.OFF_TEXT = "Price Feed: off · the EverlookDB App brings other players' newest scans (everlookdb.com)"
 S.EMPTY_TEXT = "Price Feed: no data yet · the EverlookDB App fills it (everlookdb.com)"
 S.IGNORED_TEXT = "Price Feed: turned off in your settings (/eah, General)"
+-- the same, short, for where the long ones don't fit (the auction house bar with its buttons beside it)
+S.SHORT = {
+  off = "Price Feed: off · get the EverlookDB App (everlookdb.com)",
+  empty = "Price Feed: no data yet · see everlookdb.com",
+  ignored = "Price Feed: turned off (/eah, General)",
+}
 
 -- "on" (it holds scans), "empty" (installed, but nothing in it yet: the shipped empty copy, the app isn't running)
 -- or "none" (not installed, or not loaded).
@@ -177,18 +183,20 @@ local function here()
 end
 
 -- One line: "Price Feed: <house> · other players' scan, 12 min old", or why there is none. `label` names the house
--- in the line (the bar says only the side, as its own line does).
-function S.feedLine(hk, label)
-  if not S.enabled() then return S.IGNORED_TEXT end
+-- in the line (the bar says only the side, as its own line does). `short`: a shorter line saying the same.
+function S.feedLine(hk, label, short)
+  if not S.enabled() then return short and S.SHORT.ignored or S.IGNORED_TEXT end
   local state = S.state()
-  if state == "none" then return S.OFF_TEXT end
-  if state == "empty" then return S.EMPTY_TEXT end
+  if state == "none" then return short and S.SHORT.off or S.OFF_TEXT end
+  if state == "empty" then return short and S.SHORT.empty or S.EMPTY_TEXT end
   hk = hk or here()
   local h = hk and load()[hk]
   if not h then
+    if short then return "Price Feed: on · no scan of this house yet" end
     if hk then return "Price Feed: on · no one has uploaded a scan of this auction house yet" end
     return "Price Feed: on · no scan of this realm's auction houses yet"
   end
+  if short then return ("Price Feed: %s, %s"):format(label or h.side, old(S.localAt(h))) end
   return ("Price Feed: %s · other players' scan, %s"):format(label or (h.realm .. " " .. h.side), old(S.localAt(h)))
 end
 

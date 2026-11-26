@@ -319,13 +319,17 @@ end
 -- old", or why there is none.
 local function refreshFeedLine()
   if not panel.feed then return end
-  local okF, line = pcall(function()
-    return ns.shared and ns.shared.feedLine(house, house:match("%-(%a+)$")) or nil
-  end)
+  local function feedLine(short)
+    local ok, l = pcall(function()
+      return ns.shared and ns.shared.feedLine(house, house:match("%-(%a+)$"), short) or nil
+    end)
+    return ok and l or nil
+  end
+  local line = feedLine()
   -- the Price Feed may have newer prices than this session read: a quiet Reload beside Update prices (FeedNudge.lua)
   local okS, stale = pcall(function() return ns.feedNudge and ns.feedNudge.stale() end)
   stale = okS and stale or nil
-  if okF and line and stale then line = line .. " · newer may be ready" end
+  if line and stale then line = line .. " · newer may be ready" end
   -- the quiet "4 deals" button (Deals.lua), left of Reload or Update prices
   local dealsText = ns.deals and ns.deals.countText and ns.deals.countText() or nil
   local dealsOn = panel.deals and dealsText ~= nil
@@ -349,12 +353,18 @@ local function refreshFeedLine()
     end
   end
   local fs = panel.feed
-  fs:SetText(okF and line or "")
-  -- one size down when it would be cut off ("Price Feed: off · the EverlookDB App brings..." is about the width)
+  fs:SetText(line or "")
+  -- one size down when it would be cut off ("Price Feed: off · the EverlookDB App brings..." is about the width);
+  -- still too long (the Deals and Reload buttons take room): the short line, which says the same
+  local function need() return fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth() or fs:GetStringWidth() or 0 end
   fs:SetFontObject(ns.UI.fontObject("mute"))
   local w = fs:GetWidth() or 0
-  local need = fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth() or fs:GetStringWidth() or 0
-  if w > 0 and need > w then fs:SetFontObject(ns.UI.fontObject("head")) end
+  if w > 0 and need() > w then fs:SetFontObject(ns.UI.fontObject("head")) end
+  if w > 0 and need() > w then
+    local s = feedLine(true)
+    if s and stale then s = s .. " · newer ready" end
+    fs:SetText(s or "")
+  end
 end
 
 local function refreshPanel()
