@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Windows: whichever window you click comes to the front. Click the auction house (or bags, spellbook...) and it shows over this window; click this window to bring it back.
+
 ## v0.34.6 (2026-11-26)
 - Buying a shopping list: no more "blocked action" error when the price is fetched. When the game wants a click for it, the button says "Get the price" right away instead of waiting.
 
