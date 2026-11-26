@@ -2522,6 +2522,46 @@ def shared_tooltip():
           f"Most profit label in the Auction green: {t.l}")
     check(abs(t.rr - 0.36) < 0.01 and abs(t.rg - 0.88) < 0.01, f"value in the same green: {t.rr},{t.rg},{t.rb}")
     check(t.size is not None and abs(t.size.size - 12 * 1.07) < 0.01, f"7% bigger: {t.size and t.size.size}")
+    # the tooltip reuses its line font strings: shown again (refreshed, or after a clear) the line never grows past 7%,
+    # and a clear gives each line its own size back (0.36.1 grew a reused line on every hover)
+    reuse = lua.eval("""function(id, clearBetween)
+      local fonts, tip = {}, { n = 0, hooks = {} }
+      function tip:GetOwner() return nil end
+      function tip:GetName() return "ReuseTip" end
+      function tip:NumLines() return self.n end
+      function tip:HookScript(ev, f) self.hooks[ev] = f end
+      function tip:AddLine() self.n = self.n + 1 end
+      function tip:AddDoubleLine(l)
+        self.n = self.n + 1
+        for _, side in ipairs({ "TextLeft", "TextRight" }) do
+          local key = side .. self.n
+          local f = fonts[key]
+          if not f then
+            f = { size = 12 }
+            function f:SetFontObject(o) self.size = 12 end
+            function f:GetFontObject() return nil end
+            function f:GetFont() return "F", self.size, "" end
+            function f:SetFont(_, s) self.size = s end
+            fonts[key] = f
+          end
+          _G["ReuseTip" .. key] = f
+        end
+      end
+      local max = 0
+      for i = 1, 5 do
+        tip.n = 0
+        HOOKS[0](tip, { id = id })
+        for _, f in pairs(fonts) do if f.size > max then max = f.size end end
+        if clearBetween and tip.hooks.OnTooltipCleared then tip.hooks.OnTooltipCleared(tip) end
+      end
+      local after = 0
+      for _, f in pairs(fonts) do if f.size > after then after = f.size end end
+      return max, after
+    end""")
+    mx, _ = reuse(2589, False)
+    check(abs(mx - 12 * 1.07) < 0.01, f"shown 5 times without a clear: still 7% bigger, not more: {mx}")
+    mx, after = reuse(2589, True)
+    check(abs(mx - 12 * 1.07) < 0.01 and abs(after - 12) < 0.01, f"with clears: 7% while shown, normal after: {mx} {after}")
     G.SHIFT = True
     lines = show(2589)
     check(lines[2].endswith("= 2s 60c") and "x20" in lines[2], f"Shift: a full stack's vendor price: {lines[2]}")

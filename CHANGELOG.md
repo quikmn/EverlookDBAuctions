@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Fixed: since 0.36.1 a tooltip line could grow a little on every hover until it filled the screen. Every line now keeps its normal size, and "Most profit" stays just a little bigger.
+
 ## v0.36.2 (2026-11-26)
 - Price Feed: when its prices are already hours old as you log in, the addon now says so, and why: the EverlookDB App isn't running, or everlookdb.com has no newer scan of that auction house yet. You see it in one chat line (at most twice a day), on the auction house's bar, in /eah status and in the item tooltip.
 
