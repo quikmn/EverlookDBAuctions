@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.35.8 (2026-11-26)
 - Auction lengths now show what they really are on WoW Forever: 2, 8 and 24 hours. Quick sell, Sell all and the settings said 12, 24 and 48 hours, so "12h" posted for only 2 hours. The default is now 8 hours, and items you had set to "12h" now post for 8 hours.
 
 ## v0.35.7 (2026-11-26)
