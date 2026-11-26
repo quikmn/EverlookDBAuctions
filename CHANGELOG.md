@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.35.2 (2026-11-26)
 - Tooltips: "Sell to vendor" and "Buy from vendor" at the top in large print. Buy from vendor shows what a vendor sells the item for (about 2,500 items, recipes too), with "AH pays more" when reselling it on the auction house pays clearly more.
 
 ## v0.35.1 (2026-11-26)
