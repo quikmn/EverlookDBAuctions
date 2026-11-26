@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.36.5 (2026-11-27)
 - Buy this list: fixed an error (shown by BugSack) when the auction house was busy as you pressed Get the price. The game only lets the price be asked with a click, so once the auction house is ready the panel says so and the next click asks.
 
 ## v0.36.4 (2026-11-27)
