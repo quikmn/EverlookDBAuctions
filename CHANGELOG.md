@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Tooltips: the vendor price is now the first line of our tooltip block, in large print, on every item (also where the game shows its own sell price), so you can't miss it.
+
 ## v0.34.7 (2026-11-26)
 - Windows: whichever window you click comes to the front. Click the auction house (or bags, spellbook...) and it shows over this window; click this window to bring it back.
 

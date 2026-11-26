@@ -2437,24 +2437,25 @@ def shared_tooltip():
     lines = show(2589)
     got = [lines[i] for i in range(1, len(lines) + 1)]
     want = [" ",
+            "Vendor each = 13c",   # first of all, in large print
             "Most profit: Auction = +77c",
             "AH  3,365 · 76m = 95c",
             "    30d low = 93c",
             "    30d median = 95c",
-            "Disenchant  estimate · 10m = 1g 23s",
-            "Vendor = 13c"]
+            "Disenchant  estimate · 10m = 1g 23s"]
     check(got == want, f"lines and order: {got}")
     G.SHIFT = True
     lines = show(2589)
-    check(lines[3].endswith("= 19s") and "x20" in lines[3], f"Shift: a full stack's price: {lines[3]}")
+    check(lines[2].endswith("= 2s 60c") and "x20" in lines[2], f"Shift: a full stack's vendor price: {lines[2]}")
+    check(lines[3].endswith("= +15s 40c"), f"Shift: a full stack's profit: {lines[3]}")
     G.SHIFT = False
     # Ctrl: the stack under the mouse (a bag button showing 14), over Shift's full stack
     lua.execute("MOCK_OWNER = { Count = { GetText = function() return '14' end } }; IsControlKeyDown = function() return true end")
     lines = show(2589)
-    check("x14" in lines[3] and lines[3].endswith("= 13s 30c"), f"Ctrl: the hovered stack's price: {lines[3]}")
+    check("x14" in lines[2] and lines[2].endswith("= 1s 82c"), f"Ctrl: the hovered stack's price: {lines[2]}")
     lua.execute("MOCK_OWNER = nil")
     lines = show(2589)
-    check("x14" not in lines[3], f"Ctrl with no stack under the mouse: one: {lines[3]}")
+    check("x14" not in lines[2], f"Ctrl with no stack under the mouse: one: {lines[2]}")
     lua.execute("IsControlKeyDown = nil")
     ns.tipDetail("shift")
     lines = show(2589)

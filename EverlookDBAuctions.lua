@@ -1521,12 +1521,14 @@ local function vendorLine(t, id, tt)
       tostring(id), tostring(info[1] and info[12]), tostring(tipOn("vendor")), tostring(gameShowsSellPrice(tt)),
       tostring(tt.shownMoneyFrames)))
   end
-  if not db or not tipOn("vendor") or gameShowsSellPrice(tt) then return end
+  -- always shown, first and in large print, even where the game has its own Sell Price further up (the owner's ask:
+  -- "vendor price at the top of all, large, a can't-miss signal"; the game's line is small and easy to overlook)
+  if not db or not tipOn("vendor") then return end
   local stack = tipMultiplier(id, tt)
   local info = { pcall(C_Item.GetItemInfo, id) }
   local sell = ok(info[1] and info[12])
   if sell and sell > 0 then
-    t:Line("Vendor" .. (stack > 1 and (" x" .. stack) or ""), Tip.Money(sell * stack))
+    t:Line("|cffffd100Vendor|r" .. (stack > 1 and (" x" .. stack) or " each"), Tip.Money(sell * stack), { big = true })
   end
 end
 
@@ -1589,7 +1591,7 @@ local function hookTooltips()
     add = function(t, ctx) if ctx.id then disenchantLine(t, ctx.id) end end })
   Tip:Register({ id = "EverlookDBAuctions.craft", kind = "item", order = Tip.ORDER.craftCost or (Tip.ORDER.disenchant + 2),
     add = function(t, ctx) if ctx.id then craftLine(t, ctx.id) end end })
-  Tip:Register({ id = "EverlookDBAuctions.vendor", kind = "item", order = Tip.ORDER.vendor,
+  Tip:Register({ id = "EverlookDBAuctions.vendor", kind = "item", order = 0, -- first of all, above "Most profit"
     add = function(t, ctx) if ctx.id then vendorLine(t, ctx.id, ctx.tooltip) end end })
   Tip:Register({ id = "EverlookDBAuctions.verdict", kind = "item", order = 1, -- first: "Most profit" tops our block
     add = function(t, ctx) if ctx.id then verdictLine(t, ctx.id, ctx.tooltip) end end })
