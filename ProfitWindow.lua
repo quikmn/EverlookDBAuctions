@@ -1305,11 +1305,37 @@ function W.render(keep)
   f.status:SetPoint("TOPLEFT", 20, by - 38)
   if undo then f.status:SetPoint("RIGHT", f.undo, "LEFT", -12, 0) else f.status:SetPoint("RIGHT", -20, 0) end
   f.status:SetText(st and st[1] or "")
+  if not (st and W.fading == st) then f.status:SetAlpha(1) end
   if st then f.status:SetTextColor(rgba(st[2] or T.muted)) end
   local stH = st and math.max(30, (f.status:GetStringHeight() or 14) + 10) or 4
   W.statusH = st and stH or nil
   if not W.inAH then f:SetHeight(-(by - 34 - stH - 10)) end   -- at the auction house: its content area
   W.footer()
+end
+
+-- A short "done" note (a list was saved): shown for a few seconds after the click, then it fades away.
+local FLASH_SECS, FADE_SECS = 6, 1
+function W.flash(msg, color)
+  local st = { msg, color or T.ok, flash = true }
+  W.status = st
+  if not (C_Timer and C_Timer.After) then return end
+  C_Timer.After(FLASH_SECS, function()
+    if W.status ~= st then return end
+    local f, steps = W.frame, 10
+    W.fading = st
+    for i = 1, steps do
+      C_Timer.After(FADE_SECS * i / steps, function()
+        if W.status ~= st then return end
+        if i < steps then
+          if f and f.status then f.status:SetAlpha(1 - i / steps) end
+        else
+          W.status = nil
+          if f and f.status then f.status:SetAlpha(1) end
+          W.render(true)
+        end
+      end)
+    end
+  end)
 end
 
 -- Make shopping list: what the planned crafts need, as one list in the Shopping tab.
@@ -1341,7 +1367,7 @@ function W.makeQueueList(q)
     local msg = ("%s \"%s\" in the auction house's Shopping tab: %d %s for the whole queue."):format(new and "Saved as" or "Updated",
       l.name, #l.queries, #l.queries == 1 and "item" or "items")
     if #leftOut > 0 then msg = msg .. " Left out, vendors sell them: " .. table.concat(leftOut, ", ") .. "." end
-    W.status = { msg, T.ok }
+    W.flash(msg, T.ok)
     if ns.shoppingRefresh then pcall(ns.shoppingRefresh) end
   end
   W.render(true)
@@ -1384,7 +1410,7 @@ function W.makeList()
     local msg = ("%s \"%s\" in the auction house's Shopping tab: %d %s."):format(new and "Saved as" or "Updated", l.name,
       #l.queries, #l.queries == 1 and "item" or "items")
     if #leftOut > 0 then msg = msg .. " Left out, vendors sell them: " .. table.concat(leftOut, ", ") .. "." end
-    W.status = { msg, T.ok }
+    W.flash(msg, T.ok)
     if ns.shoppingRefresh then pcall(ns.shoppingRefresh) end
   end
   W.render(true)

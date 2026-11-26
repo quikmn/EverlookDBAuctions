@@ -4976,6 +4976,7 @@ def profit_window():
     W.crafts[4238] = 4
     W.footer()
     check("4 crafts" in f.sum.text, f"the plan line: {f.sum.text}")
+    lua.execute("REAL_AFTER = C_Timer.After; LATER = {}; C_Timer.After = function(_, fn) LATER[#LATER + 1] = fn end")
     W.makeList()
     lists = DB.lists
     check(lists is not None and len(lists) == 1 and lists[1].name == "Linen Bag", "one recipe: the list is named after it")
@@ -4984,6 +4985,8 @@ def profit_window():
         check(want['name is "Linen Cloth"'] == 24 and want['name is "Coarse Thread"'] == 12 and want['name is "Bolt of Linen Cloth"'] is None,
               f"bolts broken down into cloth: {[(k, want[k]) for k in want]}")
     check(W.status is not None and "Saved as" in W.status[1], "says it was saved")
+    lua.execute("C_Timer.After = REAL_AFTER; for _, fn in ipairs(LATER) do fn() end")
+    check(W.status is None, "the saved note fades away after a few seconds")
     W.crafts[4238] = None
 
     # sorting: click a heading, again for the other way; remembered

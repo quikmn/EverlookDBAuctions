@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Crafting profit: the "Saved as ... in the Shopping tab" note shows after you press Make shopping list, then fades away after a few seconds.
+
 ## v0.35.4 (2026-11-26)
 - Sell tab: Create Auction no longer stays greyed out after a price update finishes. You don't have to put the item back in the slot any more.
 
