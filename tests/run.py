@@ -2493,6 +2493,35 @@ def shared_tooltip():
             "    30d median = 95c",
             "Disenchant  estimate · 10m = 1g 23s"]
     check(got == want, f"lines and order: {got}")
+    # "Most profit" in the winner's colour all along the line (label and value), and 7% bigger
+    raw = lua.eval("""function(id)
+      local fs = {}
+      local tip = { n = 0 }
+      function tip:GetOwner() return nil end
+      function tip:GetName() return "RawTip" end
+      function tip:NumLines() return self.n end
+      function tip:AddLine() self.n = self.n + 1 end
+      function tip:AddDoubleLine(l, r, lr, lg, lb, rr, rg, rb)
+        self.n = self.n + 1
+        if l:find("Most profit", 1, true) then self.l, self.rr, self.rg, self.rb = l, rr, rg, rb end
+        for _, side in ipairs({ "TextLeft", "TextRight" }) do
+          local f = { size = 12 }
+          function f:SetFontObject() end
+          function f:GetFontObject() return nil end
+          function f:GetFont() return "F", self.size, "" end
+          function f:SetFont(_, s) self.size = s end
+          _G["RawTip" .. side .. self.n] = f
+          if l:find("Most profit", 1, true) then self.size = f end
+        end
+      end
+      HOOKS[0](tip, { id = id })
+      return tip
+    end""")
+    t = raw(2589)
+    check(t.l is not None and t.l.startswith("|cff5be06f") or (t.l or "").lower().startswith("|cff5ce070"),
+          f"Most profit label in the Auction green: {t.l}")
+    check(abs(t.rr - 0.36) < 0.01 and abs(t.rg - 0.88) < 0.01, f"value in the same green: {t.rr},{t.rg},{t.rb}")
+    check(t.size is not None and abs(t.size.size - 12 * 1.07) < 0.01, f"7% bigger: {t.size and t.size.size}")
     G.SHIFT = True
     lines = show(2589)
     check(lines[2].endswith("= 2s 60c") and "x20" in lines[2], f"Shift: a full stack's vendor price: {lines[2]}")

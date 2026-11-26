@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Tooltips: the "Most profit" line now stands out. The whole line is green for Auction and gold for Vendor, and a little bigger.
+
 ## v0.36.0 (2026-11-26)
 - AH log: new Results tab (/eah results). It shows how your auctions did, item by item, over 7 or 30 days: how many sold and expired, how fast they sold, and what they made after the cut and lost deposits. Each item gets a plain tip, like "Keeps expiring: 6 of 8 expired. Try a lower price or a longer duration." Click a column to sort.
 - Quick sell: the picked item shows how it sold for you lately, like "Sold 5 of 8 here, within 4 h".

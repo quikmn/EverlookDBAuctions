@@ -1675,14 +1675,19 @@ local function verdictLine(t, id, tt)
   -- "Auction beats vendor  after 5% cut   +1s 97c": how much more the better way pays, per item (or stack)
   -- The top line of our block (the owner's ask: "Most Profit: Vendor / Most Profit: Auction, top most, clearly
   -- visible"): "Most profit: Auction  +1s 97c", how much more the better way pays after the AH cut, per item (or stack).
+  -- The whole line in the winner's colour (Auction green, Vendor gold) and 7% bigger, so it stands out; an old
+  -- auction price makes it grey.
+  local AUCTION, VENDOR = { 0.36, 0.88, 0.44 }, { 1, 0.82, 0 }
+  local c = stale and Tip.COLOR.stale or (which == "auction" and AUCTION or VENDOR)
+  local opt = { labelColor = c, color = c, scale = 1.07, stale = stale }
+  local word = which == "auction" and "Auction" or "Vendor"
   if which == "vendor" and diff <= 0 then
     -- the AH pays a little more, but not enough to be worth listing it
-    t:Line("Most profit: |cffffd100Vendor|r", "", { note = "AH not worth it", stale = stale })
+    opt.note = "AH not worth it"
+    t:Line("Most profit: Vendor", "", opt)
     return
   end
-  local word = which == "auction" and "|cff5ce070Auction|r" or "|cffffd100Vendor|r"
-  t:Line("Most profit: " .. word, Tip.Money(diff * stack, { sign = true }),
-    { tone = not stale and "good" or nil, stale = stale })
+  t:Line("Most profit: " .. word, Tip.Money(diff * stack, { sign = true }), opt)
 end
 
 -- Whether 30-day lows and medians need Shift held (db.tip.detail = "shift"; shown always by default). The setting is
