@@ -350,6 +350,52 @@ local function hookSellFrames()
   end
 end
 
+-- Blizzard greys out Create Auction while the auction house is busy (a price scan, a search) and only checks again
+-- when the item, price or quantity changes, so the button stayed grey after the scan until the item was put back.
+-- Once the auction house is free again, ask the open Sell tab to check its button once more.
+local function stuckPostFrames()
+  local ah = _G.AuctionHouseFrame
+  if not (ah and ah.IsShown and ah:IsShown()) then return {} end
+  local out = {}
+  for _, k in ipairs({ "ItemSellFrame", "CommoditiesSellFrame" }) do
+    local fr = ah[k]
+    if fr and fr.IsVisible and fr:IsVisible() and fr.UpdatePostState and fr.PostButton and fr.GetItem then
+      local okItem, loc = pcall(fr.GetItem, fr)
+      local okOn, on = pcall(fr.PostButton.IsEnabled, fr.PostButton)
+      if okItem and loc and okOn and not on then out[#out + 1] = fr end
+    end
+  end
+  return out
+end
+local function ahFree()
+  if ns.scanning and ns.scanning() then return false end
+  local f = AH.IsThrottledMessageSystemReady
+  if type(f) ~= "function" then return true end
+  local okCall, r = pcall(f)
+  return not okCall or r ~= false
+end
+function S.recheckPost()
+  if not ahFree() then return end
+  for _, fr in ipairs(stuckPostFrames()) do pcall(fr.UpdatePostState, fr) end
+end
+do
+  local watch, wasBusy, elapsed = CreateFrame("Frame"), false, 0
+  pcall(watch.RegisterEvent, watch, "AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+  watch:SetScript("OnEvent", function() C_Timer.After(0.2, S.recheckPost) end)
+  -- the end of a price scan sends no event Blizzard listens to: look twice a second while the auction house is open
+  watch:SetScript("OnUpdate", function(_, dt)
+    elapsed = elapsed + dt
+    if elapsed < 0.5 then return end
+    elapsed = 0
+    local ah = _G.AuctionHouseFrame
+    if not (ah and ah.IsShown and ah:IsShown()) then wasBusy = false; return end
+    local busy = not ahFree()
+    if wasBusy and not busy then S.recheckPost(); C_Timer.After(1, S.recheckPost) end
+    wasBusy = busy
+  end)
+end
+ns.recheckPost = function() S.recheckPost() end
+
 ---------------------------------------------------------------------------------------------------------------------
 -- Your bags: everything you can sell here, one entry per item version, stacks added up
 

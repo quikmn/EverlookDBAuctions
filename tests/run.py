@@ -990,6 +990,27 @@ def undercut():
         for line in printed:
             bad = [i for i, ch in enumerate(line) if ch == "|" and not line[i + 1:i + 2] in ("c", "r", "|")]
             check(not bad, f"help line without a stray |: {line}")
+        # Create Auction left grey after a price scan: checked again once the auction house is free, never during one
+        lua.execute("""
+          RECHECKS, POST_ON, SCANNING = 0, false, true
+          local function shown() return { IsShown = function() return true end, IsVisible = function() return true end } end
+          AuctionHouseFrame = shown()
+          local fr = shown()
+          fr.GetItem = function() return { bagID = 0, slotIndex = 1 } end
+          fr.PostButton = { IsEnabled = function() return POST_ON end }
+          fr.UpdatePostState = function() RECHECKS = RECHECKS + 1 end
+          AuctionHouseFrame.CommoditiesSellFrame = fr
+        """)
+        ns.scanning = lua.eval("function() return SCANNING end")
+        ns.recheckPost()
+        check(lua.eval("RECHECKS") == 0, "no recheck while a scan runs")
+        lua.execute("SCANNING = false")
+        ns.recheckPost()
+        check(lua.eval("RECHECKS") == 1, f"grey button rechecked after the scan: {lua.eval('RECHECKS')}")
+        lua.execute("POST_ON = true")
+        ns.recheckPost()
+        check(lua.eval("RECHECKS") == 1, "a working button is left alone")
+        lua.execute("AuctionHouseFrame = nil")
     return failures
 
 

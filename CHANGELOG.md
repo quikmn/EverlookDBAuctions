@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Sell tab: Create Auction no longer stays greyed out after a price update finishes. You don't have to put the item back in the slot any more.
+
 ## v0.35.3 (2026-11-26)
 - Tooltips: "Item level" in green on weapons and armor, just above the gear upgrade line. Turn it off in the tooltip settings.
 
