@@ -1011,6 +1011,31 @@ def undercut():
         ns.recheckPost()
         check(lua.eval("RECHECKS") == 1, "a working button is left alone")
         lua.execute("AuctionHouseFrame = nil")
+        # an item put on Blizzard's Sell tab starts at the undercut under the cheapest auction, once
+        if copper:
+            lua.execute("""
+              C_Item = C_Item or {}
+              C_Item.GetItemID = function() return 4370 end
+              C_Item.GetItemGUID = function() return GUID end
+              GUID, PRICE = "g1", 1991
+              ROW = { unitPrice = 1991, quantity = 14, numOwnerItems = 2, containsOwnerItem = true }
+              C_AuctionHouse.GetNumCommoditySearchResults = function() return 1 end
+              C_AuctionHouse.GetCommoditySearchResultInfo = function() return ROW end
+              SF = { PriceInput = { GetAmount = function() return PRICE end, SetAmount = function(_, v) PRICE = v end },
+                     GetItem = function() return { IsValid = function() return true end } end,
+                     GetDefaultPrice = function() return 0 end }
+            """)
+            ns.sellStartUndercut(lua.eval("SF"), True)
+            check(lua.eval("PRICE") == 1990, f"shared cheapest row (you + others): undercut to 19s90c, got {lua.eval('PRICE')}")
+            lua.execute("PRICE = 1500")
+            ns.sellStartUndercut(lua.eval("SF"), True)
+            check(lua.eval("PRICE") == 1500, "once per item: a typed price is left alone")
+            lua.execute("GUID, PRICE = 'g2', 1991; ROW.numOwnerItems = 14")
+            ns.sellStartUndercut(lua.eval("SF"), True)
+            check(lua.eval("PRICE") == 1991, f"cheapest row only yours: matched, got {lua.eval('PRICE')}")
+            lua.execute("GUID, PRICE = 'g3', 1700")
+            ns.sellStartUndercut(lua.eval("SF"), True)
+            check(lua.eval("PRICE") == 1700, "a price that isn't Blizzard's pick is left alone")
     return failures
 
 

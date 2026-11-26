@@ -266,6 +266,56 @@ local function fallback(frame, commodity)
   if p and scanTrusted(row.n, row.at) then frame.PriceInput:SetAmount(roundPrice(p)) end
 end
 
+-- A row of Blizzard's Sell tab list that is only your own auctions (no one else at that price).
+local function onlyMine(r)
+  local own, qty = okv(r.numOwnerItems), okv(r.quantity)
+  if type(own) == "number" and type(qty) == "number" then return own > 0 and own >= qty end
+  return okv(r.containsOwnerItem) == true
+end
+
+-- The cheapest auction listed for what's on Blizzard's Sell tab: its price, and whether it is only yours.
+local function cheapestListed(frame, commodity, loc)
+  local r
+  if commodity then
+    local id = C_Item.GetItemID(loc)
+    if not id or (AH.GetNumCommoditySearchResults and (AH.GetNumCommoditySearchResults(id) or 0) == 0) then return nil end
+    r = try(AH.GetCommoditySearchResultInfo, id, 1)
+  else
+    local key = frame.listDisplayedItemKey
+    if not key or (AH.GetNumItemSearchResults and (AH.GetNumItemSearchResults(key) or 0) == 0) then return nil end
+    r = try(AH.GetItemSearchResultInfo, key, 1)
+  end
+  if type(r) ~= "table" then return nil end
+  local p = okv(commodity and r.unitPrice or r.buyoutAmount)
+  if type(p) ~= "number" or p <= 0 then return nil end
+  return p, onlyMine(r)
+end
+
+-- An item just put on Blizzard's Sell tab: its price starts at your undercut under the cheapest auction (matched
+-- when that cheapest one is only yours), instead of Blizzard's same-as-cheapest. Once per item put there: a price you
+-- type or a row you click afterwards is left alone.
+local function itemTag(loc)
+  local guid = C_Item.GetItemGUID and try(C_Item.GetItemGUID, loc)
+  if guid then return guid end
+  local okCall, bag, slot = pcall(loc.GetBagAndSlot, loc)
+  return tostring(C_Item.GetItemID(loc)) .. ":" .. tostring(okCall and bag) .. ":" .. tostring(okCall and slot)
+end
+local function startUndercut(frame, commodity)
+  local loc = frame:GetItem()
+  if not loc or not loc:IsValid() then frame.edbUndercutFor = nil; return end
+  local tag = itemTag(loc)
+  if frame.edbUndercutFor == tag then return end
+  local p, mine = cheapestListed(frame, commodity, loc)
+  if not p then return end                       -- results not in yet: try again on the next update
+  frame.edbUndercutFor = tag
+  local now = frame.PriceInput:GetAmount()
+  local default = frame.GetDefaultPrice and frame:GetDefaultPrice()
+  if now ~= p and now ~= default then return end  -- not Blizzard's own pick: someone typed it
+  local want = mine and roundPrice(p) or undercutPrice(p)
+  if want ~= now then frame.PriceInput:SetAmount(want) end
+end
+ns.sellStartUndercut = startUndercut
+
 -- Blizzard's Sell tab: the deposit warning, in a line of ours under its Post button.
 local function blizzardDepositLine(frame)
   if not frame.edbDepositLine then
@@ -323,15 +373,16 @@ local function hookSellFrames()
   local items, goods = ah.ItemSellFrame, ah.CommoditiesSellFrame
 
   -- (a price the game hides, or a row without one, leaves Blizzard's own price alone)
+  -- a row with your auction and someone else's at that price is still undercut; only a row of yours alone is matched
   hooksecurefunc(items, "OnSearchResultSelected", function(self, r)
     local p = type(r) == "table" and okv(r.buyoutAmount)
-    if type(p) ~= "number" or r.containsOwnerItem or r == self.noneAvailableEntry then return end
-    pcall(function() self.PriceInput:SetAmount(undercutPrice(p)) end)
+    if type(p) ~= "number" or r == self.noneAvailableEntry then return end
+    pcall(function() self.PriceInput:SetAmount(onlyMine(r) and roundPrice(p) or undercutPrice(p)) end)
   end)
   hooksecurefunc(goods, "OnAuctionSelected", function(self, r)
     local p = type(r) == "table" and okv(r.unitPrice)
-    if type(p) ~= "number" or r.containsOwnerItem then return end
-    pcall(function() self.PriceInput:SetAmount(undercutPrice(p)) end)
+    if type(p) ~= "number" then return end
+    pcall(function() self.PriceInput:SetAmount(onlyMine(r) and roundPrice(p) or undercutPrice(p)) end)
   end)
   -- posting: our searches hold off, and a refused post says why instead of the item silently going back to the bags
   for _, fr in ipairs({ items, goods }) do
@@ -341,8 +392,8 @@ local function hookSellFrames()
   if ah.SetPostItem then
     hooksecurefunc(ah, "SetPostItem", function() if ns.ahq then ns.ahq.holdForPost(2) end end)
   end
-  hooksecurefunc(items, "UpdatePriceSelection", function(self) pcall(fallback, self, false) end)
-  hooksecurefunc(goods, "UpdatePriceSelection", function(self) pcall(fallback, self, true) end)
+  hooksecurefunc(items, "UpdatePriceSelection", function(self) pcall(fallback, self, false); pcall(startUndercut, self, false) end)
+  hooksecurefunc(goods, "UpdatePriceSelection", function(self) pcall(fallback, self, true); pcall(startUndercut, self, true) end)
   -- a red line under Post when the deposit is more than the sale brings
   for _, fr in ipairs({ items, goods }) do
     if fr.UpdateDeposit then hooksecurefunc(fr, "UpdateDeposit", function(self) pcall(blizzardDepositLine, self) end) end
