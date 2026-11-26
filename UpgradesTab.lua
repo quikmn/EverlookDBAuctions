@@ -342,10 +342,18 @@ local function layoutSpecs(f)
   local room = math.huge
   local fl, ml = f.specBar:GetLeft(), f.maxL and f.maxL:GetLeft()
   if type(fl) == "number" and type(ml) == "number" then room = ml - fl - 16 - (f.other:GetWidth() or 0) end
+  -- the shown spec always gets a button, so its room is set aside first and the others fill what is left
+  -- (a wide "Protection (levelling)" otherwise pushed "Other..." over MAX PRICE)
+  for _, b in ipairs(f.specs) do
+    if shown and shown.key == b.spec.key then room = room - (b:GetWidth() or 0) - 4 end
+  end
+  local used = 0
   for _, b in ipairs(f.specs) do
     local isShown = shown and shown.key == b.spec.key
     local on = isShown or not b.spec.build or (not ctx and c.specs[b.spec.key])
-    if on and not isShown and x + (b:GetWidth() or 0) > room then on = false end
+    if on and not isShown then
+      if used + (b:GetWidth() or 0) > room then on = false else used = used + (b:GetWidth() or 0) + 4 end
+    end
     b:SetShown(on and true or false)
     if on then
       b:ClearAllPoints()
