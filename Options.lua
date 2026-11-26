@@ -32,7 +32,7 @@ local TIP_LINES = {
   { "tiphave", "have", "How many you and your alts have, and where (hold Shift for every place)" },
 }
 
-local HOURS = { 12, 24, 48 }   -- the auction house's durations 1, 2, 3
+local HOURS = { 2, 8, 24 }   -- the auction house's durations 1, 2, 3 on WoW Forever
 
 local function db() return ns.db() or {} end
 
@@ -83,8 +83,8 @@ local function build()
   app:Setting({
     key = "duration", type = "choice", label = "Default duration", keywords = { "time", "hours", "length", "posting" }, width = 160,
     desc = "For items you haven't posted before; the others keep the duration you used last.",
-    choices = { { value = 12, text = "12 hours" }, { value = 24, text = "24 hours" }, { value = 48, text = "48 hours" } },
-    get = function() return HOURS[(ns.sellSettings() or {}).duration or 1] or 12 end,
+    choices = { { value = 2, text = "2 hours" }, { value = 8, text = "8 hours" }, { value = 24, text = "24 hours" } },
+    get = function() return HOURS[(ns.sellSettings() or {}).duration or 2] or 8 end,
     set = function(v)
       v = tonumber(v)
       for d, h in ipairs(HOURS) do if h == v then ns.sellSettings().duration = d end end

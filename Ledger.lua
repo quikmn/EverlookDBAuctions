@@ -28,7 +28,7 @@ L.VERSION = 1
 L.MAX_MONEY, L.MAX_AUCTIONS, L.MAX_MAILS = 6000, 4000, 400
 L.KEEP_DAYS = 120          -- closed records older than this go (money entries stay until MAX_MONEY)
 L.MAIL_DAYS = 30           -- auction house mail lasts 30 days
-L.HOURS = { 12, 24, 48 }   -- durations 1, 2, 3
+L.HOURS = { 2, 8, 24 }   -- durations 1, 2, 3 on WoW Forever
 
 -- categories, in the order the window lists them
 L.GROUPS = {

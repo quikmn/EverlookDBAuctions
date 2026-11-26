@@ -91,7 +91,7 @@ local function durationOf(e)
   local s = C and C.sdb()
   if e.rule.duration and e.rule.duration > 0 then return e.rule.duration end
   local mem = s and s.memory[e.g.key]
-  return (mem and mem.d) or (s and s.duration) or 1
+  return (mem and mem.d) or (s and s.duration) or 2
 end
 
 -- The deposit for one, for the floor's `deposit` (0 when the auction house can't say).

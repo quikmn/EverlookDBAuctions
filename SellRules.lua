@@ -9,7 +9,7 @@
 --             usual price at the last full scan.
 --   undercut  1c, 1s, 5% or 0 (match); empty = the Undercut by setting.
 --   keep      how many to keep in your bags; maxUp: at most this many up at once (0 = no limit); stack: at most this
---             many per post (0 = all); duration 1-3 (12, 24, 48 hours; 0 = as last time).
+--             many per post (0 = all); duration 1-3 (2, 8, 24 hours on WoW Forever; 0 = as last time).
 --   below     what happens when the price would be under the floor: "skip" (don't post), "floor" (post at the floor)
 --             or "vendor" (don't post: sell it to a vendor).
 -- Rules are in order; an item uses the first one that is on and matches it. The last rule, Everything, matches
@@ -30,9 +30,9 @@ R.BELOW = {
 }
 R.DURATIONS = {
   { value = 0, text = "As last time" },
-  { value = 1, text = "12 hours" },
-  { value = 2, text = "24 hours" },
-  { value = 3, text = "48 hours" },
+  { value = 1, text = "2 hours" },
+  { value = 2, text = "8 hours" },
+  { value = 3, text = "24 hours" },
 }
 
 local function money(c) return ns.money and ns.money(c) or (tostring(c) .. "c") end

@@ -2122,8 +2122,8 @@ def ux_flows():
     end""")(ns)
     check(built[0], f"the bag preview builds: {built[1]}")
     G = lua.globals()
-    check(ns.slash("duration 24") is True and sell.duration == 2, f"/eah duration 24: {sell.duration}")
-    check("24" in (G.CHAT[len(G.CHAT)] or ""), "the change is said in chat")
+    check(ns.slash("duration 8") is True and sell.duration == 2, f"/eah duration 8: {sell.duration}")
+    check("8" in (G.CHAT[len(G.CHAT)] or ""), "the change is said in chat")
     check(ns.slash("tipvendor on") is True and ns.db().tip.vendor is True, "/eah tipvendor on")
     check(ns.slash("duration 30") is True and sell.duration == 2 and "Example" in G.CHAT[len(G.CHAT)],
           "a wrong value is refused with an example")
@@ -2159,10 +2159,10 @@ def ux_flows():
         check(want in out, f"help lacks {want}: {out}")
     check("/eah undercut|r" not in out, "the old undercut command is not listed twice")
     check("/eah test" not in out and "/eah debug" not in out, f"help leaves out test and debug: {out}")
-    app.HandleSlash(app, "set duration 48")
-    check(sell.duration == 3, f"/eah set duration 48: {sell.duration}")
+    app.HandleSlash(app, "set duration 24")
+    check(sell.duration == 3, f"/eah set duration 24: {sell.duration}")
     app.HandleSlash(app, "get duration")
-    check("48" in G.CHAT[len(G.CHAT)], f"/eah get duration: {G.CHAT[len(G.CHAT)]}")
+    check("24 hours" in G.CHAT[len(G.CHAT)], f"/eah get duration: {G.CHAT[len(G.CHAT)]}")
     app.HandleSlash(app, "auto off")
     check(ns.db().auto is False, "/eah auto off still works")
     app.HandleSlash(app, "sacn")
@@ -6923,7 +6923,7 @@ def ledger():
     for k2 in s.alts.keys():
         check(k2 != "Mainchar", "no plain name in the alt list")
     AH = G.C_AuctionHouse
-    # an item: 2 auctions of 1 at 900 each, 24 h; the deposit 60 each
+    # an item: 2 auctions of 1 at 900 each, 8 h; the deposit 60 each
     AH.PostItem(lua.eval("{ id = 6218 }"), 2, 2, None, 900)
     fire("AUCTION_HOUSE_AUCTION_CREATED", 501)
     fire("AUCTION_HOUSE_AUCTION_CREATED", 502)
@@ -6931,7 +6931,7 @@ def ledger():
     check(len(s.auctions) == 2, f"one record per auction created: {len(s.auctions)}")
     r1, r2 = s.auctions[1], s.auctions[2]
     check(r1.aid == 501 and r1.item == 6218 and r1.name == "Runed Copper Rod" and r1.q == 1 and r1.buy == 900 and r1.dep == 60
-          and r1.dur == 2 and r1.ends == 100000 + 24 * 3600 and r1.st == "listed", "posted: item, stack, buyout, deposit, duration, end")
+          and r1.dur == 2 and r1.ends == 100000 + 8 * 3600 and r1.st == "listed", "posted: item, stack, buyout, deposit, duration, end")
     # a commodity: 20 Silk Cloth at 50 each, deposit 3 each
     AH.PostCommodity(lua.eval("{ id = 4306 }"), 1, 20, 50)
     fire("AUCTION_HOUSE_AUCTION_CREATED", 600)

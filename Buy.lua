@@ -43,7 +43,7 @@ local function setStatus(text, color)
   f.status:SetTextColor(unpack(color or T.dim))
 end
 
-local BANDS = { [0] = "< 30m", [1] = "30m - 2h", [2] = "2 - 12h", [3] = "12 - 48h" }
+local BANDS = { [0] = "< 30m", [1] = "30m - 2h", [2] = "2 - 8h", [3] = "8 - 24h" }
 local function fmtLeft(secs, band)
   if secs then
     if secs >= 3600 then return math.floor(secs / 3600 + 0.5) .. "h" end

@@ -20,7 +20,8 @@ local money, num = ns.money, ns.num
 local C_MUTE = UI.hex(T.mute)
 
 local SORTS = { { sortOrder = 0, reverseSort = false } }   -- by price (Enum.AuctionHouseSortOrder.Price)
-local DURATIONS = { { 1, "12h" }, { 2, "24h" }, { 3, "48h" } }
+-- WoW Forever's auction lengths: 1 = 2 hours, 2 = 8 hours, 3 = 24 hours (not retail's 12, 24 and 48)
+local DURATIONS = { { 1, "2h" }, { 2, "8h" }, { 3, "24h" } }
 local BAG_ROW, LIST_ROW = 26, 22
 local SPARK_PITCH, SPARK_H = 4, 12   -- the 30-day chart: a 3 px bar every 4 px, at most 12 px tall
 local CHECK_AGAIN = 120          -- seconds before an item's live auctions are looked up again for Your auctions
@@ -71,6 +72,17 @@ local function sdb()
   if not S.pruned then
     S.pruned = true
     pruneMemory(s.memory, time())
+  end
+  -- Up to 0.35.7 duration 1 was labelled 12 hours, but here it is 2 hours: what was picked as "12h" becomes 8 hours
+  if not s.durFixed then
+    s.durFixed = true
+    if s.duration == 1 then s.duration = 2 end
+    for _, m in pairs(s.memory) do if type(m) == "table" and m.d == 1 then m.d = 2 end end
+    local rs = ns.sellRules and ns.sellRules.store and ns.sellRules.store(db)
+    if rs then
+      for _, r in ipairs(rs.list or {}) do if r.duration == 1 then r.duration = 2 end end
+      if rs.base and rs.base.duration == 1 then rs.base.duration = 2 end
+    end
   end
   return s
 end
@@ -782,7 +794,7 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- The Quick sell tab
 
-local BANDS = { [0] = "< 30m", [1] = "30m - 2h", [2] = "2 - 12h", [3] = "12 - 48h" }
+local BANDS = { [0] = "< 30m", [1] = "30m - 2h", [2] = "2 - 8h", [3] = "8 - 24h" }
 local function fmtLeft(secs, band)
   if secs then
     if secs >= 3600 then return math.floor(secs / 3600 + 0.5) .. "h" end
@@ -1138,7 +1150,7 @@ local function selectGroup(g)
   S.userPrice = false
   S.avail = available(g)
   local mem = s and s.memory[g.key]
-  S.dur = (mem and mem.d) or (s and s.duration) or 1   -- 12 hours unless set in the options
+  S.dur = (mem and mem.d) or (s and s.duration) or 2   -- 8 hours unless set in the options
   S.qty = clamp((mem and mem.q) or (g.commodity and S.avail or 1), 1, math.max(1, S.avail))
   if S.frame.confirm:IsShown() then S.frame.confirm:Hide(); S.warned = nil end
   updatePost()

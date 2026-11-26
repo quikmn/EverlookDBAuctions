@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Auction lengths now show what they really are on WoW Forever: 2, 8 and 24 hours. Quick sell, Sell all and the settings said 12, 24 and 48 hours, so "12h" posted for only 2 hours. The default is now 8 hours, and items you had set to "12h" now post for 8 hours.
+
 ## v0.35.7 (2026-11-26)
 - Opening and closing the auction house no longer freezes the game for a few seconds. The Deals list and price updates now do their work a little at a time in the background, and searches after a price update are quicker.
 
