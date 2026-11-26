@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.36.3 (2026-11-27)
 - Fixed: since 0.36.1 a tooltip line could grow a little on every hover until it filled the screen. Every line now keeps its normal size, and "Most profit" stays just a little bigger.
 
 ## v0.36.2 (2026-11-26)
