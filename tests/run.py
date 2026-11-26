@@ -2466,6 +2466,20 @@ def shared_tooltip():
     lines = show(2589)
     check(lines[3] == "Buy from vendor = 90c", f"buy from vendor, the AH no better: {lines[3]}")
     ns.VENDORBUY = None
+    # item level: weapons and armor only, the tooltip's own version first
+    lua.execute("""C_Item.GetItemInfo = function(id)
+        if id == 2589 then return "Linen Cloth", nil, 1, 5, 1, "Trade Goods", "", 200, "", 0, 13, 7 end
+        if id == 2244 then return "Krol Blade", nil, 4, 61, 56, "Weapon", "", 1, "", 0, 50000, 2 end end
+      C_Item.GetDetailedItemLevelInfo = function(link) return 63 end""")
+    lines = show(2244)
+    got = [lines[i] for i in range(1, len(lines) + 1)]
+    check("Item level = 61" in got, f"item level of a weapon: {got}")
+    check(not any("Item level" in x for x in [show(2589)[i] for i in range(1, len(show(2589)) + 1)]), "no item level on cloth")
+    G.EverlookAuctionsDB.tip.ilvl = False
+    lines = show(2244)
+    check(not any("Item level" in lines[i] for i in range(1, len(lines) + 1)), "item level off")
+    G.EverlookAuctionsDB.tip.ilvl = None
+    lua.execute("""C_Item.GetItemInfo = function(id) if id == 2589 then return "Linen Cloth", nil, 1, 5, 1, "Trade Goods", "", 200, "", 0, 13 end end""")
     ns.tipDetail("shift")
     lines = show(2589)
     check(len(lines) == 5 and "30d" not in "".join(lines[i] for i in range(1, len(lines) + 1)),

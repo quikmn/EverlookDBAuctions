@@ -1542,6 +1542,28 @@ local function vendorLine(t, id, tt)
   end
 end
 
+-- "Item level  22" in green, on weapons and armor only: the tooltip's own version (a scaled or upgraded item has its
+-- own level in its link), else the item's base level. First of the gear group, above "Upgrade for ...".
+local function ilvlLine(t, id, tt)
+  if not db or not tipOn("ilvl") then return end
+  local okI, _, _, _, base, _, _, _, _, _, _, _, classID = pcall(C_Item.GetItemInfo, id)
+  if not okI then return end
+  classID = ok(classID)
+  if classID ~= 2 and classID ~= 4 then return end
+  local level = ok(base)
+  if tt and tt.GetItem and C_Item.GetDetailedItemLevelInfo then
+    local okL, _, link = pcall(tt.GetItem, tt)
+    link = okL and ok(link) or nil
+    if link then
+      local okD, lv = pcall(C_Item.GetDetailedItemLevelInfo, link)
+      lv = okD and ok(lv) or nil
+      if type(lv) == "number" and lv > 0 then level = lv end
+    end
+  end
+  if type(level) ~= "number" or level <= 0 then return end
+  t:Line("Item level", tostring(level), { tone = "good" })
+end
+
 -- "Most profit: Vendor" or "Most profit: Auction": which pays more for this item, the vendor or the auction house after its
 -- cut (5%, or 15% at the neutral houses in Booty Bay, Gadgetzan and Everlook; the deposit is left out: it comes back
 -- when the item sells). Only when both prices are known; an old auction price makes the line grey.
@@ -1603,10 +1625,12 @@ local function hookTooltips()
     add = function(t, ctx) if ctx.id then craftLine(t, ctx.id) end end })
   Tip:Register({ id = "EverlookDBAuctions.vendor", kind = "item", order = 0, -- first of all, above "Most profit"
     add = function(t, ctx) if ctx.id then vendorLine(t, ctx.id, ctx.tooltip) end end })
+  Tip:Register({ id = "EverlookDBAuctions.ilvl", kind = "item", order = Tip.ORDER.gear or 50, -- first of the gear group
+    add = function(t, ctx) if ctx.id then ilvlLine(t, ctx.id, ctx.tooltip) end end })
   Tip:Register({ id = "EverlookDBAuctions.verdict", kind = "item", order = 1, -- first: "Most profit" tops our block
     add = function(t, ctx) if ctx.id then verdictLine(t, ctx.id, ctx.tooltip) end end })
 end
-ns.tooltipLines = { auction = auctionLines, disenchant = disenchantLine, vendor = vendorLine, craft = craftLine }
+ns.tooltipLines = { auction = auctionLines, disenchant = disenchantLine, vendor = vendorLine, craft = craftLine, ilvl = ilvlLine }
 
 ---------------------------------------------------------------------------------------------------------------------
 -- Events and commands

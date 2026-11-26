@@ -616,7 +616,7 @@ if CreateFrame then
   ev:SetScript("OnEvent", function(_, e, arg)
     if e == "ADDON_LOADED" then
       if arg == ADDON and Tip then
-        Tip:Register({ id = "EverlookDBAuctions.upgrade", kind = "item", order = Tip.ORDER.gear or 5, add = tooltipLines })
+        Tip:Register({ id = "EverlookDBAuctions.upgrade", kind = "item", order = (Tip.ORDER.gear or 50) + 1, add = tooltipLines }) -- after "Item level"
       end
       if arg == ADDON or arg == "Bagnon" then if arg ~= ADDON then X.bagsHooked = nil end; pcall(hookBagAddons) end
     elseif e == "PLAYER_ENTERING_WORLD" then
