@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.36.2 (2026-11-26)
 - Price Feed: when its prices are already hours old as you log in, the addon now says so, and why: the EverlookDB App isn't running, or everlookdb.com has no newer scan of that auction house yet. You see it in one chat line (at most twice a day), on the auction house's bar, in /eah status and in the item tooltip.
 
 ## v0.36.1 (2026-11-26)
