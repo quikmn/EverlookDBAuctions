@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.34.6 (2026-11-26)
 - Buying a shopping list: no more "blocked action" error when the price is fetched. When the game wants a click for it, the button says "Get the price" right away instead of waiting.
 
 ## v0.34.5 (2026-11-26)
