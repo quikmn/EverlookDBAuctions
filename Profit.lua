@@ -204,6 +204,11 @@ function Pr.checkLines(items, money)
       line = line .. (" Mats for %d: %s at today's listings (the table said %s)."):format(it.n or 1, money(now), money(was))
     end
     if it.short then line = line .. (" Not enough %s listed for all of them."):format(it.short) end
+    -- listed far above what it usually sells for: the asking price, not yet proof it sells there
+    local med, low = tonumber(it.median), tonumber(it.now)
+    if med and low and med > 0 and low >= med * 2 and low - med >= 100 then
+      line = line .. (" It sells for %s now, but its 30-day median is %s: that price may not hold."):format(money(low), money(med))
+    end
     if it.listed and it.made and it.made > it.listed then
       line = line .. (" %d vs %d listed: selling them all may take a while or lower the price."):format(it.made, it.listed)
     end

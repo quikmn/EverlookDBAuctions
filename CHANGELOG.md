@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Crafting profit, Check prices: warns when something sells far above its usual 30-day price, so a short-lived high price doesn't pass for a sure profit.
+
 ## v0.35.0 (2026-11-26)
 - Tooltips: the vendor price is now the first line of our tooltip block, in large print, on every item (also where the game shows its own sell price), so you can't miss it.
 - Crafting profit: materials you bought in the last 3 days count at what you paid. Those costs show in blue with a "paid" tag, and the tooltip shows what you paid next to today's price. Profit, margin and the queue line follow.

@@ -1700,11 +1700,20 @@ function W.checkDone(c)
       if g and g.need and g.got and g.got < g.need and not m.paid then short = itemName(m.id) or ("item " .. m.id) end
     end
     local out = c.got[p.row.id]
+    -- the result's 30-day median (3 days of history at least): a price far above it may not hold
+    local median
+    local d = ns.historyDays and ns.historyDays(now.id)
+    if type(d) == "table" then
+      local list = {}
+      for _, v in pairs(d) do if type(v) == "number" then list[#list + 1] = v end end
+      table.sort(list)
+      if #list >= 3 then median = list[math.floor((#list + 1) / 2)] end
+    end
     items[#items + 1] = { name = rowName(now) or ("item " .. now.id), n = p.n,
       made = math.floor(p.n * (now.makes or 1) + 0.5), verdict = verdict, was = b and b.low, now = now.low,
       profit = now.profit and now.profit * p.n, margin = (not now.approx) and now.margin or nil,
       costNow = (not now.approx) and now.cost * p.n or nil, costWas = b and b.cost and b.cost * p.n or nil,
-      listed = out and out.listed, short = short }
+      listed = out and out.listed, short = short, median = median }
     if verdict then
       local key = { rid = p.spell or now.rid, id = now.id }
       undo[#undo + 1] = { rid = key.rid, id = key.id, n = p.n }

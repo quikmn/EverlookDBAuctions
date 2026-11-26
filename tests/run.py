@@ -5400,6 +5400,13 @@ def profit_paid_check():
     check("100 vs 12 listed: selling them all may take a while or lower the price." in lines[1], f"the sell side: {lines[1]}")
     check(lines[2] == "Thin: Linen Shirt, +50c profit (5% margin) at today's prices.", f"thin, cost about the same: {lines[2]}")
     check(gone[1] == "Rough Copper Vest" and len(gone) == 1, "the names taken out")
+    # listed far above its 30-day median: the asking price may not hold
+    items = lua.eval("""{ { name = "Small Bronze Bomb", n = 75, made = 150, now = 1998, median = 230, profit = 200000, margin = 2.5 } }""")
+    lines, _ = Pr.checkLines(items)
+    check("It sells for 19s 98c now, but its 30-day median is 2s 30c: that price may not hold." in lines[1], f"far above the median: {lines[1]}")
+    items = lua.eval("""{ { name = "Small Bronze Bomb", n = 75, made = 150, now = 300, median = 230, profit = 200000, margin = 2.5 } }""")
+    lines, _ = Pr.checkLines(items)
+    check("median" not in lines[1], f"close to the median: no warning: {lines[1]}")
 
     # the page: the crafting queue with 10 Linen Bags and 5 Linen Shirts, thread bought lately for 10c (market 12c)
     lua.execute("""
