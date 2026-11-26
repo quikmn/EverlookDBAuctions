@@ -12,6 +12,15 @@
 --   shows and sets how many of that recipe are queued, a click on a row with an empty box queues 5, Clear queue empties
 --   it (two clicks), and Make shopping list / Buy materials buy what the whole queue still misses (Crafting works that
 --   out from what you have on every character, as its queue window shows it). Without it, planned crafts stay here.
+--   The table is a "worth a look" hint, estimated from the last scan; Check prices gives the verdict before you buy.
+--   What you paid: a material you bought at this auction house in the last 3 days (the AH log, db.bought) costs what
+--   you paid, not the market price; such a row's cost is blue with a "paid" tag, and its tooltip says "paid X each"
+--   against "market Y". Profit, margin, the sort and the filters follow from it.
+--   Check prices (plain, right before the gold button; auction house open): looks at the listings right now for the
+--   queued recipes' materials and what they make (one search at a time, through AHQuery.lua). The fresh prices
+--   replace the scan's (ns.noteLivePrice); a material is priced at the average of the cheapest listings that cover
+--   the whole queue (BuyList's plan). Each queued recipe then gets a verdict: good, thin, or not worth it (no profit,
+--   or what it makes sells for over 30% less than the page showed): those come out of the queue, with Undo.
 --   A missing price is said, never guessed: "≈" marks a row with a material that has no AH price (its real profit is
 --   lower), recipes whose result has no AH price are counted under the list, and prices over a day old are grey.
 -- Settings (db.profit = { v, from, to, min (copper), maxCost (copper), minMargin (whole %), q (the search words),
@@ -27,6 +36,9 @@ ns.profitWindow = W
 local WIDTH, PAD, ROW, ROWS = 760, 14, 24, 12
 local SKILL_W, MONEY_W, COIN_W, MARGIN_W, CRAFTS_W, GAP = 40, 104, 30, 52, 44, 8
 local LIST_TOP = -136
+local PAID = { 0.353, 0.663, 1.000, 1 }   -- a cost from what you paid (blue: the gold accent is the button's)
+local LIVE_FOR = 1800                     -- Check prices' listings count for half an hour
+local CHECK_W = 120
 local CHECK_TEX, BOX_TEX = "Interface\\Buttons\\UI-CheckBox-Check", "Interface\\Buttons\\UI-CheckBox-Up"
 
 local EUI = LibStub and LibStub("EverlookUI-1", true)
@@ -254,13 +266,32 @@ local function allRecipes(api)
 end
 function W.forgetAll() allCache, allAt = nil, nil end
 
+-- Check prices' listings: { [item] = { avg (each, for the queue's amount), low, listed, at } }.
+W.live = W.live or {}
+
+-- The market price of an item: Check prices' listings while fresh (the average for the queued amount), else the
+-- saved lowest price.
+local function marketPrice(id)
+  local lv = W.live[id]
+  if lv and lv.avg and time() - (lv.at or 0) < LIVE_FOR then return lv.avg, lv.at end
+  return priceOf(id)
+end
+W.marketPrice = marketPrice
+
+-- What you paid lately for each item at this auction house (the AH log), unless that's turned off.
+function W.paid()
+  local d = db()
+  if not d or settings().noPaid then return nil end
+  return Pr.paidPrices(d.bought, houseKey(), time(), Pr.PAID_DAYS)
+end
+
 -- The rows, worked out again from the saved recipes and prices (best profit first; render sorts them as chosen).
 local function compute(scope)
   local s = settings()
   local sources = W.sources()
   local recipes, who = Pr.merge(sources)
-  local ctx = Pr.context({ recipes = recipes, price = priceOf, cut = ns.ahCut and ns.ahCut() or 0.05,
-    craftMats = not s.noCraft, info = Pr.info })
+  local ctx = Pr.context({ recipes = recipes, price = marketPrice, cut = ns.ahCut and ns.ahCut() or 0.05,
+    craftMats = not s.noCraft, info = Pr.info, paid = W.paid() })
   scope = scope or W.scope()
   local list
   if scope ~= "known" then
@@ -354,12 +385,29 @@ local function rowTooltip(self)
   for _, m in ipairs(r.mats) do
     local n = itemName(m.id) or ("item " .. m.id)
     local right
-    if m.each then
-      right = ns.money(math.floor(m.each * m.need + 0.5)) .. (m.how == "craft" and " |cff8d94a3(craft it)|r" or "")
+    if m.paid then
+      right = ("|cff%spaid %s each|r |cff8d94a3(%s)|r"):format(hex(PAID), ns.money(math.floor(m.paid.unit + 0.5)),
+        ns.ago and ns.ago(m.paid.t) or "")
+    elseif m.each then
+      right = (m.how == "craft" and "craft it, %s each" or "market %s each"):format(ns.money(math.floor(m.each + 0.5)))
+        .. (m.paidIn and (" |cff" .. hex(PAID) .. "(from what you paid)|r") or "")
     else
       right = "|cffff6060no AH price|r"
     end
     GameTooltip:AddDoubleLine(("%dx %s"):format(m.need, n), right, 1, 1, 1, 1, 1, 1)
+    if m.paid then
+      GameTooltip:AddDoubleLine(" ", m.market and ("market %s each"):format(ns.money(math.floor(m.market + 0.5)))
+        or "no market price", 1, 1, 1, 0.55, 0.58, 0.64)
+    end
+  end
+  if r.paid then
+    GameTooltip:AddLine(("Blue: the cost uses what you paid for materials in the last %d days, the market price for the rest.")
+      :format(Pr.PAID_DAYS), PAID[1], PAID[2], PAID[3], true)
+  end
+  local lv = W.live[r.id]
+  if lv and lv.at and time() - lv.at < LIVE_FOR then
+    GameTooltip:AddLine(("Checked %s: %s listed, from %s each."):format(ns.ago and ns.ago(lv.at) or "just now",
+      tostring(lv.listed or 0), lv.low and ns.money(lv.low) or "?"), 0.55, 0.58, 0.64, true)
   end
   if W.multi and type(r.who) == "table" and #r.who > 0 then
     GameTooltip:AddLine(" ")
@@ -487,7 +535,8 @@ local function paintRow(row, r)
     row.tag:SetText("|cff" .. hex((st.how == "trainer" or st.how == "vendor" or st.how == "ah") and T.ok or T.muted)
       .. Pr.startText(st) .. "|r")
   else
-    row.tag:SetText(whoTag(r.who))
+    local who = whoTag(r.who)
+    row.tag:SetText(r.paid and ("|cff" .. hex(PAID) .. "paid|r" .. (who ~= "" and ("  " .. who) or "")) or who)
   end
   row.name:SetText(rowName(r) or ("item " .. r.id))
   row.name:SetTextColor(qualityColor(r.id))
@@ -495,7 +544,8 @@ local function paintRow(row, r)
   local above = r.start and (r.start.rank == nil or (r.start.need or 1) > r.start.rank)
   row.skill:SetTextColor(rgba(above and T.danger or T.muted))
   local old = r.oldest and stale(r.oldest)
-  setMoney(row.cost, r.cost, { prefix = r.approx and "≈ " or nil }, r.approx and T.danger or (old and T.muted or T.text))
+  setMoney(row.cost, r.cost, { prefix = r.approx and "≈ " or nil },
+    r.approx and T.danger or (r.paid and PAID) or (old and T.muted or T.text))
   setMoney(row.sale, r.sale, nil, stale(r.lowAt) and T.muted or T.text)
   setMoney(row.profit, r.profit, { prefix = r.approx and "≈ " or nil, sign = not r.approx }, r.profit > 0 and T.ok or T.danger)
   -- no margin for a row with an unpriced material: its cost is too low, so the percentage would mean nothing
@@ -939,9 +989,21 @@ local function makeFrame()
 
   -- under the card: the selection, the one gold button, what happened
   f.sum = text(f, T.font, T.text)
+  f.sum:SetWordWrap(true)
   f.make = EUI.Button(f, "Make shopping list", function()
     if W.inAH then W.buyMaterials() else W.makeList() end
   end, 170, "accent")
+  -- Check prices: plain, right before the gold button (check, then buy)
+  f.check = EUI.Button(f, "Check prices", function() W.checkPrices() end, CHECK_W)
+  f.check:HookScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+    GameTooltip:SetText("Check prices", 1, 1, 1)
+    GameTooltip:AddLine("The profits above are estimates from the last scan. This looks at the auction house right now for the queued recipes' materials and what they make, and says for each: good, thin, or not worth it (those come out of the queue; Undo puts them back). Needs the auction house open.", nil, nil, nil, true)
+    GameTooltip:Show()
+  end)
+  f.check:HookScript("OnLeave", function() GameTooltip:Hide() end)
+  f.undo = EUI.Button(f, "Undo", function() W.undoCheck() end, 70)
+  f.undo:Hide()
   f.status = text(f, T.font - 1, T.muted)
   f.status:SetWordWrap(true)
 
@@ -986,17 +1048,43 @@ function W.footer()
   end
   W.picks = picks
   local cost, profit, crafts, approx = Pr.totals(picks)
+  local paid = false
+  for _, p in ipairs(picks) do paid = paid or (p.row.paid and true) or false end
   if crafts == 0 then
     f.sum:SetText("Type how many crafts you plan in a recipe's box, then make a shopping list.")
     f.sum:SetTextColor(rgba(T.muted))
   else
-    f.sum:SetText(("Planned: %d %s, %d %s.  Gold in %s%s,  profit %s%s"):format(#picks, #picks == 1 and "recipe" or "recipes",
+    f.sum:SetText(("Planned: %d %s, %d %s.  Gold in %s%s,  profit %s%s%s"):format(#picks, #picks == 1 and "recipe" or "recipes",
       crafts, crafts == 1 and "craft" or "crafts", approx and "≈ " or "", ns.money(cost), approx and "≈ " or "",
-      (profit < 0 and "-" or "") .. ns.money(math.abs(profit))))
+      (profit < 0 and "-" or "") .. ns.money(math.abs(profit)), paid and (" |cff" .. hex(PAID) .. "at what you paid|r") or "")
+      .. W.nudge(picks))
     f.sum:SetTextColor(rgba(T.text))
   end
+  W.paintButtons(crafts)
+end
+
+-- "Check prices before you buy." while a planned recipe hasn't been checked in the last half hour.
+function W.nudge(picks)
+  local now = time()
+  for _, p in ipairs(picks or {}) do
+    local id = p.row and p.row.id
+    local lv = id and W.live[id]
+    if not (lv and now - (lv.at or 0) < LIVE_FOR) then
+      return "  |cff" .. hex(T.muted) .. "Check prices before you buy.|r"
+    end
+  end
+  return ""
+end
+
+-- The gold button, and Check prices right before it (both usable with something planned; Make shopping list never
+-- waits for a check).
+function W.paintButtons(crafts)
+  local f = W.frame
   f.make:SetText(W.inAH and "Buy materials" or "Make shopping list")
   f.make:SetUsable(crafts > 0)
+  local c = W.check
+  f.check:SetText(c and ("Checking %d/%d"):format(math.min(c.i, #c.order), #c.order) or "Check prices")
+  f.check:SetUsable(crafts > 0 or c ~= nil)
 end
 
 -- The line under the list with the crafting queue: what is queued (all of it, also what the filters hide), its profit
@@ -1004,9 +1092,12 @@ end
 function W.queueFooter(q)
   local f = W.frame
   local list = try(q.queue) or {}
-  local recipes, crafts, profit, unknown = 0, 0, 0, 0
+  local recipes, crafts, profit, cost, unknown, paid = 0, 0, 0, 0, 0, false
+  -- every queued recipe, also those the filters hide, at the page's prices (what you paid, where you did)
   local byRid = {}
-  for _, r in ipairs(W.rows or {}) do if r.rid then byRid[r.rid] = r end end
+  for _, p in ipairs(W.ctx and W.queuePicks(W.ctx) or {}) do byRid[p.spell] = p.row end
+  for _, r in ipairs(W.rows or {}) do if r.rid and not byRid[r.rid] then byRid[r.rid] = r end end
+  local seen = {}
   for _, e in ipairs(list) do
     local n = tonumber(e.n) or 0
     if n > 0 then
@@ -1014,6 +1105,11 @@ function W.queueFooter(q)
       local row = byRid[e.spell]
       local each = (row and not row.approx and row.profit) or e.profit
       if each then profit = profit + each * n else unknown = unknown + 1 end
+      if row and not row.approx and row.profit then
+        cost = cost + (row.cost or 0) * n
+        paid = paid or (row.paid and true) or false
+      end
+      seen[#seen + 1] = { row = row or { id = e.creates } }
     end
   end
   W.picks = {}
@@ -1021,13 +1117,39 @@ function W.queueFooter(q)
     f.sum:SetText("Click a recipe to queue 5, or type how many in its box. The queue is shared with EverlookDB Crafting.")
     f.sum:SetTextColor(rgba(T.muted))
   else
-    f.sum:SetText(("Crafting queue: %d %s, %d %s.  Profit %s%s%s"):format(recipes, recipes == 1 and "recipe" or "recipes",
-      crafts, crafts == 1 and "craft" or "crafts", unknown > 0 and "≈ " or "", (profit < 0 and "-" or "") .. ns.money(math.abs(profit)),
-      unknown > 0 and (" (%d without a price)"):format(unknown) or ""))
+    local a = unknown > 0 and "≈ " or ""
+    f.sum:SetText(("Crafting queue: %d %s, %d %s.  Cost %s%s, profit %s%s%s%s"):format(recipes, recipes == 1 and "recipe" or "recipes",
+      crafts, crafts == 1 and "craft" or "crafts", a, ns.money(cost), a, (profit < 0 and "-" or "+") .. ns.money(math.abs(profit)),
+      paid and (" |cff" .. hex(PAID) .. "at what you paid|r") or "",
+      unknown > 0 and (" (%d without a price)"):format(unknown) or "") .. W.nudge(seen))
     f.sum:SetTextColor(rgba(T.text))
   end
-  f.make:SetText(W.inAH and "Buy materials" or "Make shopping list")
-  f.make:SetUsable(crafts > 0)
+  W.paintButtons(crafts)
+end
+
+-- The queued recipes, each worked out with ctx (all of them, whatever the filters): { { row, n, spell } }; without the
+-- crafting queue, the crafts planned here.
+function W.queuePicks(ctx)
+  local out = {}
+  local recipes = ctx and ctx.recipes or {}
+  local q = queueAPI()
+  if q then
+    for _, e in ipairs(try(q.queue) or {}) do
+      local n = tonumber(e.n) or 0
+      local r = e.creates and recipes[e.creates]
+      if n > 0 and r then
+        local row = Pr.row(ctx, e.creates, r)
+        row.rid = row.rid or e.spell
+        out[#out + 1] = { row = row, n = n, spell = e.spell }
+      end
+    end
+  else
+    for id, n in pairs(W.crafts or {}) do
+      local r = recipes[id]
+      if r and (tonumber(n) or 0) > 0 then out[#out + 1] = { row = Pr.row(ctx, id, r), n = n } end
+    end
+  end
+  return out
 end
 
 -- Clear crafts (here) or Clear queue (EverlookDB Crafting's, for both addons: a second click within 4 seconds).
@@ -1046,7 +1168,7 @@ function W.clearPlanned()
   else
     wipe(W.crafts)
   end
-  W.status = nil
+  W.status, W.undo = nil, nil
   W.render()
 end
 
@@ -1056,8 +1178,9 @@ function W.render(keep)
   if not (f and f:IsShown()) then return end
   local d = db() or {}
   local s = settings()
-  if not keep or not W.rows then
-    local _, rows, counts, sources = compute()
+  if not keep or not W.rows or not W.ctx then
+    local ctx, rows, counts, sources = compute()
+    W.ctx = ctx
     local key, desc = W.sortState()
     Pr.sort(rows, key, desc, { nameOf = rowName, crafts = W.plannedMap() })
     W.rows, W.counts = rows, counts
@@ -1080,7 +1203,7 @@ function W.render(keep)
   local pricesAt, shared = nil, false
   if ns.pricesAt then pricesAt, shared = ns.pricesAt(houseKey():match("%-(%a+)$")) end
   local _, side = houseKey():match("^(.*)%-(%a+)$")
-  local where = side and (side .. " auction house") or "your auction house"
+  local where = side and (side .. " AH") or "your AH"
   local scope = W.scope()
   local whose = W.multi and "you and your alts know" or "you know"
   local from = ("From the %d recipes %s"):format(counts.known, whose)
@@ -1093,9 +1216,9 @@ function W.render(keep)
     f.sub:SetText(("%s. No prices yet for the %s."):format(from, where))
     f.sub:SetTextColor(rgba(T.danger))
   else
-    local when = shared and ("other players' scan " .. ns.ago(pricesAt))
-      or (h and h.scanned) and ("full update " .. ns.ago(h.scanned)) or "no full update yet"
-    f.sub:SetText(("%s, at the %s's prices (%s), after its %d%% cut."):format(from, where,
+    local when = shared and ("other players', " .. ns.ago(pricesAt))
+      or (h and h.scanned) and ns.ago(h.scanned) or "no full update yet"
+    f.sub:SetText(("%s: estimates from the %s's last scan (%s), after its %d%% cut. Check prices before you buy."):format(from, where,
       when, math.floor((ns.ahCut and ns.ahCut() or 0.05) * 100 + 0.5)))
     f.sub:SetTextColor(rgba((not pricesAt or time() - pricesAt >= Pr.STALE) and T.danger or T.muted))
   end
@@ -1137,6 +1260,11 @@ function W.render(keep)
     notes[#notes + 1] = ("≈ %d %s a material with no AH price: the cost shown is too low."):format(counts.approx,
       counts.approx == 1 and "recipe has" or "recipes have")
   end
+  local paidRows = 0
+  for _, r in ipairs(rows) do if r.paid then paidRows = paidRows + 1 end end
+  if paidRows > 0 then
+    notes[#notes + 1] = ("|cff%sBlue cost: what you paid in the last %d days.|r"):format(hex(PAID), Pr.PAID_DAYS)
+  end
   if counts.noSale > 0 then
     notes[#notes + 1] = ("%d %s left out: no AH price for what %s."):format(counts.noSale,
       counts.noSale == 1 and "recipe" or "recipes", counts.noSale == 1 and "it makes" or "they make")
@@ -1159,18 +1287,28 @@ function W.render(keep)
   f.list:SetHeight(listH)
 
   local by = W.listTop() - listH - 14
-  f.sum:ClearAllPoints()
-  f.sum:SetPoint("TOPLEFT", 20, by - 6)
-  f.sum:SetPoint("RIGHT", f.make, "LEFT", -12, 0)
   f.make:ClearAllPoints()
   f.make:SetPoint("TOPRIGHT", -16, by)
-  f.status:ClearAllPoints()
-  f.status:SetPoint("TOPLEFT", 20, by - 34)
-  f.status:SetPoint("RIGHT", -20, 0)
+  f.check:ClearAllPoints()
+  f.check:SetPoint("RIGHT", f.make, "LEFT", -8, 0)
+  f.sum:ClearAllPoints()
+  f.sum:SetPoint("TOPLEFT", 20, by + 1)
+  f.sum:SetPoint("RIGHT", f.check, "LEFT", -12, 0)
+  f.sum:SetHeight(28)
+  if f.sum.SetJustifyV then f.sum:SetJustifyV("MIDDLE") end
   local st = W.status
+  local undo = W.undo ~= nil and st ~= nil and st.undo == true
+  f.undo:ClearAllPoints()
+  f.undo:SetPoint("TOPRIGHT", -16, by - 34)
+  f.undo:SetShown(undo)
+  f.status:ClearAllPoints()
+  f.status:SetPoint("TOPLEFT", 20, by - 38)
+  if undo then f.status:SetPoint("RIGHT", f.undo, "LEFT", -12, 0) else f.status:SetPoint("RIGHT", -20, 0) end
   f.status:SetText(st and st[1] or "")
   if st then f.status:SetTextColor(rgba(st[2] or T.muted)) end
-  if not W.inAH then f:SetHeight(-(by - 34 - (st and 30 or 4) - 10)) end   -- at the auction house: its content area
+  local stH = st and math.max(30, (f.status:GetStringHeight() or 14) + 10) or 4
+  W.statusH = st and stH or nil
+  if not W.inAH then f:SetHeight(-(by - 34 - stH - 10)) end   -- at the auction house: its content area
   W.footer()
 end
 
@@ -1311,7 +1449,7 @@ function W.rowsShown()
     h = ((ah and ah:GetHeight()) or 0) - 24 - (ns.BAR_H or 0) - 2
   end
   -- above the list, the list's heading and foot, the gold button's row and the status line under it
-  return math.max(4, math.min(ROWS, math.floor((h + W.listTop() - 74 - 14 - 34 - 30 - 10) / ROW)))
+  return math.max(4, math.min(ROWS, math.floor((h + W.listTop() - 74 - 14 - 34 - math.max(30, W.statusH or 30) - 10) / ROW)))
 end
 
 -- The title row and the filters: the window's own title at its top, or (at the auction house) no title of its own
@@ -1427,6 +1565,181 @@ function W.buyMaterials()
   end
 end
 
+---------------------------------------------------------------------------------------------------------------------
+-- Check prices: the queued recipes at the auction house's listings right now. One item at a time through the search
+-- queue (AHQuery.lua), as Buy this list searches: a browse by name (the lowest price and how many are listed), and
+-- for a material sold as a stack the listings themselves, walked up for the whole queue's amount (BuyList's plan).
+-- Searching takes no click; nothing is bought.
+
+local function okv(v)
+  if ns.ok then return ns.ok(v) end
+  return v
+end
+
+local function isCommodity(key)
+  local AH = C_AuctionHouse
+  local info = AH and AH.GetItemKeyInfo and try(AH.GetItemKeyInfo, key)
+  if info then return okv(info.isCommodity) and true or false end
+  return false
+end
+
+local function commodityRows(id)
+  local AH = C_AuctionHouse or {}
+  local rows = {}
+  for i = 1, (try(AH.GetNumCommoditySearchResults, id) or 0) do
+    local x = try(AH.GetCommoditySearchResultInfo, id, i)
+    if x then
+      local q = okv(x.quantity) or 0
+      rows[#rows + 1] = { unit = okv(x.unitPrice), qty = q, others = q - (okv(x.numOwnerItems) or 0) }
+    end
+  end
+  return rows
+end
+
+local function checkSay(msg, color)
+  W.status = { msg, color or T.muted }
+  if W.frame and W.frame:IsShown() then W.render(true) end
+end
+
+-- What was seen of an item: the page prices it from this for half an hour (also "checked" for the nudge).
+function W.noteChecked(id, g)
+  W.live[id] = { avg = g.avg or g.low, low = g.low, listed = g.listed, at = time() }
+end
+
+function W.checkPrices()
+  if W.check then return end
+  if not W.ahOpen() then
+    checkSay("Check prices needs the auction house open: it looks at what is listed right now.", T.danger)
+    return
+  end
+  if not (ns.ahq and ns.ahq.browse) then checkSay("This client can't search the auction house.", T.danger); return end
+  local ctx = compute()
+  local picks = W.queuePicks(ctx)
+  if #picks == 0 then checkSay("Queue some crafts first, then check their prices.", T.muted); return end
+  -- the materials (for the whole queue), then what the recipes make
+  local order, want = {}, {}
+  local function add(id) if want[id] == nil then want[id] = 0; order[#order + 1] = id end end
+  for _, p in ipairs(picks) do
+    for _, m in ipairs(p.row.mats) do
+      add(m.id)
+      want[m.id] = want[m.id] + m.need * p.n
+    end
+  end
+  local before = {}
+  for _, p in ipairs(picks) do
+    add(p.row.id)
+    before[p.row.id] = { low = p.row.low, cost = (not p.row.approx) and p.row.cost or nil, profit = p.row.profit }
+  end
+  local c = { picks = picks, order = order, want = want, before = before, i = 1, got = {} }
+  W.check, W.undo = c, nil
+  checkSay(("Checking prices at the auction house: %d items..."):format(#order), T.muted)
+  W.checkStep(c)
+end
+
+function W.checkStep(c)
+  if W.check ~= c then return end
+  local id = c.order[c.i]
+  if not id then return W.checkDone(c) end
+  if W.frame and W.frame:IsShown() then W.footer() end
+  local function nextOne()
+    if W.check ~= c then return end
+    c.i = c.i + 1
+    W.checkStep(c)
+  end
+  local name = itemName(id)
+  if not name then c.got[id] = { noname = true }; return nextOne() end
+  ns.ahq.browse(name, id, { owner = "craftcheck", front = true, confirmEmpty = true }, function(answer)
+    if W.check ~= c then return end
+    if not answer.ok then c.got[id] = { noanswer = true }; return nextOne() end
+    local entries = answer.entries or {}
+    local low, listed = nil, 0
+    for _, e in ipairs(entries) do
+      if e.minPrice and e.minPrice > 0 and (not low or e.minPrice < low) then low = e.minPrice end
+      listed = listed + (e.totalQuantity or 0)
+    end
+    local need = c.want[id] or 0
+    if need > 0 and #entries > 0 and isCommodity(entries[1].itemKey) and ns.ahq.items and ns.buyList and ns.buyList.plan then
+      local function plain()
+        if W.check ~= c then return end
+        c.got[id] = { low = low, listed = listed }
+        W.noteChecked(id, c.got[id])
+        nextOne()
+      end
+      ns.ahq.items(entries[1].itemKey, { owner = "craftcheck", front = true, commodity = true, onFail = plain },
+        function(_, _, final)
+          if not final or W.check ~= c then return end
+          local rows = commodityRows(id)
+          local plan = ns.buyList.plan(rows, need, true)
+          if ns.noteLivePrice and #rows > 0 then pcall(ns.noteLivePrice, id, rows) end
+          c.got[id] = { low = low, listed = listed, avg = plan.avg, got = plan.got, need = need }
+          W.noteChecked(id, c.got[id])
+          nextOne()
+        end)
+      return
+    end
+    if ns.noteLivePrice and low then pcall(ns.noteLivePrice, id, { { unit = low, qty = listed } }) end
+    c.got[id] = { low = low, listed = listed }
+    W.noteChecked(id, c.got[id])
+    nextOne()
+  end)
+end
+
+-- Every item seen: a verdict for each queued recipe; the ones not worth it come out of the queue (Undo puts them back).
+function W.checkDone(c)
+  W.check = nil
+  local ctx = compute()
+  local items, undo = {}, {}
+  for _, p in ipairs(c.picks) do
+    local r = ctx.recipes[p.row.id]
+    local now = r and Pr.row(ctx, p.row.id, r) or p.row
+    local b = c.before[p.row.id]
+    local verdict = Pr.verdict(b, now)
+    local short
+    for _, m in ipairs(now.mats or {}) do
+      local g = c.got[m.id]
+      if g and g.need and g.got and g.got < g.need and not m.paid then short = itemName(m.id) or ("item " .. m.id) end
+    end
+    local out = c.got[p.row.id]
+    items[#items + 1] = { name = rowName(now) or ("item " .. now.id), n = p.n,
+      made = math.floor(p.n * (now.makes or 1) + 0.5), verdict = verdict, was = b and b.low, now = now.low,
+      profit = now.profit and now.profit * p.n, margin = (not now.approx) and now.margin or nil,
+      costNow = (not now.approx) and now.cost * p.n or nil, costWas = b and b.cost and b.cost * p.n or nil,
+      listed = out and out.listed, short = short }
+    if verdict then
+      local key = { rid = p.spell or now.rid, id = now.id }
+      undo[#undo + 1] = { rid = key.rid, id = key.id, n = p.n }
+      W.setPlanned(key, 0)
+    end
+  end
+  local lines = Pr.checkLines(items, Pr.short)
+  table.insert(lines, 1, ("Checked %d %s at the auction house just now."):format(#c.order, #c.order == 1 and "item" or "items"))
+  W.undo = #undo > 0 and undo or nil
+  W.status = { table.concat(lines, "\n"), T.text, undo = #undo > 0 }
+  W.offset = 0
+  if W.frame and W.frame:IsShown() then W.render() end
+  return items
+end
+
+-- Undo: what Check prices took out goes back in the queue.
+function W.undoCheck()
+  local u = W.undo
+  if not u then return end
+  W.undo = nil
+  for _, e in ipairs(u) do W.setPlanned({ rid = e.rid, id = e.id }, e.n) end
+  W.status = { ("Put back in the queue: %d %s."):format(#u, #u == 1 and "recipe" or "recipes"), T.muted }
+  W.render()
+end
+
+-- The auction house closed, or the game blocked a search: the check stops, the queue as it was.
+function W.checkStopped(why)
+  local c = W.check
+  if not c then return end
+  W.check = nil
+  if ns.ahq and ns.ahq.cancel then ns.ahq.cancel("craftcheck") end
+  checkSay(why == "blocked" and "The game blocked the price check. Click Check prices to try again; the queue is as it was."
+    or "The auction house closed before the check finished. The queue is as it was.", T.muted)
+end
+
 -- Right-click on a recipe: what it makes, picked in Quick sell (only at the auction house, when it is in your bags).
 function W.sell(r)
   if not r then return end
@@ -1476,8 +1789,15 @@ if CreateFrame then
   local ahEv = CreateFrame("Frame")
   ahEv:RegisterEvent("AUCTION_HOUSE_SHOW")
   ahEv:RegisterEvent("AUCTION_HOUSE_CLOSED")
-  ahEv:SetScript("OnEvent", function(_, e)
+  pcall(ahEv.RegisterEvent, ahEv, "ADDON_ACTION_BLOCKED")
+  ahEv:SetScript("OnEvent", function(_, e, a1)
+    if e == "ADDON_ACTION_BLOCKED" then
+      -- this client may name the call "UNKNOWN()": any block of ours during a check stops it
+      if a1 == ADDON and W.check then W.checkStopped("blocked") end
+      return
+    end
     if e == "AUCTION_HOUSE_CLOSED" then
+      W.checkStopped("closed")
       closeTab()
       return
     end
@@ -1511,6 +1831,13 @@ local function addToApp(app)
     set = function(v) settings().noCraft = not v or nil end,
     after = W.refresh,
   })
+  app:Setting({
+    key = "profitpaid", type = "bool", label = ("Use what you paid for materials bought in the last %d days"):format(Pr.PAID_DAYS),
+    chatLabel = "Profit: what you paid", keywords = { "profit", "crafting", "paid", "bought", "cost", "materials", "purchases" },
+    get = function() return not settings().noPaid end,
+    set = function(v) settings().noPaid = not v or nil end,
+    after = W.refresh,
+  })
   -- silver, as it always was (the page's box takes gold and copper too; both write the same copper amount)
   app:Setting({
     key = "profitmin", type = "number", label = "Show recipes making at least this much profit (silver)", min = 0, max = 1000, step = 5,
@@ -1539,6 +1866,7 @@ local function addToApp(app)
         keywords = words({ "reset" }) },
     })
     app:Widget(stack, "profitcraft")
+    app:Widget(stack, "profitpaid")
     app:Widget(stack, "profitmin")
     EU.Note(stack, "Prices are your last scan of the auction house; nothing is guessed. A material without an AH price shows ≈ (the real profit is lower), and a recipe whose result has no price is left out. Open each profession window once so the addon knows your recipes; with EverlookDB Crafting, your alts' recipes can be added too (Alts, on the page).")
   end, { icon = "wrench" })

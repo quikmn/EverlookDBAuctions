@@ -141,6 +141,7 @@ def main() -> int:
     failures += profit_tab()
     failures += profit_scopes()
     failures += profit_queue()
+    failures += profit_paid_check()
     failures += upgrades_alts()
     failures += item_tip()
     failures += health()
@@ -5342,6 +5343,191 @@ def profit_queue():
     f.clear.scripts.OnClick(f.clear)
     check(len(G.QUEUE) == 0, "the second click clears the queue")
     check(f.clear.label.text == "Clear queue", "back to Clear queue")
+    return failures
+
+
+def profit_paid_check():
+    """Crafting profit with what you paid and Check prices (Profit.lua, ProfitWindow.lua): a material bought at this
+    auction house in the last 3 days costs what you paid (blue, a "paid" tag, the tooltip's paid vs market), the queue
+    line says so and nudges to check prices; Check prices needs the auction house open, looks at the queue's
+    materials and results one by one, prices a stack material at the listings for the whole queue's amount, takes a
+    recipe whose result sells far lower out of the queue (Undo puts it back) and says good / thin for the rest, with the
+    mats' real cost when it differs from the table and how many of the result are listed."""
+    failures = []
+
+    def check(cond, what):
+        if not cond:
+            failures.append("profit paid/check: " + what)
+
+    lua, ns, W, DB, settings = profit_window_setup(craft_api=True)
+    Pr = ns.profit
+    G = lua.globals()
+    tbl = lua.eval("function(...) return { ... } end")
+    ns.house = lua.eval("function() return MOCK_HOUSE end")
+    ns.itemTipOwner = lua.eval("function() end")
+
+    # what you paid: this house, the last 3 days, the average over the purchases
+    bought = lua.eval("""{
+      { t = 100000 - 86400, id = 2320, q = 20, c = 200, h = "A-Alliance" },
+      { t = 100000 - 3600, id = 2320, q = 10, c = 130, h = "A-Alliance" },
+      { t = 100000 - 5 * 86400, id = 2320, q = 10, c = 900, h = "A-Alliance" },
+      { t = 100000 - 60, id = 2320, q = 10, c = 9000, h = "B-Horde" },
+      { t = 100000 - 60, id = 2589, q = 0, c = 10, h = "A-Alliance" },
+    }""")
+    paid = Pr.paidPrices(bought, "A-Alliance", 100000)
+    p = paid[2320]
+    check(p is not None and p.q == 30 and p.c == 330 and abs(p.unit - 11) < 1e-9 and p.t == 100000 - 3600,
+          f"thread: 30 for 330, 11 each, newest an hour ago: {p and (p.q, p.c, p.unit, p.t)}")
+    check(paid[2589] is None, "a purchase of nothing doesn't count")
+    check(Pr.paidPrices(bought, "A-Alliance", 100000, 10)[2320].q == 40, "a longer window takes the older one too")
+
+    # verdicts and the message
+    check(Pr.verdict(tbl(), lua.eval("{ low = 100, profit = 5 }")) is None, "profit, no earlier price: still good")
+    check(Pr.verdict(lua.eval("{ low = 440 }"), lua.eval("{ low = 200, profit = 50 }")) == "drop", "sells 55% lower: drop")
+    check(Pr.verdict(lua.eval("{ low = 440 }"), lua.eval("{ low = 400, profit = 0 }")) == "loss", "no profit: loss")
+    check(Pr.verdict(lua.eval("{ low = 440 }"), lua.eval("{ profit = -5 }")) is None, "no price now: can't tell")
+    items = lua.eval("""{
+      { name = "Rough Copper Vest", n = 10, verdict = "drop", was = 4400, now = 2000, profit = -300 },
+      { name = "Small Bronze Bomb", n = 100, made = 100, profit = 320000, margin = 0.6, costNow = 480000, costWas = 310000, listed = 12 },
+      { name = "Linen Shirt", n = 5, made = 5, profit = 50, margin = 0.05, costNow = 1000, costWas = 990, listed = 40 },
+    }""")
+    lines, gone = Pr.checkLines(items)
+    lines = [lines[i] for i in range(1, len(lines) + 1)]
+    check(len(lines) == 3, f"three lines: {lines}")
+    check(lines[0] == "Not worth it, taken out of the queue: Rough Copper Vest: sells for 20s now (was 44s).", f"taken out: {lines[0]}")
+    check(lines[1].startswith("Good: Small Bronze Bomb, +32g profit at today's prices."), f"good: {lines[1]}")
+    check("Mats for 100: 48g at today's listings (the table said 31g)." in lines[1], f"the real cost: {lines[1]}")
+    check("100 vs 12 listed: selling them all may take a while or lower the price." in lines[1], f"the sell side: {lines[1]}")
+    check(lines[2] == "Thin: Linen Shirt, +50c profit (5% margin) at today's prices.", f"thin, cost about the same: {lines[2]}")
+    check(gone[1] == "Rough Copper Vest" and len(gone) == 1, "the names taken out")
+
+    # the page: the crafting queue with 10 Linen Bags and 5 Linen Shirts, thread bought lately for 10c (market 12c)
+    lua.execute("""
+      C_Timer = { After = function() end }
+      QUEUE = { { spell = 2, n = 10 }, { spell = 3, n = 5 } }
+      local CREATES = { [1] = 2996, [2] = 4238, [3] = 2570 }
+      local function find(spell) for i, e in ipairs(QUEUE) do if e.spell == spell then return e, i end end end
+      EverlookCraftAPI.version = 8
+      EverlookCraftAPI.queue = function()
+        local out = {}
+        for _, e in ipairs(QUEUE) do out[#out + 1] = { spell = e.spell, n = e.n, creates = CREATES[e.spell] } end
+        return out
+      end
+      EverlookCraftAPI.queueCount = function(spell) local e = find(spell); return e and e.n or 0 end
+      EverlookCraftAPI.queueSet = function(spell, n)
+        local e, i = find(spell)
+        if n <= 0 then if i then table.remove(QUEUE, i) end
+        elseif e then e.n = n else QUEUE[#QUEUE + 1] = { spell = spell, n = n } end
+        return true
+      end
+      EverlookCraftAPI.queueMissing = function() return {} end
+      MOCK_DB.bought = { { t = MOCK_TIME - 7200, id = 2320, q = 40, c = 400, h = MOCK_HOUSE } }
+    """)
+    W.open()
+    f = W.frame
+    bag = None
+    for i in range(1, len(W.rows) + 1):
+        if W.rows[i].id == 4238:
+            bag = W.rows[i]
+    check(bag is not None and bag.paid is True, "the bag's cost uses what you paid")
+    if bag is not None:
+        check(bag.cost == 3 * 36 + 3 * 10, f"3 bolts (crafted, 36c) and 3 thread at 10c paid: {bag.cost}")
+        th = [bag.mats[i] for i in range(1, len(bag.mats) + 1) if bag.mats[i].id == 2320][0]
+        check(th.paid.unit == 10 and th.market == 12, f"thread: paid 10c, market 12c: {th.paid.unit}, {th.market}")
+    shown = [f.rows[i] for i in range(1, len(f.rows) + 1) if f.rows[i].shown and f.rows[i].data]
+    bag_row = [r for r in shown if r.data.id == 4238]
+    check(bag_row and "paid" in bag_row[0].tag.text, f"the row's tag says paid: {bag_row and bag_row[0].tag.text}")
+    check("at what you paid" in f.sum.text and "Cost " in f.sum.text, f"the queue line: {f.sum.text}")
+    check("Check prices before you buy." in f.sum.text, f"the nudge: {f.sum.text}")
+    check("estimates from" in f.sub.text and "Check prices before you buy." in f.sub.text, f"the subtitle: {f.sub.text}")
+    check(f.check.label.text == "Check prices" and f.make.label.text == "Make shopping list", "both buttons")
+    check(f.make.usable is not False, "Make shopping list isn't blocked before a check")
+    check("Blue cost" in f.note.text, f"the note explains blue: {f.note.text}")
+    # the tooltip: paid vs market
+    lines_ = []
+    G.GameTooltip.AddDoubleLine = lambda self, l, r, *a: lines_.append(str(l) + " | " + str(r))
+    G.GameTooltip.AddLine = lambda self, t, *a: lines_.append(str(t))
+    if bag_row:
+        bag_row[0].scripts.OnEnter(bag_row[0])
+    tip = chr(10).join(lines_)
+    check("paid 10c each" in tip and "market 12c each" in tip and "craft it, 36c each" in tip, f"tooltip: {tip}")
+
+    # Check prices with the auction house closed: said plainly
+    W.checkPrices()
+    check(W.status and "auction house open" in W.status[1], f"closed: {W.status and W.status[1]}")
+
+    # the auction house open, a fake search queue answering at once
+    src = source_of("BuyList.lua")
+    a = src.index("function W.plan(")
+    b = src.index(chr(10) + "end" + chr(10), a) + 4
+    lua.execute("local W = {}; " + src[a:b] + chr(10) + "PLAN = W.plan")
+    ns.buyList = lua.eval("{ plan = PLAN }")
+    lua.execute("""
+      AuctionHouseFrame = { IsShown = function() return true end }
+      MOCK_DB.bought = {}
+      LISTED = { [2996] = { { 95, 5 }, { 200, 100 } }, [2320] = { { 12, 5 }, { 40, 100 } },
+        [4238] = { { 300, 30 } }, [2570] = { { 140, 2 } } }
+      COMMODITY = { [2996] = true, [2320] = true }
+      SEARCHED = {}
+      C_AuctionHouse = {
+        GetItemKeyInfo = function(key) return { isCommodity = COMMODITY[key.itemID] or false } end,
+        GetNumCommoditySearchResults = function(id) return #(LISTED[id] or {}) end,
+        GetCommoditySearchResultInfo = function(id, i) local l = LISTED[id][i]; return { unitPrice = l[1], quantity = l[2], numOwnerItems = 0 } end,
+      }
+    """)
+    ns.ahq = lua.eval("""{
+      browse = function(name, id, opts, cb)
+        SEARCHED[#SEARCHED + 1] = id
+        local entries = {}
+        local low, qty
+        for _, l in ipairs(LISTED[id] or {}) do
+          if not low or l[1] < low then low = l[1] end
+          qty = (qty or 0) + l[2]
+        end
+        if low then entries[1] = { itemKey = { itemID = id }, minPrice = low, totalQuantity = qty } end
+        cb({ ok = true, full = true, entries = entries })
+      end,
+      items = function(key, opts, cb) cb(key, true, true) end,
+      cancel = function() end,
+    }""")
+    ns.noteLivePrice = lua.eval("""function(id, rows)
+      local low, qty
+      for _, r in ipairs(rows) do if r.unit and (not low or r.unit < low) then low = r.unit end; qty = (qty or 0) + (r.qty or 0) end
+      MOCK_DB.houses[MOCK_HOUSE].items[id] = { low, qty, nil, MOCK_TIME }
+    end""")
+    W.render()
+    W.checkPrices()
+    searched = sorted(G.SEARCHED[i] for i in range(1, len(G.SEARCHED) + 1))
+    check(searched == [2320, 2570, 2996, 4238], f"the queue's materials and results, once each: {searched}")
+    check(W.check is None, "the check is done")
+    lv = W.live[2320]
+    check(lv is not None and lv.avg == 36 and lv.low == 12, f"thread for 35: 5 at 12c and 30 at 40c, 36c each: {lv and (lv.avg, lv.low)}")
+    queue = [(G.QUEUE[i].spell, G.QUEUE[i].n) for i in range(1, len(G.QUEUE) + 1)]
+    check(queue == [(3, 5)], f"the bag (sells for 3s now, was 5s 20c) is taken out: {queue}")
+    st = W.status and W.status[1] or ""
+    check("Checked 4 items at the auction house just now." in st, f"the message: {st}")
+    check("Linen Bag: sells for 3s now (was 5s 20c)" in st, f"names the bag and why: {st}")
+    check("Good: Linen Shirt" in st and "Mats for 5: 3s 60c at today's listings (the table said 2s 40c)." in st, f"the shirt: {st}")
+    check("5 vs 2 listed" in st, f"the sell side: {st}")
+    check(f.undo.shown, "Undo shows")
+    check(DB.houses[G.MOCK_HOUSE]["items"][4238][1] == 300, "the bag's fresh price replaces the scan's")
+    check("Check prices before you buy." not in f.sum.text, f"checked: no nudge: {f.sum.text}")
+    W.undoCheck()
+    queue = sorted((G.QUEUE[i].spell, G.QUEUE[i].n) for i in range(1, len(G.QUEUE) + 1))
+    check(queue == [(2, 10), (3, 5)], f"Undo puts the bag back: {queue}")
+    check(not f.undo.shown, "Undo is gone after use")
+
+    # a block in the middle stops the check, the queue as it was
+    ns.ahq.browse = lua.eval("function() end")
+    W.checkPrices()
+    check(W.check is not None and "Checking" in f.check.label.text, f"checking: {f.check.label.text}")
+    fire = lua.eval("function(h, f, e, a) return pcall(h, f, e, a) end")
+    for f_ in lua.eval("MOCK_FRAMES").values():
+        h = f_.scripts and f_.scripts.OnEvent
+        if h:
+            fire(h, f_, "ADDON_ACTION_BLOCKED", "EverlookDBAuctions")
+    check(W.check is None and W.status and "blocked" in W.status[1], f"a block stops it: {W.status and W.status[1]}")
+    check(len(G.QUEUE) == 2, "the queue is as it was")
     return failures
 
 

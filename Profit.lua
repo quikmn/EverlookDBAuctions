@@ -18,7 +18,8 @@ Pr.MAX_DEPTH = 8        -- how deep materials are broken down (bolts into cloth;
 
 -- A context for one pass: ctx = { recipes = { [itemID made] = { mats = { { id, need } }, makes, rid, name } },
 -- price = fn(id) -> copper each, when seen (nil when unknown), cut = 0.05, craftMats = true (false: buy everything),
--- info = fn(id) -> skill, profession (optional) }.
+-- info = fn(id) -> skill, profession (optional), paid = { [id] = { unit, q, c, t } } (what you paid lately, from
+-- Pr.paidPrices: a material you bought costs that, not the market price) }.
 function Pr.context(opts)
   local ctx = {}
   for k, v in pairs(opts or {}) do ctx[k] = v end
@@ -39,19 +40,20 @@ local costOf
 -- What one craft of r takes, at the cheapest way to get each material: copper, how many materials have no price, the
 -- ids without a price, the oldest price used, and whether a loop was cut on the way.
 local function craftCost(ctx, r, depth)
-  local total, unpriced, missing, oldest, cut = 0, 0, {}, nil, false
+  local total, unpriced, missing, oldest, cut, paidIn = 0, 0, {}, nil, false, false
   for _, m in ipairs(r.mats or {}) do
     local c, sub = costOf(ctx, m[1], depth + 1)
     cut = cut or sub
     if c.cost then
       total = total + c.cost * (m[2] or 1)
       oldest = older(oldest, c.oldest)
+      paidIn = paidIn or c.paid ~= nil or c.paidIn or false
     else
       unpriced = unpriced + 1
       for _, id in ipairs(c.missing) do missing[#missing + 1] = id end
     end
   end
-  return total, unpriced, missing, oldest, cut
+  return total, unpriced, missing, oldest, cut, paidIn
 end
 
 -- The cheapest way to get one of an item: { cost = copper or nil, how = "buy"/"craft"/nil, oldest = when the
@@ -60,6 +62,13 @@ end
 function costOf(ctx, id, depth)
   local known = ctx.memo[id]
   if known then return known, false end
+  -- bought lately: what you paid is what it costs (you have them), whatever the market says now
+  local pd = ctx.paid and ctx.paid[id]
+  if pd and pd.unit then
+    known = { cost = pd.unit, how = "buy", paid = pd, missing = {} }
+    ctx.memo[id] = known
+    return known, false
+  end
   local buy, at = ctx.price(id)
   local best = buy and { cost = buy, how = "buy", oldest = at, missing = {} } or nil
   local r = ctx.craftMats ~= false and ctx.recipes[id]
@@ -69,12 +78,12 @@ function costOf(ctx, id, depth)
       cut = true
     else
       ctx.busy[id] = true
-      local total, unpriced, missing, oldest, sub = craftCost(ctx, r, depth or 0)
+      local total, unpriced, missing, oldest, sub, paidIn = craftCost(ctx, r, depth or 0)
       ctx.busy[id] = nil
       cut = sub
       local each = unpriced == 0 and total / math.max(r.makes or 1, 0.01) or nil
       if each and (not best or each < best.cost) then
-        best = { cost = each, how = "craft", oldest = oldest, missing = {} }
+        best = { cost = each, how = "craft", oldest = oldest, missing = {}, paidIn = paidIn or nil }
       elseif not best then
         best = { missing = #missing > 0 and missing or { id } }
       end
@@ -89,13 +98,16 @@ function Pr.unitCost(ctx, id) return (costOf(ctx, id, 0)) end
 
 -- One recipe's row: { id (made), rid, name, makes, cost (copper per craft), unpriced, missing, approx, low (AH price
 -- each of what it makes), lowAt, sale (what one craft's yield brings after the cut), profit, margin (profit / cost),
--- oldest (the oldest price used), skill, profession, mats = { { id, need, each, how } } }.
+-- oldest (the oldest price used), skill, profession, paid (true when a material's cost is what you paid), mats =
+-- { { id, need, each, how, paid = { unit, q, c, t } (bought lately), paidIn (made from such), market (AH price each) } } }.
 function Pr.row(ctx, out, r)
   ctx.busy[out] = true   -- a loop back to what is being made is cut
   local row = { id = out, rid = r.rid, name = r.name, makes = r.makes or 1, cost = 0, unpriced = 0, missing = {}, mats = {} }
   for _, m in ipairs(r.mats or {}) do
     local c = costOf(ctx, m[1], 1)
-    row.mats[#row.mats + 1] = { id = m[1], need = m[2] or 1, each = c.cost, how = c.how }
+    row.mats[#row.mats + 1] = { id = m[1], need = m[2] or 1, each = c.cost, how = c.how, paid = c.paid, paidIn = c.paidIn,
+      market = c.paid and (ctx.price(m[1])) or nil }
+    if c.paid or c.paidIn then row.paid = true end
     if c.cost then
       row.cost = row.cost + c.cost * (m[2] or 1)
       row.oldest = older(row.oldest, c.oldest)
@@ -116,6 +128,90 @@ function Pr.row(ctx, out, r)
   end
   if ctx.info then row.skill, row.profession = ctx.info(out) end
   return row
+end
+
+---------------------------------------------------------------------------------------------------------------------
+-- What you paid, and Check prices
+
+Pr.PAID_DAYS = 3     -- materials bought this lately cost what you paid
+Pr.DROP = 0.3        -- Check prices: a result selling this much below what the page showed is taken out of the queue
+Pr.THIN = 0.15       -- Check prices: a margin under this is "thin"
+
+-- What you paid for each item lately, from the AH log (db.bought): { [id] = { unit = copper each (the average over
+-- the purchases), q, c (copper in all), t = the newest purchase } }. Only purchases at this auction house (house =
+-- "Realm-Side"; nil: any), within `days` of now.
+function Pr.paidPrices(bought, house, now, days)
+  local since = (tonumber(now) or 0) - (tonumber(days) or Pr.PAID_DAYS) * 86400
+  local out = {}
+  for _, e in ipairs(type(bought) == "table" and bought or {}) do
+    local id, q, c, t = tonumber(e.id), tonumber(e.q), tonumber(e.c), tonumber(e.t)
+    if id and q and q > 0 and c and c > 0 and t and t >= since and (not house or not e.h or e.h == house) then
+      local p = out[id] or { q = 0, c = 0 }
+      p.q, p.c = p.q + q, p.c + c
+      if not p.t or t > p.t then p.t = t end
+      out[id] = p
+    end
+  end
+  for _, p in pairs(out) do p.unit = p.c / p.q end
+  return out
+end
+
+-- Whether a queued recipe turned bad at today's prices: "drop" (what it makes sells for more than Pr.DROP below
+-- what the page showed), "loss" (no profit any more), or nil (still good, or no price to tell by).
+function Pr.verdict(before, after, drop)
+  if not (after and after.low) then return nil end
+  drop = tonumber(drop) or Pr.DROP
+  if before and before.low and after.low < before.low * (1 - drop) then return "drop" end
+  if after.profit and after.profit <= 0 then return "loss" end
+  return nil
+end
+
+-- The Check prices message: items = { { name, n (crafts), made (items it makes), verdict, was, now (lowest price of
+-- what it makes, before and now), profit (all crafts, now), costNow (materials of all crafts at today's listings),
+-- costWas (what the table said), margin (profit / cost, now), listed (of what it makes, now), short (a material with
+-- fewer listed than needed) }. Each recipe gets a verdict: good, thin (a margin under Pr.THIN) or not worth it.
+-- money(copper) -> text. Returns the lines (a heading for each group) and the names taken out.
+function Pr.checkLines(items, money)
+  money = money or Pr.short
+  local out, gone, good = {}, {}, {}
+  for _, it in ipairs(items or {}) do
+    if it.verdict then gone[#gone + 1] = it else good[#good + 1] = it end
+  end
+  local function sign(c) return (c > 0 and "+" or "") .. money(c) end
+  if #gone > 0 then
+    local parts = {}
+    for _, it in ipairs(gone) do
+      if it.verdict == "drop" then
+        parts[#parts + 1] = ("%s: sells for %s now (was %s)"):format(it.name, money(it.now), money(it.was))
+      else
+        parts[#parts + 1] = ("%s: %s profit at today's prices"):format(it.name, sign(it.profit or 0))
+      end
+    end
+    out[#out + 1] = "Not worth it, taken out of the queue: " .. table.concat(parts, "; ") .. "."
+  end
+  for _, it in ipairs(good) do
+    local line
+    if it.profit and it.margin and it.margin < Pr.THIN then
+      line = ("Thin: %s, %s profit (%d%% margin) at today's prices."):format(it.name, sign(it.profit),
+        math.floor(it.margin * 100 + 0.5))
+    elseif it.profit then
+      line = ("Good: %s, %s profit at today's prices."):format(it.name, sign(it.profit))
+    else
+      line = ("%s: no price to check it by."):format(it.name)
+    end
+    local was, now = tonumber(it.costWas), tonumber(it.costNow)
+    if was and now and math.abs(now - was) >= math.max(100, was * 0.15) then
+      line = line .. (" Mats for %d: %s at today's listings (the table said %s)."):format(it.n or 1, money(now), money(was))
+    end
+    if it.short then line = line .. (" Not enough %s listed for all of them."):format(it.short) end
+    if it.listed and it.made and it.made > it.listed then
+      line = line .. (" %d vs %d listed: selling them all may take a while or lower the price."):format(it.made, it.listed)
+    end
+    out[#out + 1] = line
+  end
+  local names = {}
+  for _, it in ipairs(gone) do names[#names + 1] = it.name end
+  return out, names
 end
 
 -- Can a crafter make one craft of r now? count(id) -> how many of the material they have.
