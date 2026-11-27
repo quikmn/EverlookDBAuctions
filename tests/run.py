@@ -4460,6 +4460,35 @@ def disenchanting():
     fire(de_frame, "LOOT_READY")
     check(len(G.EverlookDBAuctionsDB.deLog) == 4, "loot after another spell isn't logged")
 
+    # the bag click didn't pass through UseContainerItem and the cast has no target name: the locked item tells it
+    lua.execute("""
+      LOCKED = true
+      C_Container.GetContainerItemInfo = function(bag, slot)
+        if bag == 0 and slot == 1 and BAG_HAS_SWORD ~= false then return { hyperlink = SWORD, isLocked = LOCKED } end
+      end
+      C_Container.GetContainerItemLink = function(bag, slot) if bag == 0 and slot == 1 and BAG_HAS_SWORD ~= false then return SWORD end end
+    """)
+    fire(de_frame, "UNIT_SPELLCAST_SENT", "player", "", "cast-3", 13262)
+    fire(de_frame, "UNIT_SPELLCAST_START", "player", "cast-3", 13262)
+    fire(de_frame, "UNIT_SPELLCAST_SUCCEEDED", "player", "cast-3", 13262)
+    lua.execute("LOOT = { { 10940, 3 } }")
+    fire(de_frame, "LOOT_READY")
+    log = G.EverlookDBAuctionsDB.deLog
+    check(len(log) == 5 and log[5].item == 727 and log[5].mats[10940] == 3, f"the locked item is the one disenchanted: {len(log)}")
+    # nothing locked: the item that left the bags since the cast began
+    lua.execute("LOCKED = false")
+    fire(de_frame, "UNIT_SPELLCAST_SENT", "player", "", "cast-4", 13262)
+    fire(de_frame, "UNIT_SPELLCAST_SUCCEEDED", "player", "cast-4", 13262)
+    lua.execute("BAG_HAS_SWORD = false; LOOT = { { 10938, 1 } }")
+    fire(de_frame, "LOOT_READY")
+    log = G.EverlookDBAuctionsDB.deLog
+    check(len(log) == 6 and log[6].item == 727 and log[6].mats[10938] == 1, f"the item gone from the bags: {len(log)}")
+    st = G.EverlookDBAuctionsDB.deSteps
+    check(st.cast == 2 and st.done == 3 and st.logged == 3 and st.item == 2, f"the steps counted: {dict(st)}")
+    check("logged 3" in ns.deLog.stepsLine(), ns.deLog.stepsLine())
+    lua.execute("BAG_HAS_SWORD = nil; LOCKED = false; LOOT = {}; local log = EverlookDBAuctionsDB.deLog; log[6] = nil; log[5] = nil")
+    ns.deLog.changed()
+
     # the cap: the newest 5000
     lua.execute("""
       local log = EverlookDBAuctionsDB.deLog

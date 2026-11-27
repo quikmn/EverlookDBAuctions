@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Disenchanting: your disenchants are now logged. The addon didn't always notice which item you were disenchanting, so nothing got logged and your own results never showed on tooltips. `/dv status` now also says how many disenchants it has seen.
+
 ## v0.36.5 (2026-11-27)
 - Buy this list: fixed an error (shown by BugSack) when the auction house was busy as you pressed Get the price. The game only lets the price be asked with a click, so once the auction house is ready the panel says so and the next click asks.
 
