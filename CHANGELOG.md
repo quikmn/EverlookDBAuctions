@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.36.8 (2026-11-27)
 - Disenchanting: more of your disenchants get logged. The addon now also tells the item by the one under your cursor, by the lock the game puts on it, or by what left your bags once you took the materials. `/dv status` says which way it was told, or what the cast was on when it couldn't tell.
 
 ## v0.36.7 (2026-11-27)
