@@ -55,8 +55,10 @@ end
 function C.meKey() return keyOf(C.who()) end
 
 -- Reads this character into its saved record. level: the new level (PLAYER_LEVEL_UP says it before UnitLevel does).
+-- atLogout: by then the game has often taken the gear off already (every slot reads empty), and saving that wiped
+-- every alt's gear (2026-11-27); an empty read at logout keeps the gear read during play.
 -- Returns the record, or nil while the game doesn't say who this is.
-function C.record(level)
+function C.record(level, atLogout)
   local name, realm, realmID = C.who()
   local key = keyOf(name, realm, realmID)
   if not key then return nil end
@@ -78,17 +80,24 @@ function C.record(level)
   if level and level > 0 then rec.level = level end
   -- the gear: a slot the game hides keeps what was saved; an empty slot is empty
   local items = type(rec.items) == "table" and rec.items or {}
+  local read, wears = {}, false
   for slot = 1, 19 do
     local okL, link = pcall(GetInventoryItemLink, "player", slot)
     if okL then
       if link == nil then
         -- an item the game hasn't loaded yet has an ID but no link: keep what was saved
         local okI, id = pcall(GetInventoryItemID, "player", slot)
-        if not (okI and id ~= nil) then items[slot] = nil end
+        if okI and id ~= nil then wears = true else read[slot] = false end
       elseif not isSecret(link) and type(link) == "string" then
-        items[slot] = link
+        read[slot] = link
+        wears = true
+      else
+        wears = true
       end
     end
+  end
+  if wears or not atLogout then
+    for slot, v in pairs(read) do items[slot] = v or nil end
   end
   rec.items = items
   -- talents: only the ranks taken, to keep it small
@@ -187,7 +196,7 @@ end
 if CreateFrame then
   local ev = CreateFrame("Frame")
   for _, e in ipairs({ "PLAYER_LOGIN", "PLAYER_ENTERING_WORLD", "PLAYER_EQUIPMENT_CHANGED", "PLAYER_LEVEL_UP",
-      "CHARACTER_POINTS_CHANGED", "PLAYER_LOGOUT" }) do
+      "CHARACTER_POINTS_CHANGED", "TRAIT_CONFIG_UPDATED", "PLAYER_LOGOUT" }) do
     pcall(ev.RegisterEvent, ev, e)
   end
   local queued = false
@@ -198,7 +207,7 @@ if CreateFrame then
   end
   ev:SetScript("OnEvent", function(_, e, a)
     if e == "PLAYER_LOGOUT" then
-      pcall(C.record)
+      pcall(C.record, nil, true)
     elseif e == "PLAYER_LEVEL_UP" then
       pcall(C.record, a)
     elseif e == "PLAYER_LOGIN" or e == "PLAYER_ENTERING_WORLD" then

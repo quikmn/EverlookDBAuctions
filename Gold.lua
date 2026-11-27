@@ -53,7 +53,29 @@ function G.store(d)
   local s = d.goldDays
   if type(s) ~= "table" then s = { v = G.VERSION, chars = {} }; d.goldDays = s end
   if type(s.chars) ~= "table" then s.chars = {} end
+  if not s.zeroFixed then G.dropWipedDays(s) end
   return s
+end
+
+-- Up to 0.36.6 a logout could write an alt's day as 0 gold (the game had emptied it already): those 0 days go, once,
+-- for the characters whose saved record shows that wipe (Inventory.lua's I.unwipe marks them `wiped`).
+function G.dropWipedDays(s)
+  local I = ns.inventory
+  local inv = I and I.store and I.store()
+  if type(inv) ~= "table" or type(inv.chars) ~= "table" then return 0 end
+  s.zeroFixed = true
+  local n = 0
+  for key, e in pairs(s.chars) do
+    local rec = inv.chars[key]
+    if type(e) == "table" and type(e.d) == "table" and type(rec) == "table" and rec.wiped then
+      local last
+      for day, c in pairs(e.d) do
+        if c == 0 then e.d[day] = nil; n = n + 1 elseif not last or day > last then last = day end
+      end
+      e.last = last
+    end
+  end
+  return n
 end
 
 -- 20261125 for a time on 25 November 2026 (local time)
@@ -93,10 +115,12 @@ local function meRec()
   return key and s and s.chars[key], key
 end
 
--- Reads this character's gold and writes today's point. True when written.
-function G.sample(t)
+-- Reads this character's gold and writes today's point. True when written. atLogout: by then the game often says 0
+-- copper (2026-11-27: an alt's days all 0 although it had gold), so a 0 at logout keeps the point read during play.
+function G.sample(t, atLogout)
   local c = tonumber(try(GetMoney))
   if not c then return false end
+  if atLogout and c <= 0 then return false end
   local s = G.store()
   local rec, key = meRec()
   if not s or not key then return false end
@@ -998,7 +1022,7 @@ if CreateFrame then
   local ev = CreateFrame("Frame")
   for _, e in ipairs({ "PLAYER_ENTERING_WORLD", "PLAYER_MONEY", "PLAYER_LOGOUT" }) do pcall(ev.RegisterEvent, ev, e) end
   ev:SetScript("OnEvent", function(_, e)
-    if e == "PLAYER_LOGOUT" then pcall(G.sample)
+    if e == "PLAYER_LOGOUT" then pcall(G.sample, nil, true)
     elseif e == "PLAYER_ENTERING_WORLD" then sampleSoon(4)
     else sampleSoon(2) end
   end)

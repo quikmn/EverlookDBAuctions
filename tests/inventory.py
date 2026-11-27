@@ -253,4 +253,53 @@ def inventory(source_of, vendor_setup):
     # forgetting a character (Gear upgrades' Forget)
     ns.upChars.forget("Old-6946")
     check(s.chars["Old-6946"] is None, "forgotten with Gear upgrades' Forget")
+
+    # logout: the game has often emptied the bags, the gear and the gold by then (2026-11-27: every alt saved with
+    # nothing and 0 gold); an empty read at logout keeps what was read during play
+    G.BAGS = lua.eval("{ [0] = { { 2589, 20 } }, [1] = { { 7001, 1 } } }")
+    G.WORN = lua.eval("{ [16] = 3000 }")
+    G.MONEY = 7896
+    fire("BAG_UPDATE_DELAYED"); fire("PLAYER_MONEY"); fire("PLAYER_EQUIPMENT_CHANGED")
+    check(me.bags[2589] == 20 and me.money == 7896 and me.worn[3000] == 1, "read during play")
+    G.BAGS = lua.eval("{}")
+    G.WORN = lua.eval("{}")
+    G.MONEY = 0
+    fire("PLAYER_LOGOUT")
+    check(me.bags is not None and me.bags[2589] == 20, f"an empty read at logout keeps the bags: {me.bags}")
+    check(me.worn is not None and me.worn[3000] == 1, "an empty read at logout keeps the gear")
+    check(me.money == 7896, f"0 gold at logout keeps the gold: {me.money}")
+    I.changed()
+    mine = I.count(2589).chars[1]
+    check(mine.me and mine.bags == 20, f"what you have still counts it (shopping lists): {mine.bags}")
+    total, golds = I.gold()
+    check(any(golds[i].name == "Anna" and golds[i].money == 7896 for i in range(1, len(golds) + 1)), "the gold line keeps it")
+    # a real read at logout still counts (a sale or a trade in the last second)
+    G.BAGS = lua.eval("{ [0] = { { 2589, 5 } } }")
+    G.WORN = lua.eval("{ [16] = 3000, [1] = 3001 }")
+    G.MONEY = 8000
+    fire("PLAYER_LOGOUT")
+    check(me.bags[2589] == 5 and me.money == 8000 and me.worn[3001] == 1, "a logout read that found things is saved")
+    # during play, empty bags are empty (sold everything)
+    G.BAGS = lua.eval("{}")
+    fire("BAG_UPDATE_DELAYED")
+    check(me.bags is None, "empty bags during play are saved as empty")
+
+    # records already wiped by an older version: their 0 gold isn't real
+    lua2 = lua51.LuaRuntime(unpack_returned_tuples=True)
+    lua2.execute(source_of("tests/mock.lua"))
+    ns2 = lua2.table()
+    lua2.execute("""INVDB = { inv = { chars = {
+      ["Fake-6946"] = { name = "Fake", realmID = 6946, money = 0, moneyAt = 5, bagsAt = 5 },
+      ["Poor-6946"] = { name = "Poor", realmID = 6946, money = 0, bags = { [2589] = 1 } },
+      ["Isa-6946"] = { name = "Isa", realmID = 6946, money = 315581, bags = { [2589] = 1 } } } } }""")
+    ns2.db = lua2.eval("function() return INVDB end")
+    run2 = lua2.eval("function(src, name, ...) local f = assert(loadstring(src, name)); return f(...) end")
+    run2(source_of("Inventory.lua"), "Inventory.lua", "EverlookDBAuctions", ns2)
+    s2 = ns2.inventory.store()
+    fake = s2.chars["Fake-6946"]
+    check(fake.money is None and fake.wiped is True, "a wiped record (nothing worn, no bags, 0 gold) loses its 0 gold")
+    check(s2.chars["Poor-6946"].money == 0 and s2.chars["Isa-6946"].money == 315581, "other records keep their gold")
+    fake.money = 0
+    ns2.inventory.store()
+    check(fake.money == 0, "only once")
     return failures

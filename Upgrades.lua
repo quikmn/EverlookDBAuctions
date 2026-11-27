@@ -244,20 +244,102 @@ function U.findSpec(word, class)
 end
 
 -- The talent ranks of the player: { ["tab:tier:column"] = rank, ["name:<talent name>"] = rank }. The names are
--- English on English clients; the positions are wowsims' grid (very likely the game's), so both are tried.
-function U.readTalents()
-  local out = {}
-  if not (GetNumTalentTabs and GetNumTalents and GetTalentInfo) then return out end
-  local okTabs, tabs = pcall(GetNumTalentTabs)
-  for tab = 1, (okTabs and tabs or 0) do
-    local okN, n = pcall(GetNumTalents, tab)
-    for i = 1, (okN and n or 0) do
-      local okT, name, _, tier, column, rank = pcall(GetTalentInfo, tab, i)
-      if okT and tier and column then out[tab .. ":" .. tier .. ":" .. column] = rank or 0 end
-      if okT and type(name) == "string" then out["name:" .. name] = rank or 0 end
+-- English on English clients; the positions are the classic grid (tier and column from 1), so both are tried.
+-- WoW Forever has no GetNumTalentTabs/GetTalentInfo: its talents are the trait system (C_ClassTalents, C_Traits),
+-- one class tree holding the three talent trees side by side, read here node by node (the site's calculator reads
+-- the same layout from the game files). U.talentSource says which way worked: "classic", "traits" or nil (none:
+-- the Gear upgrades settings then say the talents can't be read, instead of silently adjusting to none).
+local function plain(v)
+  local secret = issecretvalue
+  if v == nil or (secret and secret(v)) then return nil end
+  return v
+end
+local function pc(fn, ...)
+  if type(fn) ~= "function" then return nil end
+  local res = { pcall(fn, ...) }
+  if not res[1] then return nil end
+  return unpack(res, 2, table.maxn(res))
+end
+
+local function classicTalents(out)
+  if not (GetNumTalentTabs and GetNumTalents and GetTalentInfo) then return false end
+  local tabs = tonumber(plain(pc(GetNumTalentTabs))) or 0
+  local any = false
+  for tab = 1, tabs do
+    for i = 1, tonumber(plain(pc(GetNumTalents, tab))) or 0 do
+      local name, _, tier, column, rank = pc(GetTalentInfo, tab, i)
+      name, tier, column, rank = plain(name), plain(tier), plain(column), plain(rank)
+      if tier and column then out[tab .. ":" .. tier .. ":" .. column] = rank or 0; any = true end
+      if type(name) == "string" then out["name:" .. name] = rank or 0; any = true end
     end
   end
-  return out
+  return any
+end
+
+-- the trait tree's grid (TraitNode positions): one band per tree, 4 columns and 7 rows of 600 units each
+U.TRAIT_BANDS, U.TRAIT_TOP, U.TRAIT_STEP = { 1020, 5020, 9080 }, 2130, 600
+function U.traitCell(x, y)
+  x, y = tonumber(x), tonumber(y)
+  if not (x and y) then return nil end
+  local B, step = U.TRAIT_BANDS, U.TRAIT_STEP
+  local tree
+  for i = #B, 1, -1 do if x >= B[i] - step / 2 then tree = i; break end end
+  if not tree then return nil end
+  local cx, cy = x - B[tree], y - U.TRAIT_TOP
+  local col, row = math.floor((cx + step / 2) / step), math.floor((cy + step / 2) / step)
+  if math.abs(cx - col * step) > 30 or math.abs(cy - row * step) > 30 then return nil end
+  if col < 0 or col > 3 or row < 0 or row > 6 then return nil end
+  return tree, row + 1, col + 1
+end
+
+local function traitTalents(out)
+  if not (C_ClassTalents and C_Traits and C_ClassTalents.GetActiveConfigID and C_Traits.GetConfigInfo
+      and C_Traits.GetTreeNodes and C_Traits.GetNodeInfo) then return false end
+  local configID = plain(pc(C_ClassTalents.GetActiveConfigID))
+  local config = configID and pc(C_Traits.GetConfigInfo, configID)
+  local treeID = type(config) == "table" and type(config.treeIDs) == "table" and plain(config.treeIDs[1])
+  if not treeID then return false end
+  local nodes = pc(C_Traits.GetTreeNodes, treeID)
+  if type(nodes) ~= "table" then return false end
+  local spellName = (C_Spell and C_Spell.GetSpellName) or GetSpellInfo
+  local any = false
+  for _, nodeID in ipairs(nodes) do
+    local info = pc(C_Traits.GetNodeInfo, configID, nodeID)
+    if type(info) == "table" then
+      local rank = tonumber(plain(info.activeRank)) or tonumber(plain(info.currentRank))
+        or tonumber(plain(info.ranksPurchased)) or 0
+      local tree, tier, col = U.traitCell(plain(info.posX), plain(info.posY))
+      if tree then out[tree .. ":" .. tier .. ":" .. col] = rank; any = true end
+      local entryID = type(info.entryIDs) == "table" and plain(info.entryIDs[1])
+      local entry = entryID and C_Traits.GetEntryInfo and pc(C_Traits.GetEntryInfo, configID, entryID)
+      local defID = type(entry) == "table" and plain(entry.definitionID)
+      local def = defID and C_Traits.GetDefinitionInfo and pc(C_Traits.GetDefinitionInfo, defID)
+      if type(def) == "table" then
+        local name = plain(def.overrideName)
+        if type(name) ~= "string" or name == "" then
+          local sid = plain(def.spellID)
+          name = sid and plain(pc(spellName, sid))
+        end
+        if type(name) == "string" and name ~= "" then out["name:" .. name] = rank; any = true end
+      end
+    end
+  end
+  return any
+end
+
+function U.readTalents()
+  local out = {}
+  if classicTalents(out) then U.talentSource = "classic"; return out end
+  out = {}
+  if traitTalents(out) then U.talentSource = "traits"; return out end
+  U.talentSource = nil
+  return {}
+end
+
+-- Whether this client tells the talents (it asks again while it doesn't).
+function U.talentsReadable()
+  if U.talentSource == nil then pcall(U.readTalents) end
+  return U.talentSource ~= nil
 end
 
 -- The built-in weights of a spec adjusted to talent ranks (rankOf(tab, tier, column) -> rank). Returns the weights
@@ -1343,14 +1425,14 @@ end
 if CreateFrame then
   local ev = CreateFrame("Frame")
   for _, e in ipairs({ "PLAYER_EQUIPMENT_CHANGED", "CHARACTER_POINTS_CHANGED", "PLAYER_TALENT_UPDATE",
-      "PLAYER_LEVEL_UP", "PLAYER_REGEN_ENABLED", "GET_ITEM_INFO_RECEIVED" }) do
+      "TRAIT_CONFIG_UPDATED", "PLAYER_LEVEL_UP", "PLAYER_REGEN_ENABLED", "GET_ITEM_INFO_RECEIVED" }) do
     pcall(ev.RegisterEvent, ev, e)
   end
   local pendingInfo = false
   ev:SetScript("OnEvent", function(_, e)
     if e == "PLAYER_EQUIPMENT_CHANGED" or e == "PLAYER_LEVEL_UP" then
       U.wornChanged()
-    elseif e == "CHARACTER_POINTS_CHANGED" or e == "PLAYER_TALENT_UPDATE" then
+    elseif e == "CHARACTER_POINTS_CHANGED" or e == "PLAYER_TALENT_UPDATE" or e == "TRAIT_CONFIG_UPDATED" then
       U.changed()
     elseif e == "PLAYER_REGEN_ENABLED" then
       U.resume()

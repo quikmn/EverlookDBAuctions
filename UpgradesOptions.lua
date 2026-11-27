@@ -45,7 +45,15 @@ function O.weightsText(spec)
     for k in pairs(meta.mana or {}) do if w[k] then mana[#mana + 1] = U.NAME[k] or k end end
     table.sort(mana)
     if #mana > 0 then notes = notes .. "\nDepends on your mana: " .. table.concat(mana, ", ") .. " (the fight ends before you run out; never counted against an item)." end
-    if not meta.fb then notes = notes .. "\nSimulated weights already include your build's talents." end
+    if not meta.fb then notes = notes .. "\nSimulated weights already include your build's talents."
+    elseif U.get("talents") then
+      -- say it when the talents aren't known, instead of quietly adjusting to none
+      if U.ctx then
+        if (tonumber(U.ctx.level) or 0) >= 10 and not next(U.ctx.talents or {}) then notes = notes .. "\nNo talents saved for " .. tostring(U.ctx.name or "this character") .. " yet, so these weights aren't adjusted to them. They're read when it logs in." end
+      elseif not U.testTalents and not U.talentsReadable() then
+        notes = notes .. "\nYour talents can't be read on this client, so these weights aren't adjusted to them."
+      end
+    end
     if spec.role == "tank" then notes = notes .. "\nTanks: the weights are for survival; threat is shown beside it in tooltips." end
   end
   return head .. "\n" .. (#parts > 0 and table.concat(parts, ", ") or "no stats") .. tail .. notes

@@ -64,7 +64,22 @@ function I.store()
   if type(s) ~= "table" then s = { v = I.VERSION }; d.inv = s end
   if type(s.chars) ~= "table" then s.chars = {} end
   if type(s.guilds) ~= "table" then s.guilds = {} end
+  if not s.unwiped then s.unwiped = true; I.unwipe(s) end
   return s
+end
+
+-- Up to 0.36.6 a logout could save a character as wearing nothing, with empty bags and 0 gold (see I.logoutRead).
+-- Such a record's 0 gold is not real: it is dropped (the gold shows again from that character's next login) and the
+-- record marked `wiped`, so the Gold page can drop the 0-gold days that came from it.
+function I.unwipe(s)
+  local n = 0
+  for _, rec in pairs(s and s.chars or {}) do
+    if type(rec) == "table" and rec.money == 0 and not rec.bags and not rec.worn then
+      rec.money, rec.moneyAt, rec.wiped = nil, nil, true
+      n = n + 1
+    end
+  end
+  return n
 end
 
 -- Something changed: the caches go and the listeners hear it (once per batch of reads).
@@ -98,6 +113,7 @@ function I.me()
   if not s or not key then return nil, nil end
   local rec = s.chars[key]
   if type(rec) ~= "table" then rec = {}; s.chars[key] = rec end
+  rec.wiped = nil
   rec.name, rec.realmID = name, realmID or rec.realmID
   rec.realm = realm or rec.realm
   local f = text(try(UnitFactionGroup, "player"))
@@ -562,6 +578,20 @@ function I.seed(cdb)
   return n
 end
 
+-- The last read, at logout. By then the game has often emptied the bags, the gear and the gold already (they read
+-- as nothing and 0 copper), and saving that wiped every alt's items and gold (2026-11-27: Fake, Rm and Miy with no
+-- bags, no gear and 0 gold). So a logout read only counts when it found something; an empty one keeps what was read
+-- during play (every change is read a second after it happens, so nothing real is lost).
+function I.logoutRead(rec)
+  local t = {}
+  pcall(readBags, t)
+  if t.bags then rec.bags, rec.bagsAt = t.bags, t.bagsAt end
+  pcall(readMoney, t)
+  if t.money and t.money > 0 then rec.money, rec.moneyAt = t.money, t.moneyAt end
+  pcall(readWorn, t)
+  if t.worn then rec.worn = t.worn end
+end
+
 ---------------------------------------------------------------------------------------------------------------------
 -- Events: every read waits for a quiet moment, and a burst of events is one read
 
@@ -610,7 +640,7 @@ if CreateFrame then
       I.mark("bags", 3); I.mark("worn"); I.mark("money")
     elseif e == "PLAYER_LOGOUT" then
       local rec = I.me()
-      if rec then pcall(readBags, rec); pcall(readMoney, rec); pcall(readWorn, rec) end
+      if rec then pcall(I.logoutRead, rec) end
     elseif e == "BAG_UPDATE_DELAYED" then
       I.mark("bags")
       if I.bankOpen then I.mark("bank") end

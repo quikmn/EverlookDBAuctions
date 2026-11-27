@@ -6084,6 +6084,57 @@ def upgrades():
     U.testTalents = None
     U.changed()
 
+    # reading the talents: WoW Forever has no GetNumTalentTabs/GetTalentInfo (every character saved talents = {}),
+    # its talents are trait nodes (C_ClassTalents, C_Traits) on a grid: three bands of 4 columns, 7 rows of 600 units
+    check(U.readTalents() is not None and U.talentsReadable() is False, "no talent API: none readable")
+    check("talents can't be read on this client" in O.weightsText(fury), f"the weights say so: {O.weightsText(fury)}")
+    check(U.traitCell(5020 + 600, 2130) == (2, 1, 2) and U.traitCell(1020, 2130 + 6 * 600) == (1, 7, 1), "trait grid: tree, tier, column")
+    check(U.traitCell(1020 + 300, 2130) is None and U.traitCell(99999, 99999) is None, "off the grid: no cell")
+    lua.execute("""
+      C_ClassTalents = { GetActiveConfigID = function() return 7 end }
+      TRAIT_NODES = {
+        [101] = { posX = 5020, posY = 2130, activeRank = 5, entryIDs = { 1101 } },        -- Cruelty, Fury row 1
+        [102] = { posX = 1020 + 600, posY = 2130 + 600, activeRank = 0, entryIDs = { 1102 } },
+        [103] = { posX = 9080, posY = 2120, currentRank = 2, entryIDs = { 1103 } },        -- a few units off is fine
+      }
+      C_Traits = {
+        GetConfigInfo = function(id) if id == 7 then return { treeIDs = { 70 } } end end,
+        GetTreeNodes = function(tree) if tree == 70 then return { 101, 102, 103 } end end,
+        GetNodeInfo = function(config, node) return TRAIT_NODES[node] end,
+        GetEntryInfo = function(config, entry) return { definitionID = entry + 1000 } end,
+        GetDefinitionInfo = function(def)
+          if def == 2101 then return { spellID = 12320 } end
+          if def == 2102 then return { overrideName = "Deflection" } end
+          return { spellID = 999 }
+        end,
+      }
+      local oldSpell = C_Spell
+      C_Spell = setmetatable({ GetSpellName = function(id)
+        if id == 12320 then return "Cruelty" end
+        if id == 999 then return "Shield Mastery" end
+        return oldSpell and oldSpell.GetSpellName and oldSpell.GetSpellName(id)
+      end }, { __index = oldSpell })
+    """)
+    t = U.readTalents()
+    check(U.talentSource == "traits" and t["name:Cruelty"] == 5 and t["2:1:1"] == 5, f"trait ranks by name and place: {U.talentSource}")
+    check(t["name:Deflection"] == 0 and t["1:2:2"] == 0 and t["name:Shield Mastery"] == 2 and t["3:1:1"] == 2,
+          "an override name, a rank not taken, currentRank")
+    U.changed()
+    w, why = U.weights(fury)[:2]
+    check(abs(w.crit - 1.5 * 1.1) < 1e-9 and why.crit == "Cruelty", f"the weights follow the trait talents: {w.crit}")
+    check("can't be read" not in O.weightsText(fury), "no note once they're read")
+    lua.execute("SECRET_RANK = {}; TRAIT_NODES[101].activeRank = SECRET_RANK; OLD_SECRET = issecretvalue; issecretvalue = function(v) return v == SECRET_RANK or (OLD_SECRET and OLD_SECRET(v)) or false end")
+    t = U.readTalents()
+    check(t["name:Cruelty"] == 0, "a rank the game hides reads as not taken")
+    lua.execute("C_ClassTalents = nil; C_Traits = nil; issecretvalue = OLD_SECRET")
+    U.readTalents()
+    # an alt saved before its talents could be read: the weights say so
+    U.ctx = lua.eval("{ key = 'Grom-1', name = 'Grom', class = 'WARRIOR', level = 40, items = {}, talents = {}, profile = {} }")
+    U.changed()
+    check("No talents saved for Grom yet" in O.weightsText(fury), f"an alt without saved talents: {O.weightsText(fury)}")
+    U.ctx = None
+    U.changed()
+
     # rich vs per gold, max and min, over a scan
     lua.execute("""
       DB.scans = { { realm = "Test", side = "Alliance", at = 1699990000, rows = {
@@ -6790,6 +6841,16 @@ def upgrades_alts():
     lua.execute('MOCK_INV[6] = nil')
     C.record()
     check(rec["items"][6] is None, "an empty slot is empty")
+    # logout: the game has often taken every item off by then (2026-11-27: every alt saved wearing nothing)
+    lua.execute('SAVED_INV = MOCK_INV; MOCK_INV = {}')
+    C.record(None, True)
+    check(rec["items"][1] == "item:201" and rec["items"][5] == "item:202", "an empty read at logout keeps the gear")
+    lua.execute('MOCK_INV = { [1] = "item:201" }')
+    C.record(None, True)
+    check(rec["items"][1] == "item:201" and rec["items"][5] is None, "a logout read that sees gear is saved")
+    lua.execute('MOCK_INV = SAVED_INV')
+    C.record()
+    check(rec["items"][5] == "item:202", "back during play")
     G.MOCK_NAME = "SECRET_NAME"
     G.SECRET.SECRET_NAME = True
     before = len(list(C.all().keys()))
@@ -7737,6 +7798,14 @@ def buy_list():
     check(f.go.text == "Get the price", f"the button asks again: {f.go.text}")
     click(f.go)
     check(len(calls("Start")) == 1, f"the next click asks: {len(calls('Start'))}")
+    # no answer in time because the auction house got busy: it waits for it, and its "ready" (no click) never asks
+    busy[0] = True
+    G.advance(9)
+    busy[0] = False
+    fire("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
+    check(len(calls("Start")) == 1 and f.go.text == "Get the price", f"a dropped ask waits for the next click: {len(calls('Start'))}, {f.go.text}")
+    click(f.go)
+    check(len(calls("Start")) == 2, "and that click asks")
     G.C_AuctionHouse.IsThrottledMessageSystemReady = real_ready
     W.stop()
     W.stop()
@@ -8648,6 +8717,26 @@ def gold():
     G_.MOCK_MONEY = G_.SECRET
     check(Gd.sample() is False and s.chars["Mara-1"].d[20261125] == 200000, "a secret value is never written")
     G_.MOCK_MONEY = 200000
+    # logout: the game often says 0 copper by then (2026-11-27: an alt's days all 0); that never overwrites the day
+    G_.MOCK_MONEY = 0
+    check(Gd.sample(None, True) is False and s.chars["Mara-1"].d[20261125] == 200000, "0 gold at logout keeps the day")
+    G_.MOCK_MONEY = 210000
+    check(Gd.sample(None, True) is True and s.chars["Mara-1"].d[20261125] == 210000, "real gold at logout is written")
+    G_.MOCK_MONEY = 200000
+    Gd.sample()
+    # days already written as 0 by an older version, for a record marked wiped (Inventory.lua): dropped, once
+    wd = lua.eval("""{ goldDays = { chars = {
+      ['Tok-1'] = { last = 20261125, d = { [20261123] = 0, [20261124] = 5000, [20261125] = 0 } },
+      ['Mara-1'] = { last = 20261125, d = { [20261125] = 0 } } } } }""")
+    lua.execute("INV.chars['Tok-1'].wiped = true")
+    ws = Gd.store(wd)
+    check(ws.chars["Tok-1"].d[20261123] is None and ws.chars["Tok-1"].d[20261125] is None and ws.chars["Tok-1"].d[20261124] == 5000
+          and ws.chars["Tok-1"].last == 20261124, "a wiped alt's 0 days go")
+    check(ws.chars["Mara-1"].d[20261125] == 0 and ws.zeroFixed, "a record not wiped keeps its 0")
+    ws.chars["Tok-1"].d[20261126] = 0
+    Gd.store(wd)
+    check(ws.chars["Tok-1"].d[20261126] == 0, "only once")
+    lua.execute("INV.chars['Tok-1'].wiped = nil")
     check(Gd.note(s, "Mara-1", None, -5) is None and Gd.note(s, None, None, 5) is None, "no negative gold, no key")
     # Tok: 10 days ago and 3 days ago; Mara: 5 days ago too; Far is on another realm
     Gd.note(s, "Tok-1", lua.eval("INV.chars['Tok-1']"), 50000, now - 10 * day)
