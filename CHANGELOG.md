@@ -1,5 +1,8 @@
 # EverlookDB Auctions
 
+## Unreleased
+- Disenchanting: more of your disenchants get logged. The addon now also tells the item by the one under your cursor, by the lock the game puts on it, or by what left your bags once you took the materials. `/dv status` says which way it was told, or what the cast was on when it couldn't tell.
+
 ## v0.36.7 (2026-11-27)
 - Your other characters' bags, gear and gold are no longer lost when you log out or switch characters. The game empties them as you leave, and the addon saved that. Now it keeps what it saw while you played. Log in once on each alt to fill in what was lost; the Gold page drops the wrong 0-gold days it saved for them.
 - Gear upgrades: "Adjust weights to my talents" now really reads your talents on WoW Forever. Before, it never saw any. If your talents can't be read, or an alt's talents aren't saved yet, the stat weights say so.

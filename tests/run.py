@@ -4486,6 +4486,56 @@ def disenchanting():
     st = G.EverlookDBAuctionsDB.deSteps
     check(st.cast == 2 and st.done == 3 and st.logged == 3 and st.item == 2, f"the steps counted: {dict(st)}")
     check("logged 3" in ns.deLog.stepsLine(), ns.deLog.stepsLine())
+    # the cursor on the item when the cast is sent (its tooltip is up): the item under it, if it's in the bags
+    lua.execute("""
+      CLOCK = 1000; function GetTime() return CLOCK end
+      LATER = {}; C_Timer = { After = function(s, fn) LATER[#LATER + 1] = fn end }
+      LOCKED = nil; BAG_HAS_SWORD = nil
+      TIP_SHOWN = true
+      GameTooltip = { IsShown = function() return TIP_SHOWN end, GetItem = function() return "Test Sword", SWORD end }
+    """)
+    fire(de_frame, "UNIT_SPELLCAST_SENT", "player", "", "cast-5", 13262)
+    fire(de_frame, "UNIT_SPELLCAST_SUCCEEDED", "player", "cast-5", 13262)
+    lua.execute("LOOT = { { 10940, 4 } }")
+    fire(de_frame, "LOOT_READY")
+    log = G.EverlookDBAuctionsDB.deLog
+    check(len(log) == 7 and log[7].mats[10940] == 4 and G.EverlookDBAuctionsDB.deSteps.via == "cursor",
+          f"the item under the cursor: {len(log)} {G.EverlookDBAuctionsDB.deSteps.via}")
+    # the lock the cast puts on the item, told by ITEM_LOCK_CHANGED (just before the cast is sent)
+    lua.execute("TIP_SHOWN = false; CLOCK = 1010")
+    fire(de_frame, "ITEM_LOCK_CHANGED", 0, 1)
+    fire(de_frame, "UNIT_SPELLCAST_SENT", "player", "", "cast-6", 13262)
+    fire(de_frame, "UNIT_SPELLCAST_SUCCEEDED", "player", "cast-6", 13262)
+    lua.execute("LOOT = { { 10940, 5 } }")
+    fire(de_frame, "LOOT_READY")
+    log = G.EverlookDBAuctionsDB.deLog
+    check(len(log) == 8 and log[8].mats[10940] == 5 and G.EverlookDBAuctionsDB.deSteps.via == "lock",
+          f"the item ITEM_LOCK_CHANGED told: {len(log)} {G.EverlookDBAuctionsDB.deSteps.via}")
+    # nothing tells it until the loot is taken and the item leaves the bags
+    lua.execute("CLOCK = 1020")
+    fire(de_frame, "UNIT_SPELLCAST_SENT", "player", "", "cast-7", 13262)
+    fire(de_frame, "UNIT_SPELLCAST_SUCCEEDED", "player", "cast-7", 13262)
+    lua.execute("LOOT = { { 10940, 6 } }")
+    fire(de_frame, "LOOT_READY")
+    check(len(G.EverlookDBAuctionsDB.deLog) == 8, "not logged while the item is still in the bags")
+    lua.execute("BAG_HAS_SWORD = false")
+    fire(de_frame, "LOOT_CLOSED")
+    log = G.EverlookDBAuctionsDB.deLog
+    check(len(log) == 9 and log[9].mats[10940] == 6 and G.EverlookDBAuctionsDB.deSteps.via == "bags after loot",
+          f"the item gone once the loot was taken: {len(log)}")
+    lua.execute("for _, fn in ipairs(LATER) do fn() end")
+    check(len(G.EverlookDBAuctionsDB.deLog) == 9, "the later look adds nothing more")
+    # never told: counted as unknown, with the cast's target
+    lua.execute("BAG_HAS_SWORD = nil; LATER = {}; CLOCK = 1030")
+    fire(de_frame, "UNIT_SPELLCAST_SENT", "player", "Odd Thing", "cast-8", 13262)
+    fire(de_frame, "UNIT_SPELLCAST_SUCCEEDED", "player", "cast-8", 13262)
+    lua.execute("LOOT = { { 10940, 1 } }")
+    fire(de_frame, "LOOT_READY")
+    lua.execute("for _, fn in ipairs(LATER) do fn() end")
+    st = G.EverlookDBAuctionsDB.deSteps
+    check(len(G.EverlookDBAuctionsDB.deLog) == 9 and st.noItem == 1 and "Odd Thing" in st.last,
+          f"unknown, with the target: {st.last}")
+    lua.execute("BAG_HAS_SWORD = nil; local log = EverlookDBAuctionsDB.deLog; log[9] = nil; log[8] = nil; log[7] = nil; GameTooltip = nil")
     lua.execute("BAG_HAS_SWORD = nil; LOCKED = false; LOOT = {}; local log = EverlookDBAuctionsDB.deLog; log[6] = nil; log[5] = nil")
     ns.deLog.changed()
 

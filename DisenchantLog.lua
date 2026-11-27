@@ -40,6 +40,12 @@ function D.step(k, why)
   db.deSteps[k] = (db.deSteps[k] or 0) + 1
   if why then db.deSteps.last = why end
 end
+-- Which way the item was told, the last time it was (target, cursor, lock, bags, ...).
+function D.via(how)
+  local db = saved()
+  db.deSteps = type(db.deSteps) == "table" and db.deSteps or {}
+  db.deSteps.via = how
+end
 function D.stepsLine()
   local st = saved().deSteps
   if type(st) ~= "table" then return "no disenchant seen since this version" end
@@ -47,7 +53,8 @@ function D.stepsLine()
   for _, k in ipairs({ "cast", "item", "done", "loot", "logged", "noItem", "noMats", "notDE" }) do
     if st[k] then parts[#parts + 1] = k .. " " .. st[k] end
   end
-  return table.concat(parts, ", ") .. (st.last and ("; last problem: " .. st.last) or "")
+  return table.concat(parts, ", ") .. (st.via and ("; item told by " .. st.via) or "")
+    .. (st.last and ("; last problem: " .. st.last) or "")
 end
 
 local DEFAULTS = { announce = false, breakdown = "always", observed = true, essenceCap = true }
@@ -179,7 +186,7 @@ end
 ---------------------------------------------------------------------------------------------------------------------
 -- Telling a disenchant
 
-local pending, awaitingLoot, before
+local pending, awaitingLoot, before, casting, lastTarget, afterLoot, lastLocked
 
 local function spellName(id)
   if C_Spell and C_Spell.GetSpellName then return C_Spell.GetSpellName(id) end
@@ -253,6 +260,29 @@ local function goneSince(before)
   end
 end
 
+-- The bag slot an item link is in (the tooltip under the cursor may be an old one: only a bag item counts).
+local function inBags(link)
+  if type(link) ~= "string" or not C_Container then return false end
+  local id = link:match("item:(%d+)")
+  for bag = 0, (NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4) do
+    for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
+      local l = C_Container.GetContainerItemLink(bag, slot)
+      if l and (l == link or (id and l:match("item:(%d+)") == id)) then return true end
+    end
+  end
+  return false
+end
+
+-- The item the cursor is on when the cast is sent: you clicked it with the Disenchant cursor, so its tooltip is up.
+local function hoveredItem()
+  local tip = rawget(_G, "GameTooltip")
+  if not (tip and tip.IsShown and tip:IsShown() and tip.GetItem) then return nil end
+  local okG, _, link = pcall(tip.GetItem, tip)
+  if not (okG and link and inBags(link)) then return nil end
+  local it = describe(link)
+  return it and it.item and mayDisenchant(it) and it or nil
+end
+
 local function findInBags(itemName)
   if not itemName or itemName == "" then return nil end
   for bag = 0, (NUM_TOTAL_EQUIPPED_BAG_SLOTS or NUM_BAG_SLOTS or 4) do
@@ -287,9 +317,10 @@ end
 local function readLoot()
   if not awaitingLoot or GetTime() - awaitingLoot.at > LOOT_WINDOW then awaitingLoot = nil; return end
   local it = awaitingLoot.item or goneSince(awaitingLoot.before)
+  if it and not awaitingLoot.item then D.via("bags") end
+  local before0 = awaitingLoot.before
   awaitingLoot = nil
   D.step("loot")
-  if not it then D.step("noItem", "which item it was wasn't known"); return end
   local mats = {}
   for i = 1, GetNumLootItems() do
     local link = GetLootSlotLink(i)
@@ -299,7 +330,26 @@ local function readLoot()
       mats[id] = (mats[id] or 0) + (quantity or 1)
     end
   end
-  if next(mats) then record(it, mats) else D.step("noMats", "the loot window was empty") end
+  if not next(mats) then D.step("noMats", "the loot window was empty") return end
+  if it then record(it, mats) return end
+  -- the item may leave the bags only once the loot is taken: look again then (LOOT_CLOSED, BAG_UPDATE_DELAYED)
+  afterLoot = { mats = mats, before = before0, at = GetTime(), target = lastTarget }
+  if C_Timer and C_Timer.After then C_Timer.After(LOOT_WINDOW, function() D.afterLoot(true) end) end
+end
+
+-- After the loot window: the item that has left the bags by now. final: the last look, then it counts as unknown.
+function D.afterLoot(final)
+  local a = afterLoot
+  if not a then return end
+  local it = goneSince(a.before)
+  if it then
+    afterLoot = nil
+    D.via("bags after loot")
+    record(it, a.mats)
+  elseif final or GetTime() - a.at > LOOT_WINDOW then
+    afterLoot = nil
+    D.step("noItem", "which item it was wasn't known (cast target \"" .. tostring(a.target or "") .. "\")")
+  end
 end
 
 if C_Container and C_Container.UseContainerItem and hooksecurefunc then
@@ -307,6 +357,7 @@ if C_Container and C_Container.UseContainerItem and hooksecurefunc then
     if SpellIsTargeting and SpellIsTargeting() then
       local it = describe(C_Container.GetContainerItemLink(bag, slot))
       pending = it and mayDisenchant(it) and it or nil
+      if pending then pending.via = "click" end
     end
   end)
 end
@@ -622,6 +673,9 @@ f:RegisterEvent("UNIT_SPELLCAST_FAILED")
 f:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
 f:RegisterEvent("LOOT_READY")
 f:RegisterEvent("LOOT_OPENED")
+f:RegisterEvent("LOOT_CLOSED")
+f:RegisterEvent("BAG_UPDATE_DELAYED")
+f:RegisterEvent("ITEM_LOCK_CHANGED")
 f:SetScript("OnEvent", function(_, event, unit, ...)
   if event == "PLAYER_LOGIN" then
     saved()
@@ -636,30 +690,56 @@ f:SetScript("OnEvent", function(_, event, unit, ...)
     return
   end
   if event == "LOOT_READY" or event == "LOOT_OPENED" then readLoot() return end
+  if event == "LOOT_CLOSED" or event == "BAG_UPDATE_DELAYED" then D.afterLoot(false) return end
+  if event == "ITEM_LOCK_CHANGED" then
+    -- the cast locks the item it is on: (bag, slot); an equipped item gives (slot, nil)
+    local bag, slot = unit, ...
+    if bag and slot and C_Container then
+      local okI, info = pcall(C_Container.GetContainerItemInfo, bag, slot)
+      if okI and type(info) == "table" and info.isLocked == false then return end
+      local it = describe(C_Container.GetContainerItemLink(bag, slot))
+      if it and it.item and mayDisenchant(it) then
+        it.via = "lock"
+        if casting and not (pending and pending.item) then pending = it end
+        lastLocked = { it = it, at = GetTime() }
+      end
+    end
+    return
+  end
   if unit ~= "player" then return end
   if event == "UNIT_SPELLCAST_SENT" then
     local target, _, spellID = ...
     if isDisenchant(spellID) then
       D.step("cast")
+      casting, lastTarget = true, target
       before = bagCounts()
       local fromBags = findInBags(target)
-      if not pending or (fromBags and pending.name ~= target) then pending = describe(fromBags) end
-      if not (pending and pending.item) then pending = lockedItem() end
+      if not pending or (fromBags and pending.name ~= target) then
+        pending = describe(fromBags)
+        if pending then pending.via = "target" end
+      end
+      if not (pending and pending.item) and lastLocked and GetTime() - lastLocked.at <= 1 then pending = lastLocked.it end
+      if not (pending and pending.item) then pending = hoveredItem(); if pending then pending.via = "cursor" end end
+      if not (pending and pending.item) then pending = lockedItem(); if pending then pending.via = "lock" end end
     end
   elseif event == "UNIT_SPELLCAST_START" then
     local _, spellID = ...
-    if isDisenchant(spellID) and not (pending and pending.item) then pending = lockedItem() end
+    if isDisenchant(spellID) and not (pending and pending.item) then
+      pending = lockedItem()
+      if pending then pending.via = "lock" end
+    end
   elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
     local _, spellID = ...
     if isDisenchant(spellID) then
-      if not (pending and pending.item) then pending = lockedItem() end
+      if not (pending and pending.item) then pending = lockedItem(); if pending then pending.via = "lock" end end
       D.step("done")
-      if pending and pending.item then D.step("item") end
+      if pending and pending.item then D.step("item"); D.via(pending.via or "?") end
+      casting = false
       awaitingLoot = { item = pending and pending.item and pending or nil, before = before, at = GetTime() }
       pending, before = nil, nil
     end
   else
     local _, spellID = ...
-    if isDisenchant(spellID) then pending = nil end
+    if isDisenchant(spellID) then pending, casting = nil, false end
   end
 end)
