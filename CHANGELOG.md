@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.36.6 (2026-11-27)
 - Disenchanting: your disenchants are now logged. The addon didn't always notice which item you were disenchanting, so nothing got logged and your own results never showed on tooltips. `/dv status` now also says how many disenchants it has seen.
 
 ## v0.36.5 (2026-11-27)
