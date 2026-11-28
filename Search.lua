@@ -129,9 +129,10 @@ local LIST = { source = true, enchant = true, char = true, place = true }
 -- The ways to get an item, in Data.lua's order (ns.SOURCES bits); kept here so a shorter ns.SOURCES can't make a
 -- valid word an error. Other words for them, typed only: never shown.
 local SOURCES = { "vendor", "crafted", "drop", "quest", "skinning", "pickpocket", "fishing", "herbalism", "mining",
-  "object", "world drop", "container", "disenchant", "class" }
+  "object", "world drop", "container", "disenchant", "class", "starting gear" }
 local SOURCE_OK = index(SOURCES)
-local SOURCE_ALIAS = { profession = "crafted", automatic = "auto", worlddrop = "world drop", world_drop = "world drop" }
+local SOURCE_ALIAS = { profession = "crafted", automatic = "auto", worlddrop = "world drop", world_drop = "world drop",
+  starter = "starting gear", startinggear = "starting gear", starting_gear = "starting gear" }
 -- Professions that aren't also a way to get an item: typed as a source, the error points at the profession column.
 local PROFESSION = { alchemy = true, blacksmithing = true, cooking = true, enchanting = true, engineering = true,
   ["first aid"] = true, leatherworking = true, poisons = true, tailoring = true, jewelcrafting = true }
@@ -1810,7 +1811,7 @@ local GUIDE = table.concat({
   "price (the cheapest buyout for one), median (the usual price: half the auctions cheaper, half dearer), qty (how many are up), auctions, sell (what a vendor pays), stack (how many fit in a stack)",
   "slots (bag size), profession, skill, droprate (best drop %)",
   "What your characters have: " .. C_INFO .. "have|r (all of them), mine, alts, bags, bank, mail, listed, worn, guildbank, " .. C_INFO .. "char|r (who) and " .. C_INFO .. "place|r (where):  " .. C_GOOD .. "have gt 0 and price gt 1g|r  (/eah where searches only what you own)",
-  C_INFO .. "source|r (or " .. C_INFO .. "from|r): every way you get it: vendor, crafted, drop, quest, skinning, pickpocket, fishing, herbalism, mining, object, world drop, container, disenchant. " .. C_GOOD .. "source is vendor|r finds every item vendors sell, also ones you can get other ways too:  " .. C_GOOD .. "source is vendor and profession is tailoring|r   " .. C_GOOD .. "source has \"world drop\"|r",
+  C_INFO .. "source|r (or " .. C_INFO .. "from|r): every way you get it: vendor, crafted, drop, quest, skinning, pickpocket, fishing, herbalism, mining, object, world drop, container, disenchant, class, starting gear (new characters start with it). " .. C_GOOD .. "source is vendor|r finds every item vendors sell, also ones you can get other ways too:  " .. C_GOOD .. "source is vendor and profession is tailoring|r   " .. C_GOOD .. "source has \"world drop\"|r",
   "Money: 5g, 50s, 1g50s, 1g 50s, 2.5g, 20c. Or another column: " .. C_GOOD .. "price lt vendor|r",
   "Quality also takes colours (grey, white, green, blue, purple, orange); slot takes cloak, ring, helm, gloves, boots, belt, 1h, 2h.",
   "",
