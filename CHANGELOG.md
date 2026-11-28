@@ -1,6 +1,6 @@
 # EverlookDB Auctions
 
-## Unreleased
+## v0.36.9 (2026-11-28)
 - Search: items new characters start with now say so. `source is starter` (or `source has "starting gear"`) finds them, as on everlookdb.com.
 
 ## v0.36.8 (2026-11-27)
